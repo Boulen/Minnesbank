@@ -25,12 +25,12 @@ function showLogin(){document.getElementById("login-screen").style.display="bloc
 // access-token sker på servern (Cloudflare Workern), se PROXY+"oauth/token".
 function persistTokens(d){
   accessToken=d.access_token;
-  localStorage.setItem("akt_access_token",d.access_token);
-  localStorage.setItem("akt_token_expiry",String(Date.now()+((d.expires_in||3600)*1000)));
-  if(d.refresh_token)localStorage.setItem("akt_refresh_token",d.refresh_token);
+  localStorage.setItem("mb2_access_token",d.access_token);
+  localStorage.setItem("mb2_token_expiry",String(Date.now()+((d.expires_in||3600)*1000)));
+  if(d.refresh_token)localStorage.setItem("mb2_refresh_token",d.refresh_token);
 }
 function clearStoredAuth(){
-  ["akt_access_token","akt_token_expiry","akt_refresh_token","akt_token","token_time"].forEach(function(k){localStorage.removeItem(k);});
+  ["mb2_access_token","mb2_token_expiry","mb2_refresh_token","akt_token","token_time"].forEach(function(k){localStorage.removeItem(k);});
 }
 async function exchangeCodeForTokens(code){
   try{
@@ -44,7 +44,7 @@ async function exchangeCodeForTokens(code){
 // Byter ett sparat refresh-token mot ett nytt access-token. Ingen popup, ingen
 // Google-inloggningsruta — bara ett vanligt bakgrundsanrop till proxyn.
 async function refreshAccessToken(){
-  var refreshToken=localStorage.getItem("akt_refresh_token");
+  var refreshToken=localStorage.getItem("mb2_refresh_token");
   if(!refreshToken)return false;
   try{
     var r=await fetch(PROXY+"oauth/token",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({app:"minnesbanken",grant_type:"refresh_token",refresh_token:refreshToken})});
@@ -67,7 +67,7 @@ function startTokenWatch(){
 }
 async function checkAndRenewToken(){
   if(!accessToken)return;
-  var expiry=parseInt(localStorage.getItem("akt_token_expiry")||"0");
+  var expiry=parseInt(localStorage.getItem("mb2_token_expiry")||"0");
   if(Date.now()<expiry-10*60*1000)return; // gott om tid kvar än
   var renewed=await refreshAccessToken();
   if(!renewed)signOut();
