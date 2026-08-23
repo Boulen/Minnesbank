@@ -801,6 +801,218 @@ function renderAktivitetLoggaTab(c){
   bindAktivitetSubtabNav(c);
 }
 
+// ---- Data & backup: JSON-redigering, tömning, PDF-export, Drive-uppsättning ----
+
+function monthKeyOf(iso){var d=new Date(iso);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");}
+function monthLabel(key){
+  var parts=key.split("-");var y=parts[0],m=Number(parts[1]);
+  var names=["Januari","Februari","Mars","April","Maj","Juni","Juli","Augusti","September","Oktober","November","December"];
+  return names[m-1]+" "+y;
+}
+function getAvailableMonths(){
+  var set={};
+  logs.forEach(function(l){set[monthKeyOf(l.timestamp)]=true;});
+  imageHist.forEach(function(i){set[monthKeyOf(i.timestamp)]=true;});
+  var keys=Object.keys(set);
+  if(!keys.length)keys=[monthKeyOf(new Date().toISOString())];
+  return keys.sort().reverse();
+}
+
+// Enkel JSON-visning/redigering för Aktivitet/Bilder/Inställningar. Bilders base64 döljs ur
+// textan (för stora för att redigera för hand) och behålls oförändrad för poster som inte rörs.
+function openJsonEditor(){
+  var current="aktivitet";
+  var ov2=document.createElement("div");
+  ov2.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px";
+
+  function dataFor(key){
+    if(key==="aktivitet")return {logs:logs};
+    if(key==="bilder")return {images:imageHist.map(function(i){var c=Object.assign({},i);delete c.base64;return c;})};
+    return {cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE};
+  }
+  function render(){
+    ov2.innerHTML="<div style='background:#161616;border-radius:16px;width:100%;max-width:520px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden'>"
+      +"<div style='padding:14px 18px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between;gap:10px'>"
+      +"<select id='je-select' style='background:#131313;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:6px 8px'>"
+      +"<option value='aktivitet'"+(current==="aktivitet"?" selected":"")+">Aktivitet</option>"
+      +"<option value='bilder'"+(current==="bilder"?" selected":"")+">Bilder</option>"
+      +"<option value='installningar'"+(current==="installningar"?" selected":"")+">Inställningar</option>"
+      +"</select>"
+      +"<button id='je-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1'>✕</button>"
+      +"</div>"
+      +"<textarea id='je-text' spellcheck='false' style='flex:1;background:#0a0a0a;color:#f2f2f2;border:none;padding:14px;font-family:monospace;font-size:12px;min-height:300px;resize:vertical'>"+esc(JSON.stringify(dataFor(current),null,2))+"</textarea>"
+      +(current==="bilder"?"<div style='padding:0 18px 6px;font-size:11px;color:#5c5c5c'>Själva bilddatan (base64) visas inte här och rörs inte om du inte tar bort en post helt.</div>":"")
+      +"<div id='je-warning' style='padding:0 18px 8px;font-size:11px;color:#d97a83'></div>"
+      +"<div style='padding:14px 18px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
+      +"<button id='je-cancel' class='sec ghost' style='flex:1'>Avbryt</button>"
+      +"<button id='je-save' class='cta-log' style='flex:1'>Spara ändringar</button>"
+      +"</div>"
+      +"</div>";
+    ov2.querySelector("#je-close").onclick=function(){ov2.remove();};
+    ov2.querySelector("#je-cancel").onclick=function(){ov2.remove();};
+    ov2.querySelector("#je-select").onchange=function(){current=ov2.querySelector("#je-select").value;render();};
+    ov2.querySelector("#je-save").onclick=function(){
+      var txt=ov2.querySelector("#je-text").value;
+      var warn=ov2.querySelector("#je-warning");
+      var parsed;
+      try{parsed=JSON.parse(txt);}catch(e){warn.textContent="Ogiltig JSON: "+e.message;return;}
+      if(current==="aktivitet"){
+        if(!Array.isArray(parsed.logs)){warn.textContent="Förväntade ett 'logs'-fält med en lista.";return;}
+        logs=parsed.logs;
+        saveAndSync("aktiviteter");
+      }else if(current==="bilder"){
+        if(!Array.isArray(parsed.images)){warn.textContent="Förväntade ett 'images'-fält med en lista.";return;}
+        var byId={};imageHist.forEach(function(i){byId[i.id]=i;});
+        imageHist=parsed.images.map(function(m){
+          var old=byId[m.id];
+          return Object.assign({},m,{base64:old?old.base64:null});
+        });
+        saveAndSync("bilder");
+      }else{
+        if(!parsed.cats||!Array.isArray(parsed.cats)||!parsed.cats.length){warn.textContent="Förväntade ett 'cats'-fält med minst en kategori.";return;}
+        CATS=parsed.cats;
+        if(parsed.falt)AKTIVITET_FALT=Object.assign({plats:true,anteckning:true,bild:true},parsed.falt);
+        if(parsed.beteende)AKTIVITET_BETEENDE=Object.assign({standardKategori:"",kameraRiktning:"environment",handelserSortering:"nyast"},parsed.beteende);
+        saveAktivitetSettings();
+      }
+      ov2.remove();
+      renderLogAktivitet();
+    };
+  }
+  render();
+  document.body.appendChild(ov2);
+}
+
+function clearAktivitetData(){
+  confirmDelete("Tömma ALLA loggade aktiviteter? Detta går inte att ångra.",function(){
+    logs=[];
+    saveAndSync("aktiviteter");
+    renderLogAktivitet();
+  });
+}
+function clearBilderData(){
+  confirmDelete("Tömma ALLA sparade bilder? Detta går inte att ångra.",function(){
+    imageHist=[];
+    saveAndSync("bilder");
+    renderLogAktivitet();
+  });
+}
+
+function ensureJsPDF(){
+  if(window.jspdf&&window.jspdf.jsPDF)return Promise.resolve(window.jspdf.jsPDF);
+  return new Promise(function(resolve,reject){
+    var s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s.onload=function(){
+      if(window.jspdf&&window.jspdf.jsPDF)resolve(window.jspdf.jsPDF);
+      else reject(new Error("PDF-biblioteket laddades inte korrekt"));
+    };
+    s.onerror=function(){reject(new Error("Kunde inte ladda PDF-biblioteket"));};
+    document.head.appendChild(s);
+  });
+}
+
+async function exportAktivitetMonthPdf(monthKey){
+  var jsPDFCtor=await ensureJsPDF();
+  var doc=new jsPDFCtor();
+  var monthLogs=logs.filter(function(l){return monthKeyOf(l.timestamp)===monthKey;}).sort(function(a,b){return new Date(a.timestamp)-new Date(b.timestamp);});
+  var y=20;
+  doc.setFontSize(16);doc.text("Aktivitet - "+monthLabel(monthKey),14,y);y+=10;
+  doc.setFontSize(10);
+  if(!monthLogs.length){doc.text("Inga aktiviteter loggade denna månad.",14,y);}
+  monthLogs.forEach(function(l){
+    if(y>270){doc.addPage();y=20;}
+    var ct=CATS.find(function(c){return c.id===l.category;});
+    var catLabel=ct?(ct.e+" "+ct.label):"";
+    var d=new Date(l.timestamp);
+    var dateStr=String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0");
+    doc.setFont(undefined,"bold");
+    doc.text(dateStr+"  "+(l.activity||""),14,y);
+    doc.setFont(undefined,"normal");
+    y+=5;
+    var metaLine=[catLabel,l.place,l.time].filter(Boolean).join("   ·   ");
+    if(metaLine){doc.setFontSize(9);doc.setTextColor(120);doc.text(metaLine,14,y);doc.setTextColor(0);doc.setFontSize(10);y+=5;}
+    if(l.note){
+      var lines=doc.splitTextToSize(l.note,180);
+      doc.text(lines,14,y);
+      y+=lines.length*5;
+    }
+    y+=4;
+  });
+  doc.save("aktivitet-"+monthKey+".pdf");
+}
+
+async function exportBilderMonthPdf(monthKey){
+  var jsPDFCtor=await ensureJsPDF();
+  var doc=new jsPDFCtor();
+  var monthImgs=imageHist.filter(function(i){return monthKeyOf(i.timestamp)===monthKey;}).sort(function(a,b){return new Date(a.timestamp)-new Date(b.timestamp);});
+  var y=20;
+  doc.setFontSize(16);doc.text("Bilder - "+monthLabel(monthKey),14,y);y+=10;
+  doc.setFontSize(10);
+  if(!monthImgs.length){doc.text("Inga bilder sparade denna månad.",14,y);doc.save("bilder-"+monthKey+".pdf");return;}
+  for(var i=0;i<monthImgs.length;i++){
+    var img=monthImgs[i];
+    var base64=img.base64;
+    if(!base64&&typeof loadImageBase64==="function"){
+      try{base64=await loadImageBase64(img);}catch(e){}
+    }
+    if(y>230){doc.addPage();y=20;}
+    var d=new Date(img.timestamp);
+    var dateStr=String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0");
+    doc.setFont(undefined,"bold");doc.text(dateStr+"  "+(img.activity||""),14,y);doc.setFont(undefined,"normal");
+    y+=6;
+    if(base64){
+      try{
+        var fmt=(img.mtype||"").indexOf("png")>-1?"PNG":"JPEG";
+        doc.addImage("data:"+(img.mtype||"image/jpeg")+";base64,"+base64,fmt,14,y,60,45);
+        y+=50;
+      }catch(e){
+        doc.setFontSize(9);doc.text("(bilden kunde inte infogas)",14,y);y+=8;doc.setFontSize(10);
+      }
+    }else{
+      doc.setFontSize(9);doc.text("(bilden kunde inte laddas)",14,y);y+=8;doc.setFontSize(10);
+    }
+    y+=6;
+  }
+  doc.save("bilder-"+monthKey+".pdf");
+}
+
+// Skapar Aktivitet/data.json, Aktivitet/settings.json, Bilder/data.json och PNG-mappen om de
+// saknas - rör ALDRIG en fil som redan finns (kollar alltid innan den skriver något nytt).
+async function ensureAktivitetStorage(statusEl){
+  if(!accessToken){if(statusEl)statusEl.textContent="Inte inloggad mot Drive.";return;}
+  if(statusEl)statusEl.textContent="Skapar/kontrollerar...";
+  try{
+    var aktId=await driveMkdir("Aktivitet",FOLDER_ID);
+    var created=[],existing=[];
+    async function ensureJsonFile(parentId,name,defaultBody,label){
+      var q="name='"+name+"' and '"+parentId+"' in parents and trashed=false";
+      var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+      var d=await r.json();
+      if(d.files&&d.files.length){existing.push(label);return;}
+      var form=new FormData();
+      form.append("metadata",new Blob([JSON.stringify({name:name,parents:[parentId],mimeType:"application/json"})],{type:"application/json"}));
+      form.append("file",new Blob([JSON.stringify(defaultBody)],{type:"application/json"}));
+      await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
+      created.push(label);
+    }
+    await ensureJsonFile(aktId,"data.json",{logs:[]},"Aktivitet/data.json");
+    await ensureJsonFile(aktId,"settings.json",{cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE},"Aktivitet/settings.json");
+    var bilderId=await driveMkdir("Bilder",FOLDER_ID);
+    await ensureJsonFile(bilderId,"data.json",{images:[]},"Bilder/data.json");
+    await ensurePngFolder();
+    if(statusEl){
+      var msg=[];
+      if(created.length)msg.push("Skapade: "+created.join(", "));
+      if(existing.length)msg.push("Fanns redan (orört): "+existing.join(", "));
+      statusEl.textContent=msg.join(" | ")||"Klart.";
+    }
+  }catch(e){
+    console.error(e);
+    if(statusEl)statusEl.textContent="Något gick fel: "+e.message;
+  }
+}
+
 // ---- Inställningspanel: Kategorier (lägg till/ta bort/ändra, chip-baserad) ----
 function showAktivitetSettings(){
   var wCats=CATS.map(function(ct){return {id:ct.id,label:ct.label,e:ct.e};});
@@ -851,6 +1063,23 @@ function showAktivitetSettings(){
       +"<input class='inp' id='as-newcat-label' placeholder='Ny kategori...' style='flex:1;padding:7px 10px;font-size:13px'/>"
       +"<button class='chip' id='as-newcat-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
       +"</div>"
+
+      +"<div class='lbl' style='margin-top:18px'>Data & backup</div>"
+      +"<button id='as-json-editor' class='sec ghost' style='width:100%;margin-bottom:8px'>📝 Öppna/redigera JSON-filer</button>"
+      +"<div style='display:flex;gap:8px;margin-bottom:12px'>"
+      +"<button id='as-clear-akt' class='sec ghost' style='flex:1;color:#d97a83'>Töm Aktivitet</button>"
+      +"<button id='as-clear-bild' class='sec ghost' style='flex:1;color:#d97a83'>Töm Bilder</button>"
+      +"</div>"
+      +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:6px'>Exportera månad som PDF</div>"
+      +"<select id='as-month-select' style='width:100%;background:#131313;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;padding:9px 10px;margin-bottom:8px'>"
+      +getAvailableMonths().map(function(mk){return "<option value='"+mk+"'>"+monthLabel(mk)+"</option>";}).join("")
+      +"</select>"
+      +"<div style='display:flex;gap:8px;margin-bottom:14px'>"
+      +"<button id='as-pdf-akt' class='sec ghost' style='flex:1'>📄 Aktivitet</button>"
+      +"<button id='as-pdf-bild' class='sec ghost' style='flex:1'>📄 Bilder</button>"
+      +"</div>"
+      +"<button id='as-setup-storage' class='sec ghost' style='width:100%'>🗂 Skapa mapp/JSON-filer i Drive</button>"
+      +"<div id='as-storage-status' style='font-size:11px;color:#5c5c5c;margin-top:6px'></div>"
 
       +"</div>"
       +"<div style='padding:16px 20px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
@@ -917,6 +1146,23 @@ function showAktivitetSettings(){
     };
     var newLabelEl=ov.querySelector("#as-newcat-label");
     if(newLabelEl)newLabelEl.onkeydown=function(e){if(e.key==="Enter")ov.querySelector("#as-newcat-add").click();};
+
+    ov.querySelector("#as-json-editor").onclick=function(){openJsonEditor();};
+    ov.querySelector("#as-clear-akt").onclick=function(){clearAktivitetData();};
+    ov.querySelector("#as-clear-bild").onclick=function(){clearBilderData();};
+    ov.querySelector("#as-pdf-akt").onclick=function(e){
+      var mk=ov.querySelector("#as-month-select").value;
+      var btn=e.target;var orig=btn.textContent;btn.textContent="Skapar...";btn.disabled=true;
+      exportAktivitetMonthPdf(mk).catch(function(err){alert("Kunde inte skapa PDF: "+err.message);}).then(function(){btn.textContent=orig;btn.disabled=false;});
+    };
+    ov.querySelector("#as-pdf-bild").onclick=function(e){
+      var mk=ov.querySelector("#as-month-select").value;
+      var btn=e.target;var orig=btn.textContent;btn.textContent="Skapar...";btn.disabled=true;
+      exportBilderMonthPdf(mk).catch(function(err){alert("Kunde inte skapa PDF: "+err.message);}).then(function(){btn.textContent=orig;btn.disabled=false;});
+    };
+    ov.querySelector("#as-setup-storage").onclick=function(){
+      ensureAktivitetStorage(ov.querySelector("#as-storage-status"));
+    };
 
     ov.querySelector("#as-save").onclick=function(){
       commitEdit();
