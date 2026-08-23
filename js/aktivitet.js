@@ -206,6 +206,7 @@ async function ensureAktivitetSettingsLoaded(){
   aktivitetSettingsLoaded=true;
   try{
     var aktId=await driveMkdir("Aktivitet",FOLDER_ID);
+    if(!aktId)throw new Error("Kunde inte hitta/skapa Aktivitet-mappen i Drive (troligen behörighetsfel - kontrollera att du är inloggad)");
     // Samma mapp som Aktivitet-fliken sparar sin data.json i - men EGEN fil ("settings.json")
     // så vi aldrig av misstag söker/skriver över logg-filen (data.json) som redan ligger där.
     var q="name='settings.json' and '"+aktId+"' in parents and trashed=false";
@@ -233,6 +234,7 @@ async function saveAktivitetSettings(){
   }
   try{
     var aktId=await driveMkdir("Aktivitet",FOLDER_ID);
+    if(!aktId)throw new Error("Kunde inte hitta/skapa Aktivitet-mappen i Drive (troligen behörighetsfel - kontrollera att du är inloggad)");
     var q="name='settings.json' and '"+aktId+"' in parents and trashed=false";
     var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
     var d=await r.json();
@@ -977,42 +979,6 @@ async function exportBilderMonthPdf(monthKey){
   doc.save("bilder-"+monthKey+".pdf");
 }
 
-// Skapar Aktivitet/data.json, Aktivitet/settings.json, Bilder/data.json och PNG-mappen om de
-// saknas - rör ALDRIG en fil som redan finns (kollar alltid innan den skriver något nytt).
-async function ensureAktivitetStorage(statusEl){
-  if(!accessToken){if(statusEl)statusEl.textContent="Inte inloggad mot Drive.";return;}
-  if(statusEl)statusEl.textContent="Skapar/kontrollerar...";
-  try{
-    var aktId=await driveMkdir("Aktivitet",FOLDER_ID);
-    var created=[],existing=[];
-    async function ensureJsonFile(parentId,name,defaultBody,label){
-      var q="name='"+name+"' and '"+parentId+"' in parents and trashed=false";
-      var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
-      var d=await r.json();
-      if(d.files&&d.files.length){existing.push(label);return;}
-      var form=new FormData();
-      form.append("metadata",new Blob([JSON.stringify({name:name,parents:[parentId],mimeType:"application/json"})],{type:"application/json"}));
-      form.append("file",new Blob([JSON.stringify(defaultBody)],{type:"application/json"}));
-      await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
-      created.push(label);
-    }
-    await ensureJsonFile(aktId,"data.json",{logs:[]},"Aktivitet/data.json");
-    await ensureJsonFile(aktId,"settings.json",{cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE},"Aktivitet/settings.json");
-    var bilderId=await driveMkdir("Bilder",FOLDER_ID);
-    await ensureJsonFile(bilderId,"data.json",{images:[]},"Bilder/data.json");
-    await ensurePngFolder();
-    if(statusEl){
-      var msg=[];
-      if(created.length)msg.push("Skapade: "+created.join(", "));
-      if(existing.length)msg.push("Fanns redan (orört): "+existing.join(", "));
-      statusEl.textContent=msg.join(" | ")||"Klart.";
-    }
-  }catch(e){
-    console.error(e);
-    if(statusEl)statusEl.textContent="Något gick fel: "+e.message;
-  }
-}
-
 // ---- Inställningspanel: Kategorier (lägg till/ta bort/ändra, chip-baserad) ----
 function showAktivitetSettings(){
   var wCats=CATS.map(function(ct){return {id:ct.id,label:ct.label,e:ct.e};});
@@ -1078,8 +1044,6 @@ function showAktivitetSettings(){
       +"<button id='as-pdf-akt' class='sec ghost' style='flex:1'>📄 Aktivitet</button>"
       +"<button id='as-pdf-bild' class='sec ghost' style='flex:1'>📄 Bilder</button>"
       +"</div>"
-      +"<button id='as-setup-storage' class='sec ghost' style='width:100%'>🗂 Skapa mapp/JSON-filer i Drive</button>"
-      +"<div id='as-storage-status' style='font-size:11px;color:#5c5c5c;margin-top:6px'></div>"
 
       +"</div>"
       +"<div style='padding:16px 20px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
@@ -1159,9 +1123,6 @@ function showAktivitetSettings(){
       var mk=ov.querySelector("#as-month-select").value;
       var btn=e.target;var orig=btn.textContent;btn.textContent="Skapar...";btn.disabled=true;
       exportBilderMonthPdf(mk).catch(function(err){alert("Kunde inte skapa PDF: "+err.message);}).then(function(){btn.textContent=orig;btn.disabled=false;});
-    };
-    ov.querySelector("#as-setup-storage").onclick=function(){
-      ensureAktivitetStorage(ov.querySelector("#as-storage-status"));
     };
 
     ov.querySelector("#as-save").onclick=function(){
