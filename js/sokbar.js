@@ -2,6 +2,37 @@
 // Två sökfunktioner: Sök (förklara text/bild/fil) och Ord (synonymer/ordbok).
 // Beroenden: core.js (esc, aiCall, aiChat, aiText, extractJsonObject, chatContinuationHtml,
 // bindChatContinuation, pinChatToKunskap). Laddas EFTER core.js.
+//
+// HTML-markupen för sökraden injiceras HÄR (inte i index.html), så att ändringar i
+// sökrutornas layout/markup ALDRIG kräver en ändring i index.html — bara den här filen.
+// Körs direkt vid inladdning (scriptet ligger sist i <body>, DOM är redan klar).
+(function injectSokbarMarkup(){
+  var el=document.createElement("div");
+  el.className="dict-bar";
+  el.innerHTML=
+    "<div class='dict-result' id='dictResult'></div>"
+    +"<div class='dict-result' id='synResult'></div>"
+    +"<div id='dictCameraContainer' style='display:none;max-width:940px;margin:0 auto 10px;'>"
+    +"<video id='dictCameraVideo' autoplay playsinline style='width:100%;border-radius:10px;max-height:220px;object-fit:cover;background:#000'></video>"
+    +"<div style='display:flex;gap:8px;margin-top:8px'>"
+    +"<button id='dictSnapBtn' type='button' class='action-btn' style='flex:1'>📸 Ta foto</button>"
+    +"<button id='dictCloseCameraBtn' type='button' class='action-btn' style='color:var(--error)'>✕</button>"
+    +"</div></div>"
+    +"<canvas id='dictSnapCanvas' style='display:none'></canvas>"
+    +"<div class='dict-combined-row'>"
+    +"<div class='dict-input-row dict-row-uploads'>"
+    +"<label class='action-btn' style='cursor:pointer' title='Ladda upp bild eller fil'>📁<input type='file' id='dictImgUpload' accept='image/*,.txt,.md,.csv,.json,text/plain' style='display:none'></label>"
+    +"<button class='action-btn' id='dictCameraBtn' type='button' title='Ta bild'>📷</button>"
+    +"</div>"
+    +"<div class='dict-input-row dict-row-main'>"
+    +"<input type='text' id='dictInput' placeholder='Sök'>"
+    +"<button class='action-btn' id='dictSpellBtn' type='button' title='Stavningskontroll'>🔤</button>"
+    +"</div>"
+    +"<div class='dict-input-row dict-row-small'>"
+    +"<input type='text' id='synInput' placeholder='Ord'>"
+    +"</div></div>";
+  document.body.appendChild(el);
+})();
 
 async function searchDictionary(){
   var dictInput=document.getElementById("dictInput");
