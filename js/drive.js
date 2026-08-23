@@ -25,12 +25,12 @@ function showLogin(){document.getElementById("login-screen").style.display="bloc
 // access-token sker på servern (Cloudflare Workern), se PROXY+"oauth/token".
 function persistTokens(d){
   accessToken=d.access_token;
-  localStorage.setItem("mb2_access_token",d.access_token);
-  localStorage.setItem("mb2_token_expiry",String(Date.now()+((d.expires_in||3600)*1000)));
-  if(d.refresh_token)localStorage.setItem("mb2_refresh_token",d.refresh_token);
+  localStorage.setItem("akt_access_token",d.access_token);
+  localStorage.setItem("akt_token_expiry",String(Date.now()+((d.expires_in||3600)*1000)));
+  if(d.refresh_token)localStorage.setItem("akt_refresh_token",d.refresh_token);
 }
 function clearStoredAuth(){
-  ["mb2_access_token","mb2_token_expiry","mb2_refresh_token","akt_token","token_time"].forEach(function(k){localStorage.removeItem(k);});
+  ["akt_access_token","akt_token_expiry","akt_refresh_token","akt_token","token_time"].forEach(function(k){localStorage.removeItem(k);});
 }
 async function exchangeCodeForTokens(code){
   try{
@@ -44,7 +44,7 @@ async function exchangeCodeForTokens(code){
 // Byter ett sparat refresh-token mot ett nytt access-token. Ingen popup, ingen
 // Google-inloggningsruta — bara ett vanligt bakgrundsanrop till proxyn.
 async function refreshAccessToken(){
-  var refreshToken=localStorage.getItem("mb2_refresh_token");
+  var refreshToken=localStorage.getItem("akt_refresh_token");
   if(!refreshToken)return false;
   try{
     var r=await fetch(PROXY+"oauth/token",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({app:"minnesbanken",grant_type:"refresh_token",refresh_token:refreshToken})});
@@ -67,7 +67,7 @@ function startTokenWatch(){
 }
 async function checkAndRenewToken(){
   if(!accessToken)return;
-  var expiry=parseInt(localStorage.getItem("mb2_token_expiry")||"0");
+  var expiry=parseInt(localStorage.getItem("akt_token_expiry")||"0");
   if(Date.now()<expiry-10*60*1000)return; // gott om tid kvar än
   var renewed=await refreshAccessToken();
   if(!renewed)signOut();
@@ -307,6 +307,31 @@ async function migrateSamtalSplit(){
   }
 }
 
+var activeTabLoads=0;
+function bumpLoadIndicator(delta){
+  activeTabLoads=Math.max(0,activeTabLoads+delta);
+  var el=document.getElementById("global-load-spinner");
+  if(el)el.style.display=activeTabLoads>0?"inline-block":"none";
+}
+function loadTabsProgressively(tabs,renderFn){
+  renderFn(); // rita direkt med det som redan finns (kan vara tomt första gången)
+  tabs.forEach(function(t){
+    if(tabLoaded[t])return; // redan laddad — inget att göra, ingen indikator
+    bumpLoadIndicator(1);
+    loadTab(t).then(function(){bumpLoadIndicator(-1);renderFn();});
+  });
+}
+
+var MIGRATIONS_VERSION=1; // höj denna om en ny migrering läggs till i framtiden
+async function runMigrationsIfNeeded(){
+  if(localStorage.getItem("mb_migrations_done")===String(MIGRATIONS_VERSION))return;
+  await Promise.all([
+    migrateBilderFolder(), migrateSamtalSplit(),
+    migrateTipsTricksFolder(), migrateFunderingRestructure()
+  ]);
+  localStorage.setItem("mb_migrations_done",String(MIGRATIONS_VERSION));
+}
+
 async function showApp(){
   document.getElementById("login-screen").style.display="none";
   document.getElementById("main-app").style.display="block";
@@ -318,56 +343,52 @@ async function showApp(){
       var v=btn.dataset.v;
       if(v==="history"){
         setView("history");
-        Promise.all([loadTab("aktiviteter"),loadTab("samtaltext"),loadTab("samtalmuntligt"),loadTab("funderingar"),loadTab("media")]).then(function(){openToday();renderHistory();});
-      } else if(v==="installningar"){setView("installningar");loadTab("installningar").then(function(){render();});}
+        loadTabsProgressively(["aktiviteter","samtaltext","samtalmuntligt","funderingar","media"],function(){openToday();renderHistory();});
+      } else if(v==="installningar"){setView("installningar");loadTabsProgressively(["installningar"],render);}
       else if(v==="ai"){
         setView("ai");
         var tabMap={forklara:"sok",komm:"text",tips:"tips",terapi:"terapi"};
         var tab=tabMap[aiSubview]||"sok";
-        loadTab(tab).then(function(){renderAI();});
+        loadTabsProgressively([tab],renderAI);
       }
       else if(v==="aktivitet"){
         setView("aktivitet");
-        Promise.all([loadTab("aktiviteter"),loadTab("samtaltext"),loadTab("samtalmuntligt"),loadTab("funderingar"),loadTab("media"),loadTab("inmatningar")]).then(function(){
+        loadTabsProgressively(["aktiviteter","samtaltext","samtalmuntligt","funderingar","media","inmatningar"],function(){
           renderLogAktivitet();updateHandelser(null);
         });
       }
-      else if(v==="funderingar"){setView("funderingar");loadTab("funderingar").then(function(){renderLogFunderingar();});}
+      else if(v==="funderingar"){setView("funderingar");loadTabsProgressively(["funderingar"],renderLogFunderingar);}
       else if(v==="samtal"){
         setView("samtal");
         var samtalTabMap={text:"samtaltext",muntligt:"samtalmuntligt"};
         var st=samtalTabMap[samtalSubview]||"samtaltext";
-        loadTab(st).then(function(){renderSamtalTop();});
+        loadTabsProgressively([st],renderSamtalTop);
       }
       else if(v==="konversation"){
         setView("konversation");
         var konvTabMap={skamt:"skamt",samtalsamnen:"samtalsamnen"};
         var kt=konvTabMap[konvSubview]||"skamt";
-        loadTab(kt).then(function(){renderKonversationTop();});
+        loadTabsProgressively([kt],renderKonversationTop);
       }
       else if(v==="utvarderingar"){
         setView("utvarderingar");
         var utvTabMap={media:"media",objekt:"objekt",plats:"plats"};
         var ut=utvTabMap[utvSubview]||"media";
-        loadTab(ut).then(function(){renderUtvarderingarTop();});
+        loadTabsProgressively([ut],renderUtvarderingarTop);
       }
     };
   });
-  // Clear Drive ID cache on login — always search Drive fresh this session
-  driveIdCache={};
+  // Rensa Drive-cachen vid inloggning — börja tom, litar sedan på den inom sessionen
+  driveIdCache={};driveDirCache={};driveIdCachePromise={};driveDirCachePromise={};
   saveDriveCache();
-  // Reset tab cache so Drive is read fresh this session
   Object.keys(tabLoaded).forEach(function(k){tabLoaded[k]=false;});
-  await migrateBilderFolder();
-  await migrateSamtalSplit();
-  await migrateTipsTricksFolder();
-  await migrateFunderingRestructure();
-  Promise.all([loadTab("aktiviteter"),loadTab("installningar"),loadTab("samtaltext"),loadTab("samtalmuntligt"),loadTab("funderingar"),loadTab("media"),loadTab("inmatningar")]).then(function(){
+  await runMigrationsIfNeeded();
+  loadTabsProgressively(["aktiviteter","installningar","samtaltext","samtalmuntligt","funderingar","media","inmatningar"],function(){
     render();updateHandelser(null);
   });
 }
 function renderUserRow(){var r=document.getElementById("user-row");if(!r||!userInfo)return;var name=userInfo.name||userInfo.email||"Inloggad";var initials=name.split(" ").map(function(w){return w[0];}).join("").slice(0,2).toUpperCase();r.innerHTML="<div class='avatar'>"+initials+"</div><span style='color:#cfcfcf;font-size:12px'>"+esc(name)+"</span><span class='signout' onclick='signOut()'>Logga ut</span>";}
-function signOut(){if(tokenWatchInterval){clearInterval(tokenWatchInterval);tokenWatchInterval=null;}clearStoredAuth();accessToken=null;userInfo=null;driveIdCache={};driveDirCache={};tabLoaded={aktiviteter:false,samtaltext:false,samtalmuntligt:false,funderingar:false,media:false,sok:false,tips:false,terapi:false,bilder:false,installningar:false,text:false,vokabular:false,kunskap:false,tipstricks:false};var ov=document.getElementById("installningar-overlay");if(ov)ov.remove();showLogin();}
+function signOut(){if(tokenWatchInterval){clearInterval(tokenWatchInterval);tokenWatchInterval=null;}clearStoredAuth();accessToken=null;userInfo=null;driveIdCache={};driveDirCache={};driveIdCachePromise={};driveDirCachePromise={};tabLoaded={aktiviteter:false,samtaltext:false,samtalmuntligt:false,funderingar:false,media:false,sok:false,tips:false,terapi:false,bilder:false,installningar:false,text:false,vokabular:false,kunskap:false,tipstricks:false};var ov=document.getElementById("installningar-overlay");if(ov)ov.remove();showLogin();}
 function setSyncBtn(cls,label){var b=document.getElementById("sync-btn");if(!b)return;b.className="sync-btn"+(cls?" "+cls:"");b.textContent=label;}
 async function importFromDrive(){
   if(!accessToken){alert("Logga in först.");return;}
@@ -650,31 +671,38 @@ var PATH_LABELS={
   "Notering/Lardom/Vokabular":"Lärdom (Vokabulär)","Notering/Lardom/Kunskap":"Lärdom (Kunskap)","Notering/Anteckning":"Notering (Anteckning)"
 };
 
-var driveIdCache={};  // path -> file id
-var driveDirCache={}; // "folder" or "folder/sub" -> folder id
+var driveIdCache={};         // path -> file id
+var driveDirCache={};        // "foralderId/mappnamn" -> mapp-id, en post per mappNIVÅ
+var driveDirCachePromise={}; // samma nyckel som driveDirCache, men pågående Promise
+var driveIdCachePromise={};  // samma nyckel som driveIdCache, men pågående Promise
 
 function saveDriveCache(){
-  /* no-op: file IDs are resolved fresh each session, never persisted to disk */
+  /* no-op: cachen är bara i minnet, gäller en session */
 }
 function loadDriveCache(){
-  /* no-op: nothing to load, IDs are always resolved fresh */
+  /* no-op: inget att läsa in — cachen börjar tom varje sidladdning */
 }
 
 async function driveMkdir(name,parentId){
-  // Check cache
   var ckey=parentId+"/"+name;
   if(driveDirCache[ckey])return driveDirCache[ckey];
-  // Search
-  var q="name='"+name+"' and '"+parentId+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
-  var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
-  var d=await r.json();
-  if(d.files&&d.files.length>0){
-    driveDirCache[ckey]=d.files[0].id;saveDriveCache();return driveDirCache[ckey];
-  }
-  // Create
-  var r2=await fetch(DRIVE_API,{method:"POST",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:JSON.stringify({name:name,parents:[parentId],mimeType:"application/vnd.google-apps.folder"})});
-  var d2=await r2.json();
-  driveDirCache[ckey]=d2.id;saveDriveCache();return driveDirCache[ckey];
+  if(driveDirCachePromise[ckey])return driveDirCachePromise[ckey];
+  driveDirCachePromise[ckey]=(async function(){
+    try{
+      var q="name='"+name+"' and '"+parentId+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
+      var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+      var d=await r.json();
+      if(d.files&&d.files.length>0){
+        driveDirCache[ckey]=d.files[0].id;saveDriveCache();return driveDirCache[ckey];
+      }
+      var r2=await fetch(DRIVE_API,{method:"POST",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:JSON.stringify({name:name,parents:[parentId],mimeType:"application/vnd.google-apps.folder"})});
+      var d2=await r2.json();
+      driveDirCache[ckey]=d2.id;saveDriveCache();return driveDirCache[ckey];
+    }finally{
+      delete driveDirCachePromise[ckey];
+    }
+  })();
+  return driveDirCachePromise[ckey];
 }
 
 async function driveResolveFolder(def){
@@ -686,30 +714,38 @@ async function driveResolveFolder(def){
 }
 
 async function driveGetFileId(path){
-  // Always search Drive fresh — never trust cache alone
-  var def=DRIVE_STRUCTURE[path];
-  if(!def)throw new Error("Okänd sökväg: "+path);
-  var parentId=await driveResolveFolder(def);
-  // Search — explicitly exclude trashed
-  var q="name='data.json' and '"+parentId+"' in parents and trashed=false";
-  var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id,name,createdTime)&orderBy=createdTime",{headers:{Authorization:"Bearer "+accessToken}});
-  var d=await r.json();
-  if(d.files&&d.files.length>1){
-    // Multiple files — report error, use oldest
-    reportDriveError(path,"⚠️ Flera data.json-filer hittades i mappen '"+def.join("/")+"'. Ta bort de extra filerna i Google Drive manuellt. Använder den äldsta.");
-    driveIdCache[path]=d.files[0].id;
-    saveDriveCache();
-    return driveIdCache[path];
-  }
-  if(d.files&&d.files.length===1){
-    driveIdCache[path]=d.files[0].id;
-    saveDriveCache();
-    return driveIdCache[path];
-  }
-  // Nothing found
-  delete driveIdCache[path];
-  saveDriveCache();
-  throw new Error("FIL_SAKNAS:"+path);
+  // Cachen är trygg att lita på inom en session — ingen annan enhet kan ändra
+  // filerna mitt i din session utan att sidan laddas om ändå.
+  if(driveIdCache[path])return driveIdCache[path];
+  if(driveIdCachePromise[path])return driveIdCachePromise[path];
+  driveIdCachePromise[path]=(async function(){
+    try{
+      var def=DRIVE_STRUCTURE[path];
+      if(!def)throw new Error("Okänd sökväg: "+path);
+      var parentId=await driveResolveFolder(def);
+      // Sök — explicit uteslut papperskorgen
+      var q="name='data.json' and '"+parentId+"' in parents and trashed=false";
+      var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id,name,createdTime)&orderBy=createdTime",{headers:{Authorization:"Bearer "+accessToken}});
+      var d=await r.json();
+      if(d.files&&d.files.length>1){
+        reportDriveError(path,"⚠️ Flera data.json-filer hittades i mappen '"+def.join("/")+"'. Ta bort de extra filerna i Google Drive manuellt. Använder den äldsta.");
+        driveIdCache[path]=d.files[0].id;
+        saveDriveCache();
+        return driveIdCache[path];
+      }
+      if(d.files&&d.files.length===1){
+        driveIdCache[path]=d.files[0].id;
+        saveDriveCache();
+        return driveIdCache[path];
+      }
+      delete driveIdCache[path];
+      saveDriveCache();
+      throw new Error("FIL_SAKNAS:"+path);
+    }finally{
+      delete driveIdCachePromise[path];
+    }
+  })();
+  return driveIdCachePromise[path];
 }
 
 async function driveEnsureFile(path){

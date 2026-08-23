@@ -338,8 +338,8 @@ async function init(){
     }
   }
   // Redan ett giltigt sparat access-token?
-  var savedToken=localStorage.getItem("mb2_access_token");
-  var expiry=parseInt(localStorage.getItem("mb2_token_expiry")||"0");
+  var savedToken=localStorage.getItem("akt_access_token");
+  var expiry=parseInt(localStorage.getItem("akt_token_expiry")||"0");
   if(savedToken&&Date.now()<expiry-2*60*1000){
     accessToken=savedToken;
     if(!userInfo)await fetchUserInfo();
