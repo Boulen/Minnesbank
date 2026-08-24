@@ -347,7 +347,7 @@ async function showApp(){
       var v=btn.dataset.v;
       if(v==="history"){
         setView("history");
-        loadTabsProgressively(["aktiviteter","samtaltext","samtalmuntligt","funderingar","media"],function(){openToday();renderHistory();});
+        loadTabsProgressively(["aktiviteter","samtaltext","samtalmuntligt","funderingar"],function(){openToday();renderHistory();});
       } else if(v==="installningar"){setView("installningar");loadTabsProgressively(["installningar"],render);}
       else if(v==="ai"){
         setView("ai");
@@ -357,7 +357,7 @@ async function showApp(){
       }
       else if(v==="aktivitet"){
         setView("aktivitet");
-        loadTabsProgressively(["aktiviteter","samtaltext","samtalmuntligt","funderingar","media","inmatningar"],function(){
+        loadTabsProgressively(["aktiviteter","samtaltext","samtalmuntligt","funderingar","inmatningar"],function(){
           renderLogAktivitet();updateHandelser(null);
         });
       }
@@ -387,7 +387,7 @@ async function showApp(){
   saveDriveCache();
   Object.keys(tabLoaded).forEach(function(k){tabLoaded[k]=false;});
   await runMigrationsIfNeeded();
-  loadTabsProgressively(["aktiviteter","installningar","samtaltext","samtalmuntligt","funderingar","media","inmatningar"],function(){
+  loadTabsProgressively(["aktiviteter","installningar","samtaltext","samtalmuntligt","funderingar","inmatningar"],function(){
     render();updateHandelser(null);
   });
 }
@@ -709,8 +709,31 @@ async function driveMkdir(name,parentId){
   return driveDirCachePromise[ckey];
 }
 
+// Appen kan bara skapa/hitta mappar den SJÄLV skapat (drive.file-behörighet tillåter
+// inte åtkomst till mappar skapade manuellt i Drive-gränssnittet). Därför skapar/hittar
+// appen sin egen rotmapp i Drive första gången, istället för att peka på ett
+// hårdkodat FOLDER_ID som kanske inte är app-skapat.
+var APP_ROOT_FOLDER_NAME="Minnesbanken (data)";
+var appRootIdCache=null,appRootIdPromise=null;
+async function getAppRootFolderId(){
+  if(appRootIdCache)return appRootIdCache;
+  if(appRootIdPromise)return appRootIdPromise;
+  appRootIdPromise=(async function(){
+    var q="name='"+APP_ROOT_FOLDER_NAME+"' and 'root' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
+    var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+    var d=await r.json();
+    if(d.files&&d.files.length>0){appRootIdCache=d.files[0].id;return appRootIdCache;}
+    var r2=await fetch(DRIVE_API,{method:"POST",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:JSON.stringify({name:APP_ROOT_FOLDER_NAME,mimeType:"application/vnd.google-apps.folder"})});
+    var d2=await r2.json();
+    appRootIdCache=d2.id;
+    return appRootIdCache;
+  })();
+  var res=await appRootIdPromise;
+  appRootIdPromise=null;
+  return res;
+}
 async function driveResolveFolder(def){
-  var parentId=FOLDER_ID;
+  var parentId=await getAppRootFolderId();
   for(var i=0;i<def.length;i++){
     parentId=await driveMkdir(def[i],parentId);
   }
@@ -965,7 +988,7 @@ function showFileMissingError(path,data){
 
 async function driveWriteJpeg(filename,base64,mtype){
   // Get or create top-level Bilder folder
-  var bilderId=await driveMkdir("Bilder",FOLDER_ID);
+  var bilderId=await driveMkdir("Bilder",await getAppRootFolderId());
   // Convert base64 to binary
   var binary=atob(base64);
   var bytes=new Uint8Array(binary.length);
