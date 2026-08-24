@@ -832,16 +832,97 @@ function openJsonEditor(){
     if(key==="bilder")return {images:imageHist.map(function(i){var c=Object.assign({},i);delete c.base64;return c;})};
     return {cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE};
   }
+  // Var respektive JSON faktiskt ligger i Drive - används av "Öppna i Google Drive"-knappen.
+  function driveTargetFor(key){
+    if(key==="aktivitet")return {folder:"Aktivitet",filename:"data.json"};
+    if(key==="bilder")return {folder:"Bilder",filename:"data.json"};
+    return {folder:"Aktivitet",filename:"settings.json"};
+  }
+  // Söker EFTER filen utan att skapa något - bara för att kunna länka dit.
+  async function findDriveFileIdReadOnly(folderName,filename){
+    var q="name='"+folderName+"' and '"+FOLDER_ID+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
+    var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    var d=await r.json();
+    if(!(d.files&&d.files.length))return null;
+    var folderId=d.files[0].id;
+    var q2="name='"+filename+"' and '"+folderId+"' in parents and trashed=false";
+    var r2=await fetch(DRIVE_API+"?q="+encodeURIComponent(q2)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r2.ok)throw new Error("HTTP "+r2.status);
+    var d2=await r2.json();
+    return (d2.files&&d2.files.length)?d2.files[0].id:null;
+  }
+  // Kollar om filen finns i Drive när redigeraren öppnas / man byter val. Om den saknas visas
+  // ett tydligt meddelande med en "Skapa filen"-knapp. Skapandet gör ALDRIG en PATCH/overwrite -
+  // bara POST av en helt ny fil, och kollar en sista gång precis innan att filen fortfarande
+  // saknas (så vi aldrig råkar skapa en dubblett ovanpå en fil som dykt upp under tiden).
+  function checkFileExists(){
+    var statusEl=ov2.querySelector("#je-status");
+    if(!statusEl)return;
+    if(!accessToken){statusEl.innerHTML="";return;}
+    statusEl.style.color="#5c5c5c";
+    statusEl.textContent="Kontrollerar om filen finns i Drive...";
+    var target=driveTargetFor(current);
+    findDriveFileIdReadOnly(target.folder,target.filename).then(function(fileId){
+      if(!statusEl.isConnected)return; // panelen kan ha stängts/bytts under tiden
+      if(fileId){statusEl.innerHTML="";return;}
+      statusEl.style.color="#d97a83";
+      statusEl.innerHTML="";
+      var msg=document.createElement("span");
+      msg.textContent="⚠️ Filen finns inte i Drive ännu. ";
+      var createBtn=document.createElement("button");
+      createBtn.textContent="Skapa filen";
+      createBtn.className="sec ghost";
+      createBtn.style.cssText="padding:3px 10px;font-size:11px;margin-left:4px";
+      createBtn.onclick=function(){createMissingFile(target,statusEl,createBtn);};
+      statusEl.appendChild(msg);
+      statusEl.appendChild(createBtn);
+    }).catch(function(e){
+      if(!statusEl.isConnected)return;
+      statusEl.style.color="#d97a83";
+      statusEl.textContent="Kunde inte kontrollera Drive: "+e.message;
+    });
+  }
+  async function createMissingFile(target,statusEl,createBtn){
+    createBtn.disabled=true;createBtn.textContent="Skapar...";
+    try{
+      // Sista koll precis innan skapandet - om filen dykt upp under tiden avbryter vi
+      // hellre än att riskera en dubblett.
+      var stillMissing=!(await findDriveFileIdReadOnly(target.folder,target.filename));
+      if(!stillMissing){
+        statusEl.style.color="#5c5c5c";
+        statusEl.textContent="Filen fanns redan (skapades av något annat under tiden) - inget skrevs över.";
+        return;
+      }
+      var folderId=await driveMkdir(target.folder,FOLDER_ID);
+      if(!folderId)throw new Error("Kunde inte skapa/hitta mappen "+target.folder);
+      var form=new FormData();
+      form.append("metadata",new Blob([JSON.stringify({name:target.filename,parents:[folderId],mimeType:"application/json"})],{type:"application/json"}));
+      form.append("file",new Blob([JSON.stringify(dataFor(current))],{type:"application/json"}));
+      var cr=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
+      if(!cr.ok)throw new Error("HTTP "+cr.status);
+      var cd=await cr.json();
+      if(!cd.id)throw new Error("Drive returnerade inget fil-id");
+      statusEl.style.color="#4fa8ff";
+      statusEl.textContent="✓ Filen skapad i Drive.";
+    }catch(e){
+      statusEl.style.color="#d97a83";
+      statusEl.textContent="Kunde inte skapa filen: "+e.message;
+      createBtn.disabled=false;createBtn.textContent="Skapa filen";
+    }
+  }
   function render(){
     ov2.innerHTML="<div style='background:#161616;border-radius:16px;width:100%;max-width:520px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden'>"
-      +"<div style='padding:14px 18px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between;gap:10px'>"
-      +"<select id='je-select' style='background:#131313;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:6px 8px'>"
+      +"<div style='padding:14px 18px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap'>"
+      +"<select id='je-select' style='background:#131313;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:6px 8px;flex:1;min-width:110px'>"
       +"<option value='aktivitet'"+(current==="aktivitet"?" selected":"")+">Aktivitet</option>"
       +"<option value='bilder'"+(current==="bilder"?" selected":"")+">Bilder</option>"
       +"<option value='installningar'"+(current==="installningar"?" selected":"")+">Inställningar</option>"
       +"</select>"
-      +"<button id='je-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1'>✕</button>"
+      +"<button id='je-open-drive' title='Öppna filen i Google Drive' style='background:none;border:1px solid #2a2a2a;border-radius:8px;color:#4fa8ff;font-size:12px;padding:6px 10px;cursor:pointer;white-space:nowrap;flex-shrink:0'>🔗 Öppna i Drive</button>"
+      +"<button id='je-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1;flex-shrink:0'>✕</button>"
       +"</div>"
+      +"<div id='je-status' style='padding:8px 18px 0;font-size:11px'></div>"
       +"<textarea id='je-text' spellcheck='false' style='flex:1;background:#0a0a0a;color:#f2f2f2;border:none;padding:14px;font-family:monospace;font-size:12px;min-height:300px;resize:vertical'>"+esc(JSON.stringify(dataFor(current),null,2))+"</textarea>"
       +(current==="bilder"?"<div style='padding:0 18px 6px;font-size:11px;color:#5c5c5c'>Själva bilddatan (base64) visas inte här och rörs inte om du inte tar bort en post helt.</div>":"")
       +"<div id='je-warning' style='padding:0 18px 8px;font-size:11px;color:#d97a83'></div>"
@@ -853,6 +934,20 @@ function openJsonEditor(){
     ov2.querySelector("#je-close").onclick=function(){ov2.remove();};
     ov2.querySelector("#je-cancel").onclick=function(){ov2.remove();};
     ov2.querySelector("#je-select").onchange=function(){current=ov2.querySelector("#je-select").value;render();};
+    checkFileExists();
+    ov2.querySelector("#je-open-drive").onclick=function(){
+      var warn=ov2.querySelector("#je-warning");
+      if(!accessToken){warn.style.color="#d97a83";warn.textContent="Logga in för att öppna filen i Drive.";return;}
+      warn.style.color="#5c5c5c";warn.textContent="Söker filen i Drive...";
+      var target=driveTargetFor(current);
+      findDriveFileIdReadOnly(target.folder,target.filename).then(function(fileId){
+        if(!fileId){warn.style.color="#d97a83";warn.textContent="Filen finns inte i Drive ännu (har inte sparats dit).";return;}
+        warn.textContent="";
+        window.open("https://drive.google.com/file/d/"+fileId+"/view","_blank");
+      }).catch(function(e){
+        warn.style.color="#d97a83";warn.textContent="Kunde inte hitta filen: "+e.message;
+      });
+    };
     ov2.querySelector("#je-save").onclick=function(){
       var txt=ov2.querySelector("#je-text").value;
       var warn=ov2.querySelector("#je-warning");
@@ -883,21 +978,6 @@ function openJsonEditor(){
   }
   render();
   document.body.appendChild(ov2);
-}
-
-function clearAktivitetData(){
-  confirmDelete("Tömma ALLA loggade aktiviteter? Detta går inte att ångra.",function(){
-    logs=[];
-    saveAndSync("aktiviteter");
-    renderLogAktivitet();
-  });
-}
-function clearBilderData(){
-  confirmDelete("Tömma ALLA sparade bilder? Detta går inte att ångra.",function(){
-    imageHist=[];
-    saveAndSync("bilder");
-    renderLogAktivitet();
-  });
 }
 
 function ensureJsPDF(){
@@ -1030,20 +1110,20 @@ function showAktivitetSettings(){
       +"<button class='chip' id='as-newcat-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
       +"</div>"
 
-      +"<div class='lbl' style='margin-top:18px'>Data & backup</div>"
-      +"<button id='as-json-editor' class='sec ghost' style='width:100%;margin-bottom:8px'>📝 Öppna/redigera JSON-filer</button>"
-      +"<div style='display:flex;gap:8px;margin-bottom:12px'>"
-      +"<button id='as-clear-akt' class='sec ghost' style='flex:1;color:#d97a83'>Töm Aktivitet</button>"
-      +"<button id='as-clear-bild' class='sec ghost' style='flex:1;color:#d97a83'>Töm Bilder</button>"
-      +"</div>"
-      +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:6px'>Exportera månad som PDF</div>"
+      +"<div class='lbl' style='margin-top:18px'>Exportera månad som PDF</div>"
       +"<select id='as-month-select' style='width:100%;background:#131313;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;padding:9px 10px;margin-bottom:8px'>"
       +getAvailableMonths().map(function(mk){return "<option value='"+mk+"'>"+monthLabel(mk)+"</option>";}).join("")
       +"</select>"
-      +"<div style='display:flex;gap:8px;margin-bottom:14px'>"
+      +"<div style='display:flex;gap:8px;margin-bottom:18px'>"
       +"<button id='as-pdf-akt' class='sec ghost' style='flex:1'>📄 Aktivitet</button>"
       +"<button id='as-pdf-bild' class='sec ghost' style='flex:1'>📄 Bilder</button>"
       +"</div>"
+
+      +"<div class='lbl'>Data & backup</div>"
+      // OBS: "Data & backup" ska alltid ligga SIST i panelen, efter alla andra sektioner
+      // (Kategorier, Exportera månad som PDF, och framtida sektioner som Kategori-snabbval/
+      // Beteende/Fält). Lägg nya inställningssektioner ovanför den här, aldrig under.
+      +"<button id='as-json-editor' class='sec ghost' style='width:100%'>📝 Öppna/redigera JSON-filer</button>"
 
       +"</div>"
       +"<div style='padding:16px 20px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
@@ -1112,8 +1192,6 @@ function showAktivitetSettings(){
     if(newLabelEl)newLabelEl.onkeydown=function(e){if(e.key==="Enter")ov.querySelector("#as-newcat-add").click();};
 
     ov.querySelector("#as-json-editor").onclick=function(){openJsonEditor();};
-    ov.querySelector("#as-clear-akt").onclick=function(){clearAktivitetData();};
-    ov.querySelector("#as-clear-bild").onclick=function(){clearBilderData();};
     ov.querySelector("#as-pdf-akt").onclick=function(e){
       var mk=ov.querySelector("#as-month-select").value;
       var btn=e.target;var orig=btn.textContent;btn.textContent="Skapar...";btn.disabled=true;
@@ -1184,3 +1262,4 @@ function resetLogForm(){
   var pi=document.getElementById("pi");if(pi)pi.value="";
   var ni=document.getElementById("ni");if(ni){ni.value="";autoResizeTextarea(ni);}
 }
+
