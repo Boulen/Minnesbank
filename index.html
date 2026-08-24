@@ -41,14 +41,8 @@
       <div class="header-actions">
         <div class="tabs" style="-webkit-overflow-scrolling:touch;">
           <button class="tab on" data-v="aktivitet">Aktivitet</button>
-          <button class="tab" data-v="funderingar"><span class="tab-short">Not...</span><span class="tab-full">Notering</span></button>
-          <button class="tab" data-v="samtal"><span class="tab-short">Sam...</span><span class="tab-full">Samtal</span></button>
-          <button class="tab" data-v="konversation"><span class="tab-short">Kon...</span><span class="tab-full">Konversation</span></button>
-          <button class="tab" data-v="utvarderingar"><span class="tab-short">Betyg</span><span class="tab-full">Betyg</span></button>
-          <button class="tab" data-v="ai"><span class="tab-short">AI</span><span class="tab-full">AI</span></button>
           <button class="tab" data-v="history">Historik</button>
         </div>
-        <button type="button" id="syn-to-translate-btn" title="Gå till AI → Översättning" style="background:none;border:none;color:#5c5c5c;font-size:12px;cursor:pointer;padding:0 4px;flex-shrink:0">🌐</button>
         <span id="global-load-spinner" class="spnr" style="width:14px;height:14px;border-width:2px;display:none;flex-shrink:0"></span>
         <button class="gear-btn" onclick="openInstallningarOverlay();" title="Inställningar">⚙</button>
       </div>
@@ -62,15 +56,16 @@
 
 <script src="js/core.js"></script>
 <script src="js/sokbar.js"></script>
-<script src="js/drive.js"></script>
-<script src="js/samtal.js"></script>
 <script src="js/historik.js"></script>
 <script src="js/aktivitet.js"></script>
+<script src="js/installningar.js"></script>
+<!-- Läggs till allteftersom varje flik blir klar:
+<script src="js/samtal.js"></script>
 <script src="js/notering.js"></script>
 <script src="js/konversation.js"></script>
 <script src="js/betyg.js"></script>
 <script src="js/ai.js"></script>
-<script src="js/installningar.js"></script>
+-->
 <script>
 init();
 </script>
