@@ -805,7 +805,7 @@ var driveErrors=[];
 
 function showDriveWriteError(path,msg,data){
   var def=DRIVE_STRUCTURE[path]||[path];
-  var displayPath=def.join("/")+"/data.json";
+  var displayPath=def.join("/")+"/"+jsonFileNameFor(path);
   var overlay=document.createElement("div");
   overlay.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px";
   overlay.innerHTML="<div style='background:#161616;border-radius:16px;border:1px solid #d97a83;padding:20px;width:100%;max-width:420px'>"
@@ -913,7 +913,8 @@ async function driveRead(path){
 
 function showFileMissingError(path,data){
   var def=DRIVE_STRUCTURE[path]||[path];
-  var displayPath=def.join("/")+"/data.json";
+  var fname=jsonFileNameFor(path);
+  var displayPath=def.join("/")+"/"+fname;
   var overlay=document.createElement("div");
   overlay.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px";
   overlay.innerHTML="<div style='background:#161616;border-radius:16px;border:1px solid #d97a83;padding:20px;width:100%;max-width:420px'>"
@@ -932,43 +933,38 @@ function showFileMissingError(path,data){
     catch(err){this.textContent="Fel: "+err.message;this.disabled=false;}
   };
 
-  // Search for all data.json files in AI-Assistent folder
-  var listDiv=overlay.querySelector("#fmr-list");
   (async function(){
     try{
-      var q="name='data.json' and '"+FOLDER_ID+"' in parents and trashed=false";
-      // Also search recursively by listing all files in folder tree
-      var r=await fetch(DRIVE_API+"?q="+encodeURIComponent("name='data.json' and trashed=false")+"&fields=files(id,name,parents)&pageSize=50",{headers:{Authorization:"Bearer "+accessToken}});
+      var appRootId=await getAppRootFolderId();
+      var q="name='"+fname+"' and '"+appRootId+"' in parents and trashed=false";
+      var r=await fetch(DRIVE_API+"?q="+encodeURIComponent("name='"+fname+"' and trashed=false")+"&fields=files(id,name,parents)&pageSize=50",{headers:{Authorization:"Bearer "+accessToken}});
       var d=await r.json();
-      // Filter to only files inside our AI-Assistent folder tree
-      // We'll get parent folder names by looking at known driveDirCache
       var files=d.files||[];
-      // Also do a direct search inside FOLDER_ID tree
-      var r2=await fetch(DRIVE_API+"?q="+encodeURIComponent("name='data.json' and trashed=false")+"&fields=files(id,name,parents,webViewLink)&pageSize=100",{headers:{Authorization:"Bearer "+accessToken}});
+      var r2=await fetch(DRIVE_API+"?q="+encodeURIComponent("name='"+fname+"' and trashed=false")+"&fields=files(id,name,parents,webViewLink)&pageSize=100",{headers:{Authorization:"Bearer "+accessToken}});
       var d2=await r2.json();
       files=d2.files||[];
 
       // Get folder names for display
       var folderIds=Object.values(driveDirCache);
       var relevantFiles=files.filter(function(f){
-        return f.parents&&f.parents.some(function(p){return folderIds.indexOf(p)>=0||p===FOLDER_ID;});
+        return f.parents&&f.parents.some(function(p){return folderIds.indexOf(p)>=0||p===appRootId;});
       });
 
       if(!relevantFiles.length){
-        listDiv.innerHTML="<div style='color:#5c5c5c;font-size:13px'>Inga data.json-filer hittades i AI-Assistent-mappen.</div>";
+        listDiv.innerHTML="<div style='color:#5c5c5c;font-size:13px'>Inga "+fname+"-filer hittades i "+APP_ROOT_FOLDER_NAME+"-mappen.</div>";
         return;
       }
 
       // Build folder name lookup
       var folderNameMap={};
       Object.entries(driveDirCache).forEach(function(e){folderNameMap[e[1]]=e[0].split("/").pop();});
-      folderNameMap[FOLDER_ID]="AI-Assistent";
+      folderNameMap[appRootId]=APP_ROOT_FOLDER_NAME;
 
       listDiv.innerHTML="<div style='font-size:13px;color:#f2f2f2;margin-bottom:8px'>Välj fil att länka:</div>"
         +relevantFiles.map(function(f){
           var parentName=f.parents?folderNameMap[f.parents[0]]||f.parents[0]:"";
           return "<button data-fileid='"+f.id+"' style='display:block;width:100%;text-align:left;padding:8px 12px;margin-bottom:6px;border-radius:8px;background:#131313;border:1px solid #2a2a2a;color:#f2f2f2;font-size:13px;cursor:pointer;font-family:inherit'>"
-            +"<span style='color:#4fa8ff'>📄</span> "+parentName+"/data.json"
+            +"<span style='color:#4fa8ff'>📄</span> "+parentName+"/"+fname
             +"</button>";
         }).join("");
 
@@ -1064,7 +1060,7 @@ function isDataEmptyForWrite(data){
 
 function showEmptyWriteBlocked(path,data){
   var def=DRIVE_STRUCTURE[path]||[path];
-  var displayPath=def.join("/")+"/data.json";
+  var displayPath=def.join("/")+"/"+jsonFileNameFor(path);
   var overlay=document.createElement("div");
   overlay.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px";
   overlay.innerHTML="<div style='background:#161616;border-radius:16px;border:1px solid #d97a83;padding:20px;width:100%;max-width:420px'>"
@@ -1090,9 +1086,12 @@ async function driveWrite(path,data,force){
       try{id=await driveGetFileId(path);}
       catch(e){
         if(e.message&&e.message.startsWith("FIL_SAKNAS:")){
-          showFileMissingError(path,data);return;
+          // Första sparningen någonsin till den här sökvägen - filen finns
+          // förstås inte än. Skapa den tyst istället för att fråga användaren.
+          id=await driveEnsureFile(path);
+        } else {
+          throw e;
         }
-        throw e;
       }
     }
     if(!force&&isDataEmptyForWrite(data)){
@@ -1113,7 +1112,10 @@ async function driveWrite(path,data,force){
     if(r.status===404){
       delete driveIdCache[path];saveDriveCache();
       try{id=await driveGetFileId(path);}
-      catch(e){showFileMissingError(path,data);return;}
+      catch(e){
+        if(e.message&&e.message.startsWith("FIL_SAKNAS:")){id=await driveEnsureFile(path);}
+        else{showDriveWriteError(path,e.message,data);return;}
+      }
       await fetch(DRIVE_UPLOAD+"/"+id+"?uploadType=media",{method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:JSON.stringify(data,null,2)});
     }
   }catch(e){showDriveWriteError(path,e.message,data);}
@@ -1139,7 +1141,7 @@ async function driveWriteRaw(path,rawText){
 
 function openJsonEditor(path){
   var def=DRIVE_STRUCTURE[path]||[path];
-  var displayPath=def.join("/")+"/data.json";
+  var displayPath=def.join("/")+"/"+jsonFileNameFor(path);
   var overlay=document.createElement("div");
   overlay.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px";
   overlay.innerHTML="<div style='background:#161616;border-radius:16px;border:1px solid #4fa8ff;padding:20px;width:100%;max-width:640px;max-height:85vh;display:flex;flex-direction:column'>"
