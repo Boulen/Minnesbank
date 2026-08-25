@@ -338,16 +338,19 @@ async function saveImagePngCopy(imgMeta,base64,mtype){
 // Lokal, kompakt emoji-lista för kategori-inställningarna (fristående kopia - rör inte
 // core.js/downloadEmojiRef, som äger den fullständiga emoji-referensen).
 var AKTIVITET_EMOJI_GROUPS=[
-  ["Ansikten & känslor","😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 😉 😍 🥰 😘 😎 🥳 😏 😢 😭 😤 😠 🤔 😴 🤩 🥺"],
-  ["Sport & aktivitet","⚽ 🏀 🏈 🎾 🏓 🏸 🎣 🥊 🏋️ 🧘 🏄 🚴 🏊 🏆 🎯 🎮 🎨 🎵 🎬 📚 ✍️"],
-  ["Mat & dryck","🍎 🍊 🍇 🍓 🥑 🥗 🍔 🍕 🍣 🍜 🍰 ☕ 🍵 🍺 🍷 🥤"],
-  ["Natur & djur","🌲 🌸 🌞 🌙 ⭐ 🌈 ❄️ 🔥 💧 🐶 🐱 🐦 🦋 🐟"],
-  ["Vardag & objekt","🏠 🚗 💼 💻 📱 🛏 🧹 🧺 🛒 🔧 💡 📷 🎁 🕒 💰 📈 ✨"]
+  ["Ansikten & känslor","😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🫡 🫢 🫣 🤭 🫠 😶 😐 😑 😬 🙄 😯 😦 😧 😮 😲 🥱 😴 🤤 😪 😵 💫 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕 🤑 😈 👿"],
+  ["Händer & kropp","👋 🤚 🖐 ✋ 🖖 🫱 🫲 👌 🤌 🤏 ✌️ 🤞 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 👐 🤲 🤝 🙏 ✍️ 💅 💪 🦾 🫀 🧠 👀 👁 👄 👅 🦷"],
+  ["Sport & aktivitet","⚽ 🏀 🏈 ⚾ 🎾 🏐 🏉 🥏 🎱 🏓 🏸 🏒 🏑 🥍 🏏 🥅 ⛳ 🎣 🤿 🥊 🥋 🎽 🛹 🛼 🎿 ⛷ 🏂 🪂 🏋️ 🤸 ⛹️ 🤺 🤾 🏌️ 🏇 🧘 🏄 🚣 🧗 🚴 🚵 🏊 🤽 🤹 🏆 🥇 🥈 🥉 🎯 🎮 🕹 🎨 🎵 🎬 📚 ✍️ 🎧 🎤"],
+  ["Mat & dryck","🍎 🍊 🍋 🍇 🍓 🫐 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🍆 🥑 🥦 🥬 🥒 🌶 🧄 🧅 🥔 🌽 🥕 🥗 🍔 🍟 🌭 🍕 🥪 🥙 🌮 🌯 🫔 🍱 🍣 🍜 🍝 🍛 🍚 🥟 🍦 🍧 🍨 🍩 🍪 🎂 🍰 🧁 🥧 🍫 🍬 🍭 🍯 ☕ 🍵 🧋 🥤 🍺 🍻 🥂 🍷 🥃 🍸 🍹 🧃"],
+  ["Resor & platser","🚗 🚕 🚙 🚌 🏎 🚓 🚑 🚒 🛻 🚚 🚛 🚜 🛵 🏍 🚲 🛴 🚁 🛸 🚀 ✈️ 🚂 ⛵ 🛶 🚤 🛳 🚢 ⚓ 🏠 🏡 🏢 🏥 🏦 🏨 🏪 🏫 🏬 🏭 🏯 🏰 ⛪ 🕌 🗼 🗽 🌁 🌃 🌄 🌅 🌆 🌇 🌉 🎪 ⛺ 🏕"],
+  ["Natur","🌲 🌳 🌴 🪵 🌱 🌿 ☘️ 🍀 🍃 🍂 🍁 🍄 🌾 💐 🌷 🌹 🥀 🌺 🌸 🌼 🌻 🌞 🌝 🌛 🌜 🌚 🌕 🌙 🌟 ⭐ 🌠 ☁️ ⛅ ⛈ 🌤 🌧 🌨 🌩 🌪 🌫 🌬 🌀 🌈 ❄️ ⛄ ☃️ 💧 💦 🌊 🔥 🌋"],
+  ["Djur","🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🙈 🙉 🙊 🐔 🐧 🐦 🐤 🦆 🦅 🦉 🦇 🐺 🐴 🦄 🐝 🦋 🐌 🐞 🐢 🐍 🦎 🐙 🦑 🦐 🦀 🐡 🐠 🐟 🐬 🐳 🦈 🐊 🐘 🦛 🦒 🦘 🐕 🐈 🦜 🦢 🕊 🦔 🐇 🦝 🦦 🦥"],
+  ["Vardag & objekt","🏠 💼 💻 📱 🛏 🧹 🧺 🧴 🛒 🔧 🔨 ⚙️ 💡 🔦 📷 🎁 🕒 ⏰ 💰 💳 📈 📉 📊 📌 📎 ✂️ 🔒 🔑 📚 📖 📝 ✏️ 🖊 📐 🧮 🔬 🔭 💉 💊 🩹 🚪 🛋 🚿 🛁 🧼 🧻 🏺 ✨ 🎉 🎊"]
 ];
 function openEmojiPicker(onSelect){
   var ov=document.createElement("div");
-  ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:10000;display:flex;align-items:flex-end;justify-content:center";
-  ov.innerHTML="<div style='background:#161616;border-radius:20px 20px 0 0;width:100%;max-width:460px;max-height:75vh;display:flex;flex-direction:column'>"
+  ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px 16px";
+  ov.innerHTML="<div style='background:#161616;border-radius:20px;width:100%;max-width:460px;max-height:75vh;display:flex;flex-direction:column'>"
     +"<div style='padding:14px 18px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between;flex-shrink:0'>"
     +"<div style='font-size:15px;font-weight:600;color:#f2f2f2'>Välj emoji</div>"
     +"<button id='ep-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1'>✕</button>"
