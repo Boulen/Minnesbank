@@ -715,7 +715,54 @@ async function driveMkdir(name,parentId){
 // hårdkodat FOLDER_ID som kanske inte är app-skapat.
 var APP_ROOT_FOLDER_NAME="Minnesbanken (data)";
 var appRootIdCache=null,appRootIdPromise=null;
+// ---- Google Picker: låt användaren explicit godkänna en BEFINTLIG mapp ----
+// Med drive.file-behörighet kan appen bara nå mappar den själv skapat - OM inte
+// användaren explicit väljer en befintlig mapp via Picker, vilket ger appen åtkomst
+// till precis den mappen (Googles avsedda mönster för detta scenario).
+var PICKER_API_KEY="AIzaSyAqPDe6qHGFrhMvf5KQ0T5qRGNzmcJSXUw";
+var PICKED_FOLDER_STORAGE_KEY="mb2_picked_folder_id";
+var pickerLoaded=false;
+function ensurePickerLoaded(){
+  return new Promise(function(resolve){
+    if(pickerLoaded){resolve();return;}
+    if(typeof gapi==="undefined"){resolve();return;} // apis.google.com hann inte ladda - knappen no-opar
+    gapi.load("picker",function(){pickerLoaded=true;resolve();});
+  });
+}
+async function showFolderPicker(){
+  if(!accessToken){alert("Logga in först.");return;}
+  await ensurePickerLoaded();
+  if(!pickerLoaded||typeof google==="undefined"||!google.picker){
+    alert("Kunde inte ladda Google Picker. Kontrollera att Picker API är aktiverat i Google Cloud Console.");
+    return;
+  }
+  var view=new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+    .setSelectFolderEnabled(true)
+    .setIncludeFolders(true)
+    .setMimeTypes("application/vnd.google-apps.folder");
+  var picker=new google.picker.PickerBuilder()
+    .addView(view)
+    .setOAuthToken(accessToken)
+    .setDeveloperKey(PICKER_API_KEY)
+    .setTitle("Välj mapp för Minnesbankens data")
+    .setCallback(function(data){
+      if(data.action===google.picker.Action.PICKED&&data.docs&&data.docs[0]){
+        var folder=data.docs[0];
+        localStorage.setItem(PICKED_FOLDER_STORAGE_KEY,folder.id);
+        // Rensa alla mappcachar - allt ska slås upp mot den nya mappen härnäst
+        appRootIdCache=null;driveDirCache={};driveDirCachePromise={};driveIdCache={};driveIdCachePromise={};
+        saveDriveCache();
+        showInfoPopup("Mapp vald","Data läses/skrivs nu mot mappen \""+esc(folder.name)+"\". Sidan laddas om.");
+        setTimeout(function(){location.reload();},1200);
+      }
+    })
+    .build();
+  picker.setVisible(true);
+}
+
 async function getAppRootFolderId(){
+  var picked=localStorage.getItem(PICKED_FOLDER_STORAGE_KEY);
+  if(picked)return picked;
   if(appRootIdCache)return appRootIdCache;
   if(appRootIdPromise)return appRootIdPromise;
   appRootIdPromise=(async function(){
