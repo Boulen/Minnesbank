@@ -745,7 +745,7 @@ async function driveResolveFolder(def){
 // tills vidare.
 var JSON_FILE_NAME_BY_PATH={
   "Aktivitet":"aktivitet.json",
-  "Bilder":"bilder.json"
+  "Bilder/Index":"bilder.json"
 };
 function jsonFileNameFor(path){
   return JSON_FILE_NAME_BY_PATH[path]||"data.json";
