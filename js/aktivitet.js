@@ -182,9 +182,8 @@ function bindTidpunktInp(inp){
 }
 
 // ---- Aktivitet-flikens egna inställningar (Kategorier, senare Kategori-snabbval/Beteende/Fält) ----
-// Sparas som en egen fil "settings.json" i samma Drive-mapp som Aktivitet-fliken redan
-// använder för sin data.json (loggarna) - fristående, ingen koppling till "shared"/Installningar-fliken.
-// Byggd direkt på de generella Drive-hjälparna i drive.js
+// Sparas som en egen fil "settings.json" i Aktivitet-mappen - fristående, ingen koppling till
+// "shared"/Installningar-fliken. Byggd direkt på de generella Drive-hjälparna i drive.js
 // (driveMkdir/DRIVE_API/DRIVE_UPLOAD/accessToken) utan att röra drive.js DRIVE_STRUCTURE-register.
 var AKTIVITET_FALT={plats:true,anteckning:true,bild:true};
 var AKTIVITET_BETEENDE={standardKategori:"",kameraRiktning:"environment",handelserSortering:"nyast"};
@@ -207,8 +206,7 @@ async function ensureAktivitetSettingsLoaded(){
   try{
     var aktId=await driveMkdir("Aktivitet",FOLDER_ID);
     if(!aktId)throw new Error("Kunde inte hitta/skapa Aktivitet-mappen i Drive (troligen behörighetsfel - kontrollera att du är inloggad)");
-    // Samma mapp som Aktivitet-fliken sparar sin data.json i - men EGEN fil ("settings.json")
-    // så vi aldrig av misstag söker/skriver över logg-filen (data.json) som redan ligger där.
+    // Egen fil ("settings.json") i Aktivitet-mappen, oberoende av övriga filer där.
     var q="name='settings.json' and '"+aktId+"' in parents and trashed=false";
     var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
     var d=await r.json();
@@ -238,7 +236,7 @@ async function saveAktivitetSettings(){
     var q="name='settings.json' and '"+aktId+"' in parents and trashed=false";
     var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
     var d=await r.json();
-    var body=JSON.stringify({cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE});
+    var body=JSON.stringify({cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE},null,2);
     if(d.files&&d.files.length){
       var pr=await fetch(DRIVE_UPLOAD+"/"+d.files[0].id+"?uploadType=media",{method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:body});
       if(!pr.ok)throw new Error("HTTP "+pr.status+" vid uppdatering av settings.json");
@@ -256,11 +254,11 @@ async function saveAktivitetSettings(){
   }
 }
 
-// Egen index-fil för Aktivitet-flikens bilder: Aktivitet/bilder.json (samma mapp som
-// data.json/settings.json, men eget filnamn). Innehåller bara metadata (titel, kategori,
-// tidsstämpel, driveId) - inte base64, som redan hanteras separat av saveImageToDrive.
-// OBS: imageHist är en delad variabel som ev. andra flikar också använder - den ursprungliga
-// "Bilder"-mappen/domänen rörs INTE här, detta är en tillkommande, Aktivitet-ägd spegling.
+// Egen index-fil för Aktivitet-flikens bilder: Aktivitet/bilder.json. Innehåller bara metadata
+// (titel, kategori, tidsstämpel, driveId) - inte base64, som redan hanteras separat av
+// saveImageToDrive. OBS: imageHist är en delad variabel som ev. andra flikar också använder -
+// den ursprungliga "Bilder"-mappen/domänen rörs INTE här, detta är en tillkommande,
+// Aktivitet-ägd spegling.
 async function saveAktivitetBilderIndex(){
   if(!accessToken)return;
   try{
@@ -269,7 +267,7 @@ async function saveAktivitetBilderIndex(){
     var q="name='bilder.json' and '"+aktId+"' in parents and trashed=false";
     var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
     var d=await r.json();
-    var body=JSON.stringify({images:imageHist.map(function(i){var c=Object.assign({},i);delete c.base64;return c;})});
+    var body=JSON.stringify({images:imageHist.map(function(i){var c=Object.assign({},i);delete c.base64;return c;})},null,2);
     if(d.files&&d.files.length){
       var pr=await fetch(DRIVE_UPLOAD+"/"+d.files[0].id+"?uploadType=media",{method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:body});
       if(!pr.ok)throw new Error("HTTP "+pr.status+" vid uppdatering av bilder.json");
@@ -896,7 +894,7 @@ function openJsonEditor(){
   // Var respektive JSON faktiskt ligger i Drive - används av "Öppna i Google Drive"-knappen
   // och av kontrollen som visar vilka filer som saknas.
   var AKTIVITET_JSON_TARGETS=[
-    {key:"aktivitet",label:"Aktivitet (data.json)",folder:"Aktivitet",filename:"data.json"},
+    {key:"aktivitet",label:"Aktivitet (aktivitet.json)",folder:"Aktivitet",filename:"aktivitet.json"},
     {key:"bilder",label:"Bilder (bilder.json)",folder:"Aktivitet",filename:"bilder.json"},
     {key:"installningar",label:"Inställningar (settings.json)",folder:"Aktivitet",filename:"settings.json"}
   ];
@@ -985,7 +983,7 @@ function openJsonEditor(){
       if(!folderId)throw new Error("Kunde inte skapa/hitta mappen "+target.folder);
       var form=new FormData();
       form.append("metadata",new Blob([JSON.stringify({name:target.filename,parents:[folderId],mimeType:"application/json"})],{type:"application/json"}));
-      form.append("file",new Blob([JSON.stringify(dataFor(target.key))],{type:"application/json"}));
+      form.append("file",new Blob([JSON.stringify(dataFor(target.key),null,2)],{type:"application/json"}));
       var cr=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
       if(!cr.ok)throw new Error("HTTP "+cr.status);
       var cd=await cr.json();

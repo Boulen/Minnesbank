@@ -740,6 +740,17 @@ async function driveResolveFolder(def){
   return parentId;
 }
 
+// Filnamn per sökväg — Aktivitet och Bilder har egna namngivna filer istället för det
+// generiska "data.json". Övriga sökvägar (ej aktiva flikar just nu) behåller "data.json"
+// tills vidare.
+var JSON_FILE_NAME_BY_PATH={
+  "Aktivitet":"aktivitet.json",
+  "Bilder":"bilder.json"
+};
+function jsonFileNameFor(path){
+  return JSON_FILE_NAME_BY_PATH[path]||"data.json";
+}
+
 async function driveGetFileId(path){
   // Cachen är trygg att lita på inom en session — ingen annan enhet kan ändra
   // filerna mitt i din session utan att sidan laddas om ändå.
@@ -750,12 +761,13 @@ async function driveGetFileId(path){
       var def=DRIVE_STRUCTURE[path];
       if(!def)throw new Error("Okänd sökväg: "+path);
       var parentId=await driveResolveFolder(def);
+      var fname=jsonFileNameFor(path);
       // Sök — explicit uteslut papperskorgen
-      var q="name='data.json' and '"+parentId+"' in parents and trashed=false";
+      var q="name='"+fname+"' and '"+parentId+"' in parents and trashed=false";
       var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id,name,createdTime)&orderBy=createdTime",{headers:{Authorization:"Bearer "+accessToken}});
       var d=await r.json();
       if(d.files&&d.files.length>1){
-        reportDriveError(path,"⚠️ Flera data.json-filer hittades i mappen '"+def.join("/")+"'. Ta bort de extra filerna i Google Drive manuellt. Använder den äldsta.");
+        reportDriveError(path,"⚠️ Flera "+fname+"-filer hittades i mappen '"+def.join("/")+"'. Ta bort de extra filerna i Google Drive manuellt. Använder den äldsta.");
         driveIdCache[path]=d.files[0].id;
         saveDriveCache();
         return driveIdCache[path];
@@ -780,8 +792,9 @@ async function driveEnsureFile(path){
   var def=DRIVE_STRUCTURE[path];
   if(!def)throw new Error("Okänd sökväg: "+path);
   var parentId=await driveResolveFolder(def);
+  var fname=jsonFileNameFor(path);
   var form=new FormData();
-  form.append("metadata",new Blob([JSON.stringify({name:"data.json",parents:[parentId],mimeType:"application/json"})],{type:"application/json"}));
+  form.append("metadata",new Blob([JSON.stringify({name:fname,parents:[parentId],mimeType:"application/json"})],{type:"application/json"}));
   form.append("file",new Blob(["{}"],{type:"application/json"}));
   var r2=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
   var d2=await r2.json();
