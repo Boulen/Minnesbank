@@ -832,13 +832,17 @@ function openJsonEditor(){
     if(key==="bilder")return {images:imageHist.map(function(i){var c=Object.assign({},i);delete c.base64;return c;})};
     return {cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE};
   }
-  // Var respektive JSON faktiskt ligger i Drive - används av "Öppna i Google Drive"-knappen.
+  // Var respektive JSON faktiskt ligger i Drive - används av "Öppna i Google Drive"-knappen
+  // och av kontrollen som visar vilka filer som saknas.
+  var AKTIVITET_JSON_TARGETS=[
+    {key:"aktivitet",label:"Aktivitet (data.json)",folder:"Aktivitet",filename:"data.json"},
+    {key:"bilder",label:"Bilder (data.json)",folder:"Bilder",filename:"data.json"},
+    {key:"installningar",label:"Inställningar (settings.json)",folder:"Aktivitet",filename:"settings.json"}
+  ];
   function driveTargetFor(key){
-    if(key==="aktivitet")return {folder:"Aktivitet",filename:"data.json"};
-    if(key==="bilder")return {folder:"Bilder",filename:"data.json"};
-    return {folder:"Aktivitet",filename:"settings.json"};
+    return AKTIVITET_JSON_TARGETS.find(function(t){return t.key===key;});
   }
-  // Söker EFTER filen utan att skapa något - bara för att kunna länka dit.
+  // Söker EFTER filen utan att skapa något - bara för att kunna länka dit/kontrollera.
   async function findDriveFileIdReadOnly(folderName,filename){
     var q="name='"+folderName+"' and '"+FOLDER_ID+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
     var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
@@ -852,63 +856,86 @@ function openJsonEditor(){
     var d2=await r2.json();
     return (d2.files&&d2.files.length)?d2.files[0].id:null;
   }
-  // Kollar om filen finns i Drive när redigeraren öppnas / man byter val. Om den saknas visas
-  // ett tydligt meddelande med en "Skapa filen"-knapp. Skapandet gör ALDRIG en PATCH/overwrite -
-  // bara POST av en helt ny fil, och kollar en sista gång precis innan att filen fortfarande
-  // saknas (så vi aldrig råkar skapa en dubblett ovanpå en fil som dykt upp under tiden).
+  // Kollar ALLA tre JSON-filer (inte bara den som råkar vara vald i dropdownen just nu) när
+  // redigeraren öppnas. Saknade filer listas med varsin "Skapa"-knapp så man kan skapa flera
+  // utan att behöva byta val fram och tillbaka. Skapandet gör ALDRIG en PATCH/overwrite - bara
+  // POST av en helt ny fil, och kollar en sista gång precis innan att filen fortfarande saknas
+  // (så vi aldrig råkar skapa en dubblett ovanpå en fil som dykt upp under tiden).
+  var missingChecked=false,missingList=null;
+  function renderMissingList(statusEl,missing){
+    statusEl.innerHTML="";
+    if(!missing.length)return;
+    statusEl.style.color="#d97a83";
+    var msg=document.createElement("div");
+    msg.textContent="⚠️ Dessa filer finns inte i Drive ännu:";
+    statusEl.appendChild(msg);
+    missing.forEach(function(target){
+      var row=document.createElement("div");
+      row.style.cssText="display:flex;align-items:center;gap:6px;margin-top:4px";
+      var label=document.createElement("span");
+      label.textContent=target.label;
+      label.style.flex="1";
+      var createBtn=document.createElement("button");
+      createBtn.textContent="Skapa";
+      createBtn.className="sec ghost";
+      createBtn.style.cssText="padding:3px 10px;font-size:11px;flex-shrink:0";
+      createBtn.onclick=function(){
+        createMissingFile(target,row,createBtn).then(function(){
+          missingList=missingList.filter(function(t){return t.key!==target.key;});
+        });
+      };
+      row.appendChild(label);
+      row.appendChild(createBtn);
+      statusEl.appendChild(row);
+    });
+  }
   function checkFileExists(){
     var statusEl=ov2.querySelector("#je-status");
     if(!statusEl)return;
     if(!accessToken){statusEl.innerHTML="";return;}
+    if(missingChecked){renderMissingList(statusEl,missingList);return;}
     statusEl.style.color="#5c5c5c";
-    statusEl.textContent="Kontrollerar om filen finns i Drive...";
-    var target=driveTargetFor(current);
-    findDriveFileIdReadOnly(target.folder,target.filename).then(function(fileId){
-      if(!statusEl.isConnected)return; // panelen kan ha stängts/bytts under tiden
-      if(fileId){statusEl.innerHTML="";return;}
-      statusEl.style.color="#d97a83";
-      statusEl.innerHTML="";
-      var msg=document.createElement("span");
-      msg.textContent="⚠️ Filen finns inte i Drive ännu. ";
-      var createBtn=document.createElement("button");
-      createBtn.textContent="Skapa filen";
-      createBtn.className="sec ghost";
-      createBtn.style.cssText="padding:3px 10px;font-size:11px;margin-left:4px";
-      createBtn.onclick=function(){createMissingFile(target,statusEl,createBtn);};
-      statusEl.appendChild(msg);
-      statusEl.appendChild(createBtn);
+    statusEl.textContent="Kontrollerar vilka filer som finns i Drive...";
+    Promise.all(AKTIVITET_JSON_TARGETS.map(function(t){
+      return findDriveFileIdReadOnly(t.folder,t.filename).then(function(id){return {target:t,found:!!id};});
+    })).then(function(results){
+      if(!statusEl.isConnected)return; // panelen kan ha stängts under tiden
+      missingChecked=true;
+      missingList=results.filter(function(r){return !r.found;}).map(function(r){return r.target;});
+      renderMissingList(statusEl,missingList);
     }).catch(function(e){
       if(!statusEl.isConnected)return;
       statusEl.style.color="#d97a83";
       statusEl.textContent="Kunde inte kontrollera Drive: "+e.message;
     });
   }
-  async function createMissingFile(target,statusEl,createBtn){
+  async function createMissingFile(target,rowEl,createBtn){
     createBtn.disabled=true;createBtn.textContent="Skapar...";
     try{
       // Sista koll precis innan skapandet - om filen dykt upp under tiden avbryter vi
       // hellre än att riskera en dubblett.
       var stillMissing=!(await findDriveFileIdReadOnly(target.folder,target.filename));
       if(!stillMissing){
-        statusEl.style.color="#5c5c5c";
-        statusEl.textContent="Filen fanns redan (skapades av något annat under tiden) - inget skrevs över.";
+        rowEl.textContent=target.label+": fanns redan (skapades av något annat under tiden) - inget skrevs över.";
+        rowEl.style.color="#5c5c5c";
         return;
       }
       var folderId=await driveMkdir(target.folder,FOLDER_ID);
       if(!folderId)throw new Error("Kunde inte skapa/hitta mappen "+target.folder);
       var form=new FormData();
       form.append("metadata",new Blob([JSON.stringify({name:target.filename,parents:[folderId],mimeType:"application/json"})],{type:"application/json"}));
-      form.append("file",new Blob([JSON.stringify(dataFor(current))],{type:"application/json"}));
+      form.append("file",new Blob([JSON.stringify(dataFor(target.key))],{type:"application/json"}));
       var cr=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
       if(!cr.ok)throw new Error("HTTP "+cr.status);
       var cd=await cr.json();
       if(!cd.id)throw new Error("Drive returnerade inget fil-id");
-      statusEl.style.color="#4fa8ff";
-      statusEl.textContent="✓ Filen skapad i Drive.";
+      rowEl.textContent="✓ "+target.label+" skapad.";
+      rowEl.style.color="#4fa8ff";
     }catch(e){
-      statusEl.style.color="#d97a83";
-      statusEl.textContent="Kunde inte skapa filen: "+e.message;
-      createBtn.disabled=false;createBtn.textContent="Skapa filen";
+      rowEl.style.color="#d97a83";
+      rowEl.textContent=target.label+": kunde inte skapas - "+e.message;
+      createBtn.disabled=false;createBtn.textContent="Skapa";
+      rowEl.appendChild(createBtn);
     }
   }
   function render(){
