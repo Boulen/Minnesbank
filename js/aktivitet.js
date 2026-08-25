@@ -256,6 +256,37 @@ async function saveAktivitetSettings(){
   }
 }
 
+// Egen index-fil för Aktivitet-flikens bilder: Aktivitet/bilder.json (samma mapp som
+// data.json/settings.json, men eget filnamn). Innehåller bara metadata (titel, kategori,
+// tidsstämpel, driveId) - inte base64, som redan hanteras separat av saveImageToDrive.
+// OBS: imageHist är en delad variabel som ev. andra flikar också använder - den ursprungliga
+// "Bilder"-mappen/domänen rörs INTE här, detta är en tillkommande, Aktivitet-ägd spegling.
+async function saveAktivitetBilderIndex(){
+  if(!accessToken)return;
+  try{
+    var aktId=await driveMkdir("Aktivitet",FOLDER_ID);
+    if(!aktId)throw new Error("Kunde inte hitta/skapa Aktivitet-mappen i Drive");
+    var q="name='bilder.json' and '"+aktId+"' in parents and trashed=false";
+    var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+    var d=await r.json();
+    var body=JSON.stringify({images:imageHist.map(function(i){var c=Object.assign({},i);delete c.base64;return c;})});
+    if(d.files&&d.files.length){
+      var pr=await fetch(DRIVE_UPLOAD+"/"+d.files[0].id+"?uploadType=media",{method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:body});
+      if(!pr.ok)throw new Error("HTTP "+pr.status+" vid uppdatering av bilder.json");
+    }else{
+      var form=new FormData();
+      form.append("metadata",new Blob([JSON.stringify({name:"bilder.json",parents:[aktId],mimeType:"application/json"})],{type:"application/json"}));
+      form.append("file",new Blob([body],{type:"application/json"}));
+      var cr=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
+      if(!cr.ok)throw new Error("HTTP "+cr.status+" vid skapande av bilder.json");
+      var cd=await cr.json();
+      if(!cd.id)throw new Error("Drive returnerade inget fil-id vid skapande");
+    }
+  }catch(e){
+    showAktivitetDriveError("Kunde inte spara Aktivitet/bilder.json",e);
+  }
+}
+
 // ---- PNG-kopior av bilder i egen toppnivå-mapp "PNG" ----
 // Additivt: bilder sparas fortsatt som vanligt i Bilder-domänen (imageHist/saveImageToDrive),
 // men en konverterad PNG-kopia laddas ÄVEN upp till en separat mapp som heter "PNG".
@@ -348,6 +379,33 @@ function openEmojiPicker(onSelect){
 // ---- Subtab-navigering: Logga / Bilder / (inställningar-kugghjul) ----
 var aktivitetSubtab="logga";
 
+// Håller koll på en ev. aktiv kamera-stream i Bilder-fliken oavsett var i koden den startades,
+// så den kan stängas av när man lämnar fliken (byter underflik, byter till en helt annan flik i
+// appen, eller bara navigerar bort) - annars fortsätter webbläsaren visa kameraindikatorn även
+// efter att kamera-elementen försvunnit ur DOM:en.
+var aktivitetBtCameraStream=null;
+function stopAktivitetCamera(){
+  if(aktivitetBtCameraStream){
+    aktivitetBtCameraStream.getTracks().forEach(function(t){t.stop();});
+    aktivitetBtCameraStream=null;
+  }
+}
+(function bindAktivitetCameraWatcher(){
+  if(window._aktivitetCameraWatcherBound)return;
+  window._aktivitetCameraWatcherBound=true;
+  var observer=new MutationObserver(function(){
+    if(!aktivitetBtCameraStream)return;
+    var camEl=document.getElementById("bt-camera-video");
+    if(!camEl||!camEl.isConnected)stopAktivitetCamera();
+  });
+  function attach(){
+    var bodyEl=document.getElementById("body");
+    if(bodyEl)observer.observe(bodyEl,{childList:true});
+  }
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",attach);
+  else attach();
+})();
+
 function aktivitetSubtabNavHtml(){
   return "<div style='display:flex;gap:6px;margin-bottom:14px;align-items:center'>"
     +"<button class='mode-btn"+(aktivitetSubtab==="logga"?" on":"")+"' data-subtab='logga' style='flex:1;padding:9px 4px;font-size:12px'>📝 Logga</button>"
@@ -358,6 +416,7 @@ function aktivitetSubtabNavHtml(){
 function bindAktivitetSubtabNav(c){
   c.querySelectorAll("[data-subtab]").forEach(function(btn){
     btn.onclick=function(){
+      stopAktivitetCamera();
       aktivitetSubtab=btn.dataset.subtab;
       renderLogAktivitet();
     };
@@ -463,7 +522,6 @@ function renderAktivitetBilderTab(c){
   if(imgfileEl)imgfileEl.onchange=function(){if(imgfileEl.files&&imgfileEl.files.length)handleBtFiles(imgfileEl.files);};
 
   // Kamera via getUserMedia
-  var btCameraStream=null;
   var btCameraFacingMode=AKTIVITET_BETEENDE.kameraRiktning==="user"?"user":"environment";
   var btSnapBase64=null;
   var camContainer=c.querySelector("#bt-camera-container");
@@ -476,7 +534,7 @@ function renderAktivitetBilderTab(c){
   var snapBtn=c.querySelector("#bt-snap-btn");
 
   function stopBtCamera(){
-    if(btCameraStream){btCameraStream.getTracks().forEach(function(t){t.stop();});btCameraStream=null;}
+    stopAktivitetCamera();
     if(camContainer)camContainer.style.display="none";
     if(confirmView)confirmView.style.display="none";
     if(liveControls)liveControls.style.display="flex";
@@ -497,8 +555,8 @@ function renderAktivitetBilderTab(c){
   function startBtCamera(facingMode){
     navigator.mediaDevices.getUserMedia({video:{facingMode:facingMode},audio:false})
       .then(function(stream){
-        if(btCameraStream)btCameraStream.getTracks().forEach(function(t){t.stop();});
-        btCameraStream=stream;btCameraFacingMode=facingMode;
+        stopAktivitetCamera();
+        aktivitetBtCameraStream=stream;btCameraFacingMode=facingMode;
         if(camVideo){camVideo.srcObject=stream;camVideo.style.display="block";}
         if(camContainer)camContainer.style.display="block";
         if(liveControls)liveControls.style.display="flex";
@@ -553,6 +611,7 @@ function renderAktivitetBilderTab(c){
       imageHist.unshift(newImg);
     });
     saveAndSync("bilder");
+    saveAktivitetBilderIndex();
     pendingBt=[];
     if(titleInp)titleInp.value="";
     var fz=c.querySelector("#bt-fz");
@@ -565,6 +624,7 @@ function renderAktivitetBilderTab(c){
         await saveImagePngCopy(newImgs[k].meta,newImgs[k].base64,newImgs[k].mtype);
       }
       await saveAndSync("bilder");
+      await saveAktivitetBilderIndex();
     }
   }
   if(saveBtn)saveBtn.onclick=saveBtImages;
@@ -620,6 +680,7 @@ function renderAktivitetBilderTab(c){
       confirmDelete("Ta bort den här bilden?",function(){
         imageHist=imageHist.filter(function(x){return x.id!==id;});
         saveAndSync("bilder");
+        saveAktivitetBilderIndex();
         renderAktivitetBilderTab(c);
       });
     };
@@ -836,7 +897,7 @@ function openJsonEditor(){
   // och av kontrollen som visar vilka filer som saknas.
   var AKTIVITET_JSON_TARGETS=[
     {key:"aktivitet",label:"Aktivitet (data.json)",folder:"Aktivitet",filename:"data.json"},
-    {key:"bilder",label:"Bilder (data.json)",folder:"Bilder",filename:"data.json"},
+    {key:"bilder",label:"Bilder (bilder.json)",folder:"Aktivitet",filename:"bilder.json"},
     {key:"installningar",label:"Inställningar (settings.json)",folder:"Aktivitet",filename:"settings.json"}
   ];
   function driveTargetFor(key){
@@ -992,6 +1053,7 @@ function openJsonEditor(){
           return Object.assign({},m,{base64:old?old.base64:null});
         });
         saveAndSync("bilder");
+        saveAktivitetBilderIndex();
       }else{
         if(!parsed.cats||!Array.isArray(parsed.cats)||!parsed.cats.length){warn.textContent="Förväntade ett 'cats'-fält med minst en kategori.";return;}
         CATS=parsed.cats;
@@ -1032,7 +1094,7 @@ async function exportAktivitetMonthPdf(monthKey){
   monthLogs.forEach(function(l){
     if(y>270){doc.addPage();y=20;}
     var ct=CATS.find(function(c){return c.id===l.category;});
-    var catLabel=ct?(ct.e+" "+ct.label):"";
+    var catLabel=ct?ct.label:"";
     var d=new Date(l.timestamp);
     var dateStr=String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0");
     doc.setFont(undefined,"bold");
@@ -1051,39 +1113,33 @@ async function exportAktivitetMonthPdf(monthKey){
   doc.save("aktivitet-"+monthKey+".pdf");
 }
 
-async function exportBilderMonthPdf(monthKey){
-  var jsPDFCtor=await ensureJsPDF();
-  var doc=new jsPDFCtor();
+// Laddar ner alla bilder för en given månad som separata PNG-filer (inte PDF). Bilder som
+// inte redan är PNG konverteras (återanvänder samma konvertering som PNG-mappuppladdningen).
+async function exportBilderMonthPng(monthKey){
   var monthImgs=imageHist.filter(function(i){return monthKeyOf(i.timestamp)===monthKey;}).sort(function(a,b){return new Date(a.timestamp)-new Date(b.timestamp);});
-  var y=20;
-  doc.setFontSize(16);doc.text("Bilder - "+monthLabel(monthKey),14,y);y+=10;
-  doc.setFontSize(10);
-  if(!monthImgs.length){doc.text("Inga bilder sparade denna månad.",14,y);doc.save("bilder-"+monthKey+".pdf");return;}
+  if(!monthImgs.length){alert("Inga bilder sparade för "+monthLabel(monthKey)+".");return;}
+  var misslyckade=0;
   for(var i=0;i<monthImgs.length;i++){
     var img=monthImgs[i];
     var base64=img.base64;
     if(!base64&&typeof loadImageBase64==="function"){
       try{base64=await loadImageBase64(img);}catch(e){}
     }
-    if(y>230){doc.addPage();y=20;}
-    var d=new Date(img.timestamp);
-    var dateStr=String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0");
-    doc.setFont(undefined,"bold");doc.text(dateStr+"  "+(img.activity||""),14,y);doc.setFont(undefined,"normal");
-    y+=6;
-    if(base64){
-      try{
-        var fmt=(img.mtype||"").indexOf("png")>-1?"PNG":"JPEG";
-        doc.addImage("data:"+(img.mtype||"image/jpeg")+";base64,"+base64,fmt,14,y,60,45);
-        y+=50;
-      }catch(e){
-        doc.setFontSize(9);doc.text("(bilden kunde inte infogas)",14,y);y+=8;doc.setFontSize(10);
-      }
-    }else{
-      doc.setFontSize(9);doc.text("(bilden kunde inte laddas)",14,y);y+=8;doc.setFontSize(10);
-    }
-    y+=6;
+    if(!base64){misslyckade++;continue;}
+    var pngBase64;
+    try{
+      pngBase64=(img.mtype||"").indexOf("png")>-1?base64:await base64ToPngBase64(base64,img.mtype);
+    }catch(e){misslyckade++;continue;}
+    var a=document.createElement("a");
+    a.href="data:image/png;base64,"+pngBase64;
+    a.download=buildPngFilename(img);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Kort paus mellan varje nedladdning så webbläsaren inte blockerar dem som popup-spam.
+    await new Promise(function(resolve){setTimeout(resolve,300);});
   }
-  doc.save("bilder-"+monthKey+".pdf");
+  if(misslyckade)alert(misslyckade+" av "+monthImgs.length+" bilder kunde inte laddas ner.");
 }
 
 // ---- Inställningspanel: Kategorier (lägg till/ta bort/ändra, chip-baserad) ----
@@ -1143,7 +1199,7 @@ function showAktivitetSettings(){
       +"</select>"
       +"<div style='display:flex;gap:8px;margin-bottom:18px'>"
       +"<button id='as-pdf-akt' class='sec ghost' style='flex:1'>📄 Aktivitet</button>"
-      +"<button id='as-pdf-bild' class='sec ghost' style='flex:1'>📄 Bilder</button>"
+      +"<button id='as-pdf-bild' class='sec ghost' style='flex:1'>🖼️ Bilder (PNG)</button>"
       +"</div>"
 
       +"<div class='lbl'>Data & backup</div>"
@@ -1226,8 +1282,8 @@ function showAktivitetSettings(){
     };
     ov.querySelector("#as-pdf-bild").onclick=function(e){
       var mk=ov.querySelector("#as-month-select").value;
-      var btn=e.target;var orig=btn.textContent;btn.textContent="Skapar...";btn.disabled=true;
-      exportBilderMonthPdf(mk).catch(function(err){alert("Kunde inte skapa PDF: "+err.message);}).then(function(){btn.textContent=orig;btn.disabled=false;});
+      var btn=e.target;var orig=btn.textContent;btn.textContent="Laddar ner...";btn.disabled=true;
+      exportBilderMonthPng(mk).catch(function(err){alert("Kunde inte ladda ner bilder: "+err.message);}).then(function(){btn.textContent=orig;btn.disabled=false;});
     };
 
     ov.querySelector("#as-save").onclick=function(){
