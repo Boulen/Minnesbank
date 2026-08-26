@@ -189,7 +189,7 @@ var AKTIVITET_FALT={plats:true,anteckning:true,bild:true};
 var AKTIVITET_BETEENDE={standardKategori:"",kameraRiktning:"environment",handelserSortering:"nyast"};
 var aktivitetSettingsLoaded=false;
 
-// Enkel synlig felruta för Aktivitet-flikens egna Drive-anrop (settings.json/PNG-mappen),
+// Enkel synlig felruta för Aktivitet-flikens egna Drive-anrop (settings.json/Bilder-mappen),
 // så fel inte bara försvinner tyst i webbläsarkonsolen.
 function showAktivitetDriveError(context,e){
   console.error(context,e);
@@ -255,10 +255,9 @@ async function saveAktivitetSettings(){
 }
 
 // Egen index-fil för Aktivitet-flikens bilder: Aktivitet/bilder.json. Innehåller bara metadata
-// (titel, kategori, tidsstämpel, driveId) - inte base64, som redan hanteras separat av
-// saveImageToDrive. OBS: imageHist är en delad variabel som ev. andra flikar också använder -
-// den ursprungliga "Bilder"-mappen/domänen rörs INTE här, detta är en tillkommande,
-// Aktivitet-ägd spegling.
+// (titel, kategori, tidsstämpel, driveId till PNG-filen) - inte base64.
+// OBS: imageHist är en delad variabel som ev. andra flikar också använder, men Aktivitet
+// skriver inte längre till den delade "Bilder"-mappen/domänen - se saveImagePngCopy.
 async function saveAktivitetBilderIndex(){
   if(!accessToken)return;
   try{
@@ -285,11 +284,15 @@ async function saveAktivitetBilderIndex(){
   }
 }
 
-// ---- PNG-kopior av bilder i egen toppnivå-mapp "PNG" ----
-// Additivt: bilder sparas fortsatt som vanligt i Bilder-domänen (imageHist/saveImageToDrive),
-// men en konverterad PNG-kopia laddas ÄVEN upp till en separat mapp som heter "PNG".
-async function ensurePngFolder(){
-  return driveMkdir("PNG",FOLDER_ID);
+// ---- Bilder sparas som PNG i en mapp som heter "Bilder", inuti Aktivitet-mappen ----
+// (Aktivitet/Bilder) - inte längre en egen toppnivå-mapp. Detta är numera den ENDA platsen
+// den faktiska bildfilen laddas upp till - den delade "Bilder"-mappen/domänen på toppnivå
+// (saveImageToDrive/saveAndSync("bilder")) används inte längre av Aktivitet-flikens
+// Bilder-sida, på uttrycklig begäran. Metadata sparas separat i Aktivitet/bilder.json via
+// saveAktivitetBilderIndex().
+async function ensureAktivitetBilderFolder(){
+  var aktId=await driveMkdir("Aktivitet",FOLDER_ID);
+  return driveMkdir("Bilder",aktId);
 }
 function base64ToPngBase64(base64,mtype){
   return new Promise(function(resolve,reject){
@@ -312,10 +315,12 @@ function buildPngFilename(imgMeta){
   var title=(imgMeta.activity||"bild").replace(/[^a-zA-Zåäö0-9_\- ]/g,"").trim().slice(0,40)||"bild";
   return yy+"-"+mm+"-"+dd+"_"+title+".png";
 }
+// Returnerar Drive-fil-id för den skapade PNG-filen (eller null vid fel), så anroparen kan
+// spara den som imageHist-postens driveId.
 async function saveImagePngCopy(imgMeta,base64,mtype){
-  if(!accessToken||!base64)return false;
+  if(!accessToken||!base64)return null;
   try{
-    var pngFolderId=await ensurePngFolder();
+    var pngFolderId=await ensureAktivitetBilderFolder();
     var pngBase64=await base64ToPngBase64(base64,mtype);
     var binary=atob(pngBase64);
     var bytes=new Uint8Array(binary.length);
@@ -325,13 +330,13 @@ async function saveImagePngCopy(imgMeta,base64,mtype){
     form.append("metadata",new Blob([JSON.stringify({name:buildPngFilename(imgMeta),parents:[pngFolderId],mimeType:"image/png"})],{type:"application/json"}));
     form.append("file",blob);
     var r=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
-    if(!r.ok)throw new Error("HTTP "+r.status+" vid uppladdning till PNG-mappen");
+    if(!r.ok)throw new Error("HTTP "+r.status+" vid uppladdning till Bilder-mappen");
     var d=await r.json();
     if(!d.id)throw new Error("Drive returnerade inget fil-id för PNG-kopian");
-    return true;
+    return d.id;
   }catch(e){
     showAktivitetDriveError("PNG-kopia kunde inte sparas",e);
-    return false;
+    return null;
   }
 }
 
@@ -611,7 +616,6 @@ function renderAktivitetBilderTab(c){
       var newImg=Object.assign({base64:x.base64},x.meta);
       imageHist.unshift(newImg);
     });
-    saveAndSync("bilder");
     saveAktivitetBilderIndex();
     pendingBt=[];
     if(titleInp)titleInp.value="";
@@ -620,11 +624,12 @@ function renderAktivitetBilderTab(c){
     renderAktivitetBilderTab(c);
     if(accessToken){
       for(var k=0;k<newImgs.length;k++){
-        var target=imageHist.find(function(x){return x.id===newImgs[k].meta.id;});
-        if(target)await saveImageToDrive(target);
-        await saveImagePngCopy(newImgs[k].meta,newImgs[k].base64,newImgs[k].mtype);
+        var fileId=await saveImagePngCopy(newImgs[k].meta,newImgs[k].base64,newImgs[k].mtype);
+        if(fileId){
+          var target=imageHist.find(function(x){return x.id===newImgs[k].meta.id;});
+          if(target)target.driveId=fileId;
+        }
       }
-      await saveAndSync("bilder");
       await saveAktivitetBilderIndex();
     }
   }
@@ -680,7 +685,6 @@ function renderAktivitetBilderTab(c){
       var id=Number(btn.dataset.bimgDelete);
       confirmDelete("Ta bort den här bilden?",function(){
         imageHist=imageHist.filter(function(x){return x.id!==id;});
-        saveAndSync("bilder");
         saveAktivitetBilderIndex();
         renderAktivitetBilderTab(c);
       });
@@ -1053,7 +1057,6 @@ function openJsonEditor(){
           var old=byId[m.id];
           return Object.assign({},m,{base64:old?old.base64:null});
         });
-        saveAndSync("bilder");
         saveAktivitetBilderIndex();
       }else{
         if(!parsed.cats||!Array.isArray(parsed.cats)||!parsed.cats.length){warn.textContent="Förväntade ett 'cats'-fält med minst en kategori.";return;}
