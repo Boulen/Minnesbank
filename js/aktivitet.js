@@ -225,6 +225,40 @@ async function ensureAktivitetSettingsLoaded(){
   }
 }
 
+// Läser tillbaka Aktivitet/bilder.json in i imageHist. Utan denna sparas bilder korrekt men
+// visas aldrig igen efter en omladdning, eftersom inget annat läser den här filen (vi slutade
+// använda det delade "bilder"-sparsystemet, se saveAktivitetBilderIndex). Slår ihop på id
+// istället för att skriva över, så bilder som redan finns i minnet (t.ex. nyss tagna, inte
+// hunnit sparas än) inte försvinner.
+var aktivitetBilderIndexLoaded=false;
+async function ensureAktivitetBilderIndexLoaded(){
+  if(aktivitetBilderIndexLoaded||!accessToken)return;
+  aktivitetBilderIndexLoaded=true;
+  try{
+    var aktId=await driveMkdir("Aktivitet",FOLDER_ID);
+    if(!aktId)throw new Error("Kunde inte hitta/skapa Aktivitet-mappen i Drive (troligen behörighetsfel - kontrollera att du är inloggad)");
+    var q="name='bilder.json' and '"+aktId+"' in parents and trashed=false";
+    var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+    var d=await r.json();
+    if(!(d.files&&d.files.length))return;
+    var r2=await fetch(DRIVE_API+"/"+d.files[0].id+"?alt=media",{headers:{Authorization:"Bearer "+accessToken}});
+    var text=await r2.text();
+    if(!text||!text.trim())return;
+    var parsed=JSON.parse(text);
+    if(!parsed.images||!Array.isArray(parsed.images))return;
+    var existingIds={};
+    imageHist.forEach(function(i){existingIds[i.id]=true;});
+    var added=false;
+    parsed.images.forEach(function(img){
+      if(!existingIds[img.id]){imageHist.push(img);existingIds[img.id]=true;added=true;}
+    });
+    if(added&&aktivitetSubtab==="bilder"&&document.getElementById("body")&&view==="aktivitet")renderLogAktivitet();
+  }catch(e){
+    aktivitetBilderIndexLoaded=false; // tillåt nytt försök nästa gång fliken öppnas
+    showAktivitetDriveError("Kunde inte läsa Aktivitet/bilder.json",e);
+  }
+}
+
 async function saveAktivitetSettings(){
   if(!accessToken){
     showAktivitetDriveError("Kunde inte spara","Inte inloggad mot Google Drive");
@@ -440,6 +474,7 @@ function renderLogAktivitet(){
 
 // ---- Bilder-flik: ta/ladda upp bilder fristående från loggningen ----
 function renderAktivitetBilderTab(c){
+  ensureAktivitetBilderIndexLoaded();
   var sorted=imageHist.slice().sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
   var grid=!sorted.length
     ? "<div class='empty' style='padding:24px 0;text-align:center;color:#5c5c5c;font-size:13px'>Inga bilder ännu.</div>"
@@ -500,7 +535,7 @@ function renderAktivitetBilderTab(c){
       var wrap=document.createElement("div");
       wrap.style.cssText="position:relative;display:inline-block;margin:0 6px 6px 0";
       var im=document.createElement("img");
-      im.src="data:"+img.mtype+";base64,"+img.base64;
+      im.src="data:"+(img.mtype||"image/jpeg")+";base64,"+img.base64;
       im.style.cssText="width:80px;height:80px;object-fit:cover;border-radius:8px;display:block";
       var rb=document.createElement("button");
       rb.textContent="×";
