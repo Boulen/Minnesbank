@@ -1,3 +1,8 @@
+// HISTORIK-fliken
+//   Del av Minnesbanken (dev). Extraherad ur dev_index.html.
+//   Beroenden: core.js, notering.js (fundEntryHist), samtal.js (convEntryHist)
+//   Laddas via <script src="js/historik.js"> i rätt ordning (core.js alltid först).
+
 function histRow(h,i,attr,labelHtml){
   return "<div class='khist' style='display:flex;align-items:flex-start;gap:8px' data-"+attr+"='"+i+"'>"
     +"<div style='flex:1;min-width:0'><div class='kmsg'>"+esc(h.original||h.idea||h.question||h.summary||"")+"</div>"
@@ -199,10 +204,11 @@ function fundEntryHist(f){
     +"</div>";
 }
 
-function convEntryHist(cv){
+function convEntryHist(cv,person){
+  var msgs=sentMsgs.filter(function(m){return m.convId===cv.id;});
   return "<div class='khist' data-hconv='"+cv.id+"'>"
-    +"<div class='kmsg' style='white-space:normal;font-weight:600'>"+(cv.type==="muntligt"?"🗣️ ":"💬 ")+esc(cv.name)+"</div>"
-    +"<div class='kmeta'><span class='kbadge'>"+cv.count+(cv.type==="muntligt"?" poster":" meddelanden")+"</span></div>"
+    +"<div class='kmsg' style='white-space:normal;font-weight:600'>"+esc(person?person.name:"Okand")+" - "+esc(cv.title)+"</div>"
+    +"<div class='kmeta'><span class='kbadge'>"+msgs.length+" meddelanden</span></div>"
     +"</div>";
 }
 
@@ -223,24 +229,40 @@ function folderRow(label,key,level,openKey,count){
 
 var histBetygSubview="media"; // media | objekt | plats
 
+// Vilka Historik-underflikar som ska visas just nu. Satt till true igen
+// allteftersom respektive del av appen blir klar (Blås instruktion 2026-08-26:
+// bara Aktivitet+Bild aktiva tills vidare, resten aktiveras manuellt senare).
+var HISTORIK_AKTIVA_FLIKAR={
+  aktiviteter:true,
+  bilder:true,
+  funderingar:false,
+  samtal:false,
+  betyg:false
+};
+var HISTORIK_FLIK_LABEL={aktiviteter:"Loggning",funderingar:"Fundering",bilder:"Bild",samtal:"Samtal",betyg:"Betyg"};
+var HISTORIK_FLIK_ORDNING=["aktiviteter","funderingar","bilder","samtal","betyg"];
+
 function renderHistory(){
   var b=document.getElementById("body");
-  var subTabs="<div style='display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:6px;margin-bottom:20px'>"
-    +"<button class='mode-btn"+(historySubview==="aktiviteter"?" on":"")+"' data-histsub='aktiviteter' style='font-size:10px;padding:8px 2px'>Aktivitet</button>"
-    +"<button class='mode-btn"+(historySubview==="funderingar"?" on":"")+"' data-histsub='funderingar' style='font-size:10px;padding:8px 2px'>Fundering</button>"
-    +"<button class='mode-btn"+(historySubview==="bilder"?" on":"")+"' data-histsub='bilder' style='font-size:10px;padding:8px 2px'>Bild</button>"
-    +"<button class='mode-btn"+(historySubview==="samtal"?" on":"")+"' data-histsub='samtal' style='font-size:10px;padding:8px 2px'>Samtal</button>"
-    +"<button class='mode-btn"+(historySubview==="betyg"?" on":"")+"' data-histsub='betyg' style='font-size:10px;padding:8px 2px'>Betyg</button>"
+  var aktivaFlikar=HISTORIK_FLIK_ORDNING.filter(function(id){return HISTORIK_AKTIVA_FLIKAR[id];});
+  if(!aktivaFlikar.length)aktivaFlikar=["aktiviteter"]; // skyddsnät, ska aldrig hända
+  if(aktivaFlikar.indexOf(historySubview)<0)historySubview=aktivaFlikar[0];
+
+  var subTabs="<div style='display:grid;grid-template-columns:repeat("+aktivaFlikar.length+",1fr);gap:6px;margin-bottom:20px'>"
+    +aktivaFlikar.map(function(id){
+      return "<button class='mode-btn"+(historySubview===id?" on":"")+"' data-histsub='"+id+"' style='font-size:10px;padding:8px 2px'>"+HISTORIK_FLIK_LABEL[id]+"</button>";
+    }).join("")
     +"</div>";
   b.innerHTML=subTabs+"<div id='hist-content'></div>";
   b.querySelectorAll("[data-histsub]").forEach(function(btn){
-    btn.onclick=function(){historySubview=btn.dataset.histsub;openYear=null;openMonth=null;openDay=null;renderHistory();};
+    btn.onclick=function(){historySubview=btn.dataset.histsub;openYear=null;openMonth=null;openDay=null;weekViewDay=null;renderHistory();};
   });
   if(historySubview==="aktiviteter")renderHistAktiviteter();
-  else if(historySubview==="samtal")renderHistSamtal();
+  else if(historySubview==="samtal"&&HISTORIK_AKTIVA_FLIKAR.samtal)renderHistSamtal();
   else if(historySubview==="bilder")renderHistBilder();
-  else if(historySubview==="betyg")renderHistBetyg();
-  else renderHistFunderingar();
+  else if(historySubview==="betyg"&&HISTORIK_AKTIVA_FLIKAR.betyg)renderHistBetyg();
+  else if(historySubview==="funderingar"&&HISTORIK_AKTIVA_FLIKAR.funderingar)renderHistFunderingar();
+  else renderHistAktiviteter();
 }
 
 function renderHistBetyg(){
@@ -265,6 +287,7 @@ function switchHistBetygSubview(sub){
   document.querySelectorAll("[data-histbetygsub]").forEach(function(btn){btn.classList.toggle("on",btn.dataset.histbetygsub===sub);});
   var bc=document.getElementById("hist-betyg-content");
   if(bc)bc.innerHTML="<div style='padding:30px;text-align:center;color:#5c5c5c;font-size:13px'>⏳ Laddar...</div>";
+  tabLoaded[tab]=false;
   loadTab(tab).then(function(){renderHistBetygContent();});
 }
 
@@ -396,6 +419,7 @@ function renderHistMedia(){
   var histRecBtn=c.querySelector("#hist-media-recension-btn");
   if(histRecBtn)histRecBtn.onclick=function(){
     setView("utvarderingar");utvSubview="media";mediaRecensionCreator=null;
+    tabLoaded.media=false;
     loadTab("media").then(function(){
       renderUtvarderingarTop();
       renderMediaRecension();
@@ -512,6 +536,7 @@ function renderHistObj(){
   var histRecBtn=c.querySelector("#hist-obj-recension-btn");
   if(histRecBtn)histRecBtn.onclick=function(){
     setView("utvarderingar");utvSubview="objekt";objRecensionTillverkare=null;
+    tabLoaded.objekt=false;
     loadTab("objekt").then(function(){
       renderUtvarderingarTop();
       renderObjRecension();
@@ -628,6 +653,7 @@ function renderHistPlats(){
   var histRecBtn=c.querySelector("#hist-plats-recension-btn");
   if(histRecBtn)histRecBtn.onclick=function(){
     setView("utvarderingar");utvSubview="plats";platsRecensionKommun=null;
+    tabLoaded.plats=false;
     loadTab("plats").then(function(){
       renderUtvarderingarTop();
       renderPlatsRecension();
@@ -766,14 +792,16 @@ function renderHistFunderingar(){
 
 function renderHistSamtal(){
   var c=document.getElementById("hist-content");
-  var all=konversationer.map(function(k){return {id:k.id,type:"text",name:k.name,count:k.messages.length,timestamp:k.timestamp};})
-    .concat(muntKonversationer.map(function(k){return {id:k.id,type:"muntligt",name:k.name,count:(k.entries||[]).length,timestamp:k.timestamp};}));
-  if(!all.length){c.innerHTML="<div class='empty'><div class='eico'>💬</div>Inga samtal annu.</div>";return;}
-  renderGroupedByDate(c,all,function(cv){return new Date(cv.timestamp);},function(cv){
-    return convEntryHist(cv);
+  if(!sentConvs.length){c.innerHTML="<div class='empty'><div class='eico'>💬</div>Inga samtal annu.</div>";return;}
+  renderGroupedByDate(c,sentConvs,function(cv){return new Date(cv.timestamp);},function(cv){
+    var person=sentPeople.find(function(p){return p.id===cv.personId;});
+    return convEntryHist(cv,person);
   });
 }
 
+// Delad bind-logik för logg-poster (aktiviteter): redigera/spara/avbryt/ta bort.
+// Används av både Historik (renderGroupedByDate) och Aktivitet->Handelser, så de
+// beter sig och ser exakt likadana ut.
 function bindLogEntryActions(container,onChange){
   container.querySelectorAll(".delbtn[data-id]").forEach(function(btn){
     btn.onclick=function(e){e.stopPropagation();confirmDelete('Vill du ta bort aktiviteten?',function(){logs=logs.filter(function(l){return l.id!==Number(btn.dataset.id);});editingId=null;saveAndSync("aktiviteter");hdr();onChange();});};
@@ -1004,3 +1032,4 @@ function renderGroupedByDate(container,items,getDate,renderItem){
 }
 
 // ---- KOMMUNIKATION ----
+
