@@ -187,6 +187,10 @@ function bindTidpunktInp(inp){
 // (driveMkdir/DRIVE_API/DRIVE_UPLOAD/accessToken) utan att röra drive.js DRIVE_STRUCTURE-register.
 var AKTIVITET_FALT={plats:true,anteckning:true,bild:true};
 var AKTIVITET_BETEENDE={standardKategori:"",kameraRiktning:"environment",handelserSortering:"nyast"};
+// Bildkategori - egen, användarstyrd lista (redigeras i Inställningar) för att kategorisera bilder
+// på Bilder-fliken. Separat från CATS (Kategori-fältet på Logga-fliken) - se tydlig
+// åtskillnad i showAktivitetSettings().
+var AKTIVITET_BILDKATEGORIER=[];
 var aktivitetSettingsLoaded=false;
 
 // Enkel synlig felruta för Aktivitet-flikens egna Drive-anrop (settings.json/Bilder-mappen),
@@ -218,6 +222,7 @@ async function ensureAktivitetSettingsLoaded(){
     if(parsed.cats&&parsed.cats.length)CATS=parsed.cats;
     if(parsed.falt)AKTIVITET_FALT=Object.assign({plats:true,anteckning:true,bild:true},parsed.falt);
     if(parsed.beteende)AKTIVITET_BETEENDE=Object.assign({standardKategori:"",kameraRiktning:"environment",handelserSortering:"nyast"},parsed.beteende);
+    if(parsed.bildkategorier&&Array.isArray(parsed.bildkategorier))AKTIVITET_BILDKATEGORIER=parsed.bildkategorier;
     if(document.getElementById("body")&&view==="aktivitet")renderLogAktivitet();
   }catch(e){
     aktivitetSettingsLoaded=false; // tillåt nytt försök nästa gång vyn öppnas
@@ -270,7 +275,7 @@ async function saveAktivitetSettings(){
     var q="name='settings.json' and '"+aktId+"' in parents and trashed=false";
     var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
     var d=await r.json();
-    var body=JSON.stringify({cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE},null,2);
+    var body=JSON.stringify({cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE,bildkategorier:AKTIVITET_BILDKATEGORIER},null,2);
     if(d.files&&d.files.length){
       var pr=await fetch(DRIVE_UPLOAD+"/"+d.files[0].id+"?uploadType=media",{method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:body});
       if(!pr.ok)throw new Error("HTTP "+pr.status+" vid uppdatering av settings.json");
@@ -473,23 +478,120 @@ function renderLogAktivitet(){
 }
 
 // ---- Bilder-flik: ta/ladda upp bilder fristående från loggningen ----
+// ---- Bilder-flikens gruppering: "Senaste" (min 2, hela batchen om fler togs/laddades upp
+// samtidigt) + resten grupperat via en dropdown (grupperna hanteras i Inställningar). ----
+var aktivitetSelectedBildkategori="";
+function batchKeyOf(img){
+  return img.batchId!=null?String(img.batchId):("solo-"+img.id);
+}
+function getSenasteBilder(){
+  if(!imageHist.length)return [];
+  var sorted=imageHist.slice().sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
+  var latestKey=batchKeyOf(sorted[0]);
+  var sameBatch=sorted.filter(function(i){return batchKeyOf(i)===latestKey;});
+  if(sameBatch.length>=2)return sameBatch;
+  var result=sameBatch.slice();
+  var resultIds={};result.forEach(function(i){resultIds[i.id]=true;});
+  for(var k=0;k<sorted.length&&result.length<2;k++){
+    if(!resultIds[sorted[k].id]){result.push(sorted[k]);resultIds[sorted[k].id]=true;}
+  }
+  return result;
+}
+function getGroupedBilder(categoryId){
+  var senasteIds={};getSenasteBilder().forEach(function(i){senasteIds[i.id]=true;});
+  return imageHist.filter(function(i){return !senasteIds[i.id]&&(i.bildkategori||"")===categoryId;})
+    .sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
+}
+
+// Redigera titel + bildkategori i efterhand på en redan sparad bild.
+var editingImgId=null;
+
+function bildkategoriOptionsHtml(selectedId){
+  return "<option value=''"+(!selectedId?" selected":"")+">"+(AKTIVITET_BILDKATEGORIER.length?"Ingen kategori":"Inga bildkategorier ännu (lägg till i ⚙️ Inställningar)")+"</option>"
+    +AKTIVITET_BILDKATEGORIER.map(function(g){return "<option value='"+esc(g.id)+"'"+(g.id===selectedId?" selected":"")+">"+esc(g.e)+" "+esc(g.label)+"</option>";}).join("");
+}
+
 function renderAktivitetBilderTab(c){
   ensureAktivitetBilderIndexLoaded();
-  var sorted=imageHist.slice().sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
-  var grid=!sorted.length
-    ? "<div class='empty' style='padding:24px 0;text-align:center;color:#5c5c5c;font-size:13px'>Inga bilder ännu.</div>"
-    : "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px'>"
-      +sorted.map(function(img){
-        var inner=img.base64
-          ?"<img src='data:"+(img.mtype||"image/jpeg")+";base64,"+img.base64+"' data-bimg-view='"+img.id+"' style='width:100%;height:120px;object-fit:cover;display:block;cursor:pointer'/>"
-          :"<div data-bimg-fetch='"+img.id+"' style='width:100%;height:120px;display:flex;align-items:center;justify-content:center;color:#5c5c5c;font-size:12px'>⏳ Laddar bild...</div>";
-        return "<div style='background:#131313;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden;position:relative'>"
-          +inner
-          +"<button data-bimg-delete='"+img.id+"' title='Ta bort' style='position:absolute;top:4px;right:4px;background:rgba(10,10,10,0.7);border:none;color:#d97a83;border-radius:6px;width:22px;height:22px;font-size:13px;cursor:pointer;line-height:1'>×</button>"
-          +"<div style='padding:6px 8px;font-size:11px;color:#f2f2f2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+esc(img.activity||"")+"</div>"
-          +"</div>";
-      }).join("")
+
+  function imgCardHtml(img){
+    if(editingImgId===img.id){
+      return "<div style='background:#131313;border:1px solid #4fa8ff;border-radius:10px;padding:10px;grid-column:span 2'>"
+        +"<div class='lbl'>Titel</div>"
+        +"<input class='inp w100' id='edit-img-title-"+img.id+"' value='"+esc(img.activity||"")+"' style='margin-bottom:10px'/>"
+        +"<div class='lbl'>Bildkategori</div>"
+        +"<select class='inp w100' id='edit-img-cat-"+img.id+"' style='padding:10px 12px;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;font-family:inherit;margin-bottom:10px'>"
+        +bildkategoriOptionsHtml(img.bildkategori)
+        +"</select>"
+        +"<div style='display:flex;gap:8px'>"
+        +"<button class='sec' id='save-edit-img-"+img.id+"' style='flex:1'>Spara</button>"
+        +"<button class='sec ghost' id='cancel-edit-img-"+img.id+"' style='flex:1'>Avbryt</button>"
+        +"</div></div>";
+    }
+    var inner=img.base64
+      ?"<img src='data:"+(img.mtype||"image/jpeg")+";base64,"+img.base64+"' data-bimg-view='"+img.id+"' style='width:100%;height:120px;object-fit:cover;display:block;cursor:pointer'/>"
+      :"<div data-bimg-fetch='"+img.id+"' style='width:100%;height:120px;display:flex;align-items:center;justify-content:center;color:#5c5c5c;font-size:12px'>⏳ Laddar bild...</div>";
+    return "<div style='background:#131313;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden;position:relative'>"
+      +inner
+      +"<div style='position:absolute;top:4px;right:4px;display:flex;gap:4px'>"
+      +"<button data-bimg-edit='"+img.id+"' title='Redigera' style='background:rgba(10,10,10,0.7);border:none;color:#4fa8ff;border-radius:6px;width:22px;height:22px;font-size:13px;cursor:pointer;line-height:1'>✎</button>"
+      +"<button data-bimg-delete='"+img.id+"' title='Ta bort' style='background:rgba(10,10,10,0.7);border:none;color:#d97a83;border-radius:6px;width:22px;height:22px;font-size:13px;cursor:pointer;line-height:1'>×</button>"
+      +"</div>"
+      +"<div style='padding:6px 8px;font-size:11px;color:#f2f2f2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+esc(img.activity||"")+"</div>"
       +"</div>";
+  }
+  function gridHtml(imgs,emptyText){
+    if(!imgs.length)return "<div class='empty' style='padding:16px 0;text-align:center;color:#5c5c5c;font-size:13px'>"+emptyText+"</div>";
+    return "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px'>"+imgs.map(imgCardHtml).join("")+"</div>";
+  }
+  // Samma kort-stil som Händelser/Senaste på Logga-fliken (rad med liten miniatyr, titel, datum).
+  function imgListItemHtml(img){
+    if(editingImgId===img.id){
+      return "<div style='background:#131313;border:1px solid #4fa8ff;border-radius:10px;padding:10px;margin-bottom:8px'>"
+        +"<div class='lbl'>Titel</div>"
+        +"<input class='inp w100' id='edit-img-title-"+img.id+"' value='"+esc(img.activity||"")+"' style='margin-bottom:10px'/>"
+        +"<div class='lbl'>Bildkategori</div>"
+        +"<select class='inp w100' id='edit-img-cat-"+img.id+"' style='padding:10px 12px;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;font-family:inherit;margin-bottom:10px'>"
+        +bildkategoriOptionsHtml(img.bildkategori)
+        +"</select>"
+        +"<div style='display:flex;gap:8px'>"
+        +"<button class='sec' id='save-edit-img-"+img.id+"' style='flex:1'>Spara</button>"
+        +"<button class='sec ghost' id='cancel-edit-img-"+img.id+"' style='flex:1'>Avbryt</button>"
+        +"</div></div>";
+    }
+    var thumb=img.base64
+      ?"<img src='data:"+(img.mtype||"image/jpeg")+";base64,"+img.base64+"' data-bimg-view='"+img.id+"' style='width:48px;height:48px;object-fit:cover;border-radius:8px;flex-shrink:0;cursor:pointer'/>"
+      :"<div data-bimg-fetch='"+img.id+"' style='width:48px;height:48px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#1a1a1a;color:#5c5c5c;font-size:16px'>⏳</div>";
+    var d=new Date(img.timestamp);
+    var dateStr=String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0");
+    return "<div style='padding:10px 14px;background:#131313;border:1px solid #2a2a2a;border-radius:10px;margin-bottom:8px;display:flex;align-items:center;gap:10px'>"
+      +thumb
+      +"<div style='flex:1;min-width:0'>"
+      +"<div style='font-size:13px;color:#f2f2f2;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+esc(img.activity||"")+"</div>"
+      +"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+dateStr+"</div>"
+      +"</div>"
+      +"<div style='display:flex;gap:2px;flex-shrink:0'>"
+      +"<button data-bimg-edit='"+img.id+"' title='Redigera' style='background:none;border:none;color:#4fa8ff;cursor:pointer;font-size:15px;padding:4px;line-height:1'>✎</button>"
+      +"<button data-bimg-delete='"+img.id+"' title='Ta bort' style='background:none;border:none;color:#d97a83;cursor:pointer;font-size:15px;padding:4px;line-height:1'>×</button>"
+      +"</div>"
+      +"</div>";
+  }
+  function listHtml(imgs,emptyText){
+    if(!imgs.length)return "<div class='empty' style='padding:16px 0;text-align:center;color:#5c5c5c;font-size:13px'>"+emptyText+"</div>";
+    return imgs.map(imgListItemHtml).join("");
+  }
+
+  var senaste=getSenasteBilder();
+  if(aktivitetSelectedBildkategori&&!AKTIVITET_BILDKATEGORIER.some(function(g){return g.id===aktivitetSelectedBildkategori;}))aktivitetSelectedBildkategori="";
+  if(!aktivitetSelectedBildkategori&&AKTIVITET_BILDKATEGORIER.length)aktivitetSelectedBildkategori=AKTIVITET_BILDKATEGORIER[0].id;
+  var kategoriSektion="<div class='lbl' style='margin-top:18px'>Bildkategori</div>"
+    +(!AKTIVITET_BILDKATEGORIER.length
+      ? "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Inga bildkategorier ännu - lägg till i ⚙️ Inställningar.</div>"
+      : "<select id='bt-category-select' style='width:100%;background:#131313;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;padding:9px 10px;margin-bottom:4px'>"
+        +AKTIVITET_BILDKATEGORIER.map(function(g){return "<option value='"+esc(g.id)+"'"+(g.id===aktivitetSelectedBildkategori?" selected":"")+">"+esc(g.e)+" "+esc(g.label)+"</option>";}).join("")
+        +"</select>"
+        +listHtml(getGroupedBilder(aktivitetSelectedBildkategori),"Inga bilder i den här kategorin ännu.")
+    );
 
   c.innerHTML=aktivitetSubtabNavHtml()
     +"<div id='bt-initial-btns' style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px'>"
@@ -517,10 +619,23 @@ function renderAktivitetBilderTab(c){
     +"<div id='bt-imgonly-form' style='display:none'>"
     +"<div class='lbl'>Titel</div>"
     +"<input class='inp w100' id='bt-title' placeholder='Skriv en titel...' style='margin-bottom:8px'/>"
+    +"<div class='lbl'>Bildkategori</div>"
+    +"<select id='bt-category' style='width:100%;background:#131313;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;padding:9px 10px;margin-bottom:8px'>"
+    +"<option value=''>"+(AKTIVITET_BILDKATEGORIER.length?"Ingen kategori":"Inga bildkategorier ännu (lägg till i ⚙️ Inställningar)")+"</option>"
+    +AKTIVITET_BILDKATEGORIER.map(function(g){return "<option value='"+esc(g.id)+"'>"+esc(g.e)+" "+esc(g.label)+"</option>";}).join("")
+    +"</select>"
     +"<button class='cta-log' id='bt-save' style='width:100%;margin-bottom:14px'>Spara bild</button>"
     +"</div>"
     +"<div id='bt-fz'></div>"
-    +grid;
+    +"<div class='lbl' style='margin-top:14px'>Senaste bilder</div>"
+    +gridHtml(senaste,"Inga bilder ännu.")
+    +kategoriSektion;
+
+  var categorySelectEl=c.querySelector("#bt-category-select");
+  if(categorySelectEl)categorySelectEl.onchange=function(){
+    aktivitetSelectedBildkategori=categorySelectEl.value;
+    renderAktivitetBilderTab(c);
+  };
 
   bindAktivitetSubtabNav(c);
 
@@ -642,10 +757,12 @@ function renderAktivitetBilderTab(c){
     if(!pendingBt.length)return;
     var titleInp=c.querySelector("#bt-title");
     var baseTitle=(titleInp&&titleInp.value.trim())||"Bild";
+    var categorySel=c.querySelector("#bt-category");
+    var bildkategori=categorySel?categorySel.value:"";
     var now=Date.now();
     var newImgs=pendingBt.map(function(img,i){
       var title=pendingBt.length===1?baseTitle:baseTitle+(i+1);
-      return {meta:{id:now+i,logId:null,activity:title,category:"",mtype:img.mtype,timestamp:new Date(now+i).toISOString(),driveId:null},base64:img.base64,mtype:img.mtype};
+      return {meta:{id:now+i,logId:null,activity:title,category:"",bildkategori:bildkategori,batchId:now,mtype:img.mtype,timestamp:new Date(now+i).toISOString(),driveId:null},base64:img.base64,mtype:img.mtype};
     });
     newImgs.forEach(function(x){
       var newImg=Object.assign({base64:x.base64},x.meta);
@@ -713,6 +830,36 @@ function renderAktivitetBilderTab(c){
     });
   });
 
+  // Redigera bild (titel + bildkategori) - expanderar kortet inline, ingen popup.
+  c.querySelectorAll("[data-bimg-edit]").forEach(function(btn){
+    btn.onclick=function(e){
+      e.stopPropagation();
+      editingImgId=Number(btn.dataset.bimgEdit);
+      renderAktivitetBilderTab(c);
+    };
+  });
+  imageHist.forEach(function(img){
+    if(editingImgId!==img.id)return;
+    var saveBtn=c.querySelector("#save-edit-img-"+img.id);
+    if(saveBtn)saveBtn.onclick=function(){
+      var titleEl=c.querySelector("#edit-img-title-"+img.id);
+      var catEl=c.querySelector("#edit-img-cat-"+img.id);
+      var target=imageHist.find(function(x){return x.id===img.id;});
+      if(target){
+        if(titleEl&&titleEl.value.trim())target.activity=titleEl.value.trim();
+        if(catEl)target.bildkategori=catEl.value;
+        saveAktivitetBilderIndex();
+      }
+      editingImgId=null;
+      renderAktivitetBilderTab(c);
+    };
+    var cancelBtn=c.querySelector("#cancel-edit-img-"+img.id);
+    if(cancelBtn)cancelBtn.onclick=function(){
+      editingImgId=null;
+      renderAktivitetBilderTab(c);
+    };
+  });
+
   // Ta bort bild
   c.querySelectorAll("[data-bimg-delete]").forEach(function(btn){
     btn.onclick=function(e){
@@ -720,6 +867,7 @@ function renderAktivitetBilderTab(c){
       var id=Number(btn.dataset.bimgDelete);
       confirmDelete("Ta bort den här bilden?",function(){
         imageHist=imageHist.filter(function(x){return x.id!==id;});
+        if(editingImgId===id)editingImgId=null;
         saveAktivitetBilderIndex();
         renderAktivitetBilderTab(c);
       });
@@ -931,7 +1079,7 @@ function openJsonEditor(){
   function dataFor(key){
     if(key==="aktivitet")return {logs:logs};
     if(key==="bilder")return {images:imageHist.map(function(i){var c=Object.assign({},i);delete c.base64;return c;})};
-    return {cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE};
+    return {cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE,bildkategorier:AKTIVITET_BILDKATEGORIER};
   }
   // Var respektive JSON faktiskt ligger i Drive - används av "Öppna i Google Drive"-knappen
   // och av kontrollen som visar vilka filer som saknas.
@@ -1098,6 +1246,7 @@ function openJsonEditor(){
         CATS=parsed.cats;
         if(parsed.falt)AKTIVITET_FALT=Object.assign({plats:true,anteckning:true,bild:true},parsed.falt);
         if(parsed.beteende)AKTIVITET_BETEENDE=Object.assign({standardKategori:"",kameraRiktning:"environment",handelserSortering:"nyast"},parsed.beteende);
+        if(parsed.bildkategorier&&Array.isArray(parsed.bildkategorier))AKTIVITET_BILDKATEGORIER=parsed.bildkategorier;
         saveAktivitetSettings();
       }
       ov2.remove();
@@ -1184,17 +1333,20 @@ async function exportBilderMonthPng(monthKey){
 // ---- Inställningspanel: Kategorier (lägg till/ta bort/ändra, chip-baserad) ----
 function showAktivitetSettings(){
   var wCats=CATS.map(function(ct){return {id:ct.id,label:ct.label,e:ct.e};});
+  var wGroups=AKTIVITET_BILDKATEGORIER.map(function(g){return {id:g.id,label:g.label,e:g.e};});
   var editIdx=null;
+  var editGroupIdx=null;
 
   var ov=document.createElement("div");
   ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto";
 
-  function slugify(label){
+  function slugifyAgainst(label,list){
     var base=label.toLowerCase().replace(/[åä]/g,"a").replace(/ö/g,"o").replace(/[^a-z0-9]+/g,"")||"kat";
     var id=base,n=2;
-    while(wCats.some(function(c){return c.id===id;})){id=base+n;n++;}
+    while(list.some(function(x){return x.id===id;})){id=base+n;n++;}
     return id;
   }
+  function slugify(label){return slugifyAgainst(label,wCats);}
 
   function catChipsHtml(){
     if(!wCats.length)return "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Inga kategorier kvar - lägg till minst en nedan.</div>";
@@ -1215,6 +1367,25 @@ function showAktivitetSettings(){
       +"</div>";
   }
 
+  function groupChipsHtml(){
+    if(!wGroups.length)return "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Inga bildkategorier ännu - lägg till en nedan.</div>";
+    return "<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px'>"
+      +wGroups.map(function(g,i){
+        if(i===editGroupIdx){
+          return "<span style='display:inline-flex;align-items:center;gap:4px;background:#1c3c5a;border:1px solid #4fa8ff;border-radius:8px;padding:4px 4px 4px 6px'>"
+            +"<input id='as-editgroup-emoji' readonly value='"+esc(g.e)+"' style='width:28px;background:none;border:none;color:#f2f2f2;font-size:13px;text-align:center;padding:2px 0;cursor:pointer'/>"
+            +"<input id='as-editgroup-label' value='"+esc(g.label)+"' style='width:90px;background:none;border:none;color:#f2f2f2;font-size:13px;padding:2px 0'/>"
+            +"<button id='as-editgroup-confirm' title='Klar' style='background:none;border:none;color:#4fa8ff;cursor:pointer;font-size:14px;padding:2px'>✓</button>"
+            +"</span>";
+        }
+        return "<span data-group-chip-idx='"+i+"' style='display:inline-flex;align-items:center;gap:6px;background:#131313;border:1px solid #2a2a2a;border-radius:8px;padding:6px 6px 6px 10px;cursor:pointer;font-size:13px;color:#f2f2f2'>"
+          +esc(g.e)+" "+esc(g.label)
+          +"<button data-group-remove-idx='"+i+"' title='Ta bort' style='background:none;border:none;color:#d97a83;cursor:pointer;font-size:13px;padding:0 2px;line-height:1'>×</button>"
+          +"</span>";
+      }).join("")
+      +"</div>";
+  }
+
   function panelHtml(){
     return "<div style='background:#161616;border-radius:20px;width:100%;max-width:420px;overflow:hidden'>"
       +"<div style='padding:16px 20px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between'>"
@@ -1223,13 +1394,22 @@ function showAktivitetSettings(){
       +"</div>"
       +"<div style='padding:20px;max-height:70vh;overflow-y:auto'>"
 
-      +"<div class='lbl'>Kategorier</div>"
+      +"<div class='lbl'>Kategorier <span style='font-size:11px;font-weight:400;color:#5c5c5c'>(Kategori-fältet på Logga-fliken)</span></div>"
       +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:8px'>Tryck på en kategori för att ändra emoji/namn, eller × för att ta bort.</div>"
       +catChipsHtml()
       +"<div style='display:flex;gap:6px;margin-bottom:4px'>"
       +"<input class='inp' id='as-newcat-emoji' readonly placeholder='🏷️' style='width:38px;text-align:center;padding:7px 2px;font-size:13px;flex-shrink:0;cursor:pointer'/>"
       +"<input class='inp' id='as-newcat-label' placeholder='Ny kategori...' style='flex:1;padding:7px 10px;font-size:13px'/>"
       +"<button class='chip' id='as-newcat-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
+      +"</div>"
+
+      +"<div class='lbl' style='margin-top:18px'>Bildkategori <span style='font-size:11px;font-weight:400;color:#5c5c5c'>(dropdown-menyn på Bilder-fliken)</span></div>"
+      +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:8px'>Dyker upp som en dropdown-meny under \"Senaste bilder\" på Bilder-fliken. Tryck på en kategori för att ändra emoji/namn, × för att ta bort.</div>"
+      +groupChipsHtml()
+      +"<div style='display:flex;gap:6px;margin-bottom:4px'>"
+      +"<input class='inp' id='as-newgroup-emoji' readonly placeholder='🏷️' style='width:38px;text-align:center;padding:7px 2px;font-size:13px;flex-shrink:0;cursor:pointer'/>"
+      +"<input class='inp' id='as-newgroup-label' placeholder='Ny bildkategori...' style='flex:1;padding:7px 10px;font-size:13px'/>"
+      +"<button class='chip' id='as-newgroup-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
       +"</div>"
 
       +"<div class='lbl' style='margin-top:18px'>Exportera månad som PDF</div>"
@@ -1260,6 +1440,12 @@ function showAktivitetSettings(){
     var lEl=ov.querySelector("#as-edit-label");
     if(lEl&&wCats[editIdx])wCats[editIdx].label=lEl.value.trim()||wCats[editIdx].label;
     editIdx=null;
+  }
+  function commitGroupEdit(){
+    if(editGroupIdx===null)return;
+    var lEl=ov.querySelector("#as-editgroup-label");
+    if(lEl&&wGroups[editGroupIdx])wGroups[editGroupIdx].label=lEl.value.trim()||wGroups[editGroupIdx].label;
+    editGroupIdx=null;
   }
 
   function bindPanel(){
@@ -1313,6 +1499,53 @@ function showAktivitetSettings(){
     var newLabelEl=ov.querySelector("#as-newcat-label");
     if(newLabelEl)newLabelEl.onkeydown=function(e){if(e.key==="Enter")ov.querySelector("#as-newcat-add").click();};
 
+    ov.querySelectorAll("[data-group-chip-idx]").forEach(function(chip){
+      chip.onclick=function(e){
+        if(e.target.closest("[data-group-remove-idx]"))return;
+        commitGroupEdit();
+        editGroupIdx=Number(chip.dataset.groupChipIdx);
+        rerender();
+        var lEl=ov.querySelector("#as-editgroup-label");
+        if(lEl){lEl.focus();lEl.select();}
+      };
+    });
+    ov.querySelectorAll("[data-group-remove-idx]").forEach(function(btn){
+      btn.onclick=function(e){
+        e.stopPropagation();
+        var i=Number(btn.dataset.groupRemoveIdx);
+        if(!wGroups[i])return;
+        wGroups.splice(i,1);
+        if(editGroupIdx===i)editGroupIdx=null;else if(editGroupIdx!==null&&editGroupIdx>i)editGroupIdx--;
+        rerender();
+      };
+    });
+    var confirmGroupBtn=ov.querySelector("#as-editgroup-confirm");
+    if(confirmGroupBtn)confirmGroupBtn.onclick=function(){commitGroupEdit();rerender();};
+    var editGroupLabelEl=ov.querySelector("#as-editgroup-label");
+    if(editGroupLabelEl)editGroupLabelEl.onkeydown=function(e){if(e.key==="Enter"){commitGroupEdit();rerender();}};
+    var editGroupEmojiEl=ov.querySelector("#as-editgroup-emoji");
+    if(editGroupEmojiEl)editGroupEmojiEl.onclick=function(){
+      openEmojiPicker(function(e){
+        if(wGroups[editGroupIdx]){wGroups[editGroupIdx].e=e;rerender();}
+      });
+    };
+
+    var newGroupEmojiEl=ov.querySelector("#as-newgroup-emoji");
+    if(newGroupEmojiEl)newGroupEmojiEl.onclick=function(){
+      openEmojiPicker(function(e){newGroupEmojiEl.value=e;});
+    };
+    ov.querySelector("#as-newgroup-add").onclick=function(){
+      var labelInp=ov.querySelector("#as-newgroup-label");
+      var emojiInp=ov.querySelector("#as-newgroup-emoji");
+      var label=labelInp.value.trim();
+      if(!label||wGroups.some(function(g){return g.label===label;}))return;
+      var e=emojiInp.value.trim()||"✨";
+      wGroups.push({id:slugifyAgainst(label,wGroups),label:label,e:e});
+      rerender();
+    };
+    var newGroupLabelEl=ov.querySelector("#as-newgroup-label");
+    if(newGroupLabelEl)newGroupLabelEl.onkeydown=function(e){if(e.key==="Enter")ov.querySelector("#as-newgroup-add").click();};
+
     ov.querySelector("#as-json-editor").onclick=function(){openJsonEditor();};
     ov.querySelector("#as-pdf-akt").onclick=function(e){
       var mk=ov.querySelector("#as-month-select").value;
@@ -1327,9 +1560,11 @@ function showAktivitetSettings(){
 
     ov.querySelector("#as-save").onclick=function(){
       commitEdit();
+      commitGroupEdit();
       if(!wCats.length){alert("Du måste ha minst en kategori kvar.");return;}
       CATS=wCats;
       if(!wCats.some(function(c){return c.id===cat;}))cat=wCats[0].id;
+      AKTIVITET_BILDKATEGORIER=wGroups;
       saveAktivitetSettings();
       ov.remove();
       renderLogAktivitet();
@@ -1362,8 +1597,7 @@ function addAct(activity){
   if(ti&&ti.value.indexOf(" | ")>-1)durationPart=ti.value.split(" | ").slice(1).join(" | ");
   var timeStr=hh+":"+mm+(durationPart?(" | "+durationPart):"");
   if(ti)ti.value=timeStr;
-  var logId=Date.now();
-  logs.unshift({id:logId,category:cat,activity:activity,time:timeStr,place:pi?pi.value.trim():"",note:ni?ni.value.trim():"",timestamp:tp.date.toISOString()});
+  logs.unshift({id:Date.now(),category:cat,activity:activity,time:timeStr,place:pi?pi.value.trim():"",note:ni?ni.value.trim():"",timestamp:tp.date.toISOString()});
   var inmatningChanged=false;
   var newAktHist=pushInmatningHistory(aktivitetHistory,activity);
   if(newAktHist!==aktivitetHistory){aktivitetHistory=newAktHist;inmatningChanged=true;}
@@ -1384,4 +1618,5 @@ function resetLogForm(){
   var pi=document.getElementById("pi");if(pi)pi.value="";
   var ni=document.getElementById("ni");if(ni){ni.value="";autoResizeTextarea(ni);}
 }
+
 
