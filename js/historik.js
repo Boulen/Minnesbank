@@ -234,21 +234,10 @@ var histBetygSubview="media"; // media | objekt | plats
 var bildKategoriFilter=""; // "" = alla kategorier
 var bildVisaAntal=10;
 
-// Bildens egen kategori (Blås instruktion 2026-08-29): kopplad till settings.json ->
-// "bildkategorier", INTE till aktivitetens egna kategorier (CATS/"cats"). Varje bildpost
-// har ett eget "category"-fält (samma nivå som logId/activity/mtype) som pekar in i
-// bildkategorier-listan — helt fristående från vilken loggpost bilden ev. hänger på.
-// "BILDKATEGORIER" sätts av core.js (huvudet) från settings.json:s "bildkategorier"-nyckel.
-// Om den ännu inte finns (äldre core.js-version) faller vi tillbaka på en tom lista, så
-// dropdownen bara visar "Alla kategorier" istället för att krascha.
-function bildKatList(){
-  return (typeof BILDKATEGORIER!=="undefined"&&BILDKATEGORIER)?BILDKATEGORIER:[];
-}
-function getBildKatLabel(id){
-  if(!id)return "";
-  var k=bildKatList().find(function(c){return c.id===id;});
-  return k?k.label:"";
-}
+// Bildens egen kategori (rättat 2026-08-29 efter besked från huvud-chatten: använd den
+// befintliga globalen CATS, ingen separat BILDKATEGORIER-lista — den koden finns inte i
+// core.js). Varje bildpost har ett eget "category"-fält (samma nivå som logId/activity/
+// mtype) som pekar in i CATS, precis som en loggposts "category" gör.
 function imgKategoriId(img){
   return img.category||"";
 }
@@ -266,7 +255,7 @@ function imgThumb(img){
 
 function buildBildKategoriDropdown(){
   var opts="<option value=''"+(bildKategoriFilter===""?" selected":"")+">Alla kategorier</option>"
-    +bildKatList().map(function(c){return "<option value='"+esc(c.id)+"'"+(c.id===bildKategoriFilter?" selected":"")+">"+c.e+" "+esc(c.label)+"</option>";}).join("");
+    +CATS.map(function(c){return "<option value='"+esc(c.id)+"'"+(c.id===bildKategoriFilter?" selected":"")+">"+c.e+" "+esc(c.label)+"</option>";}).join("");
   return "<select id='bild-kat-filter' style='width:100%;padding:11px 13px;border-radius:5px;background:#161616;border:1px solid #2a2a2a;color:#f2f2f2;font-size:14px;margin-bottom:16px;font-family:inherit'>"+opts+"</select>";
 }
 
@@ -764,7 +753,7 @@ function renderHistAktiviteter(){
 }
 
 function imgEntry(img){
-  var catName=getBildKatLabel(img.category);
+  var catName=getCatLabel(img.category);
   var title=img.activity||"bild";
   var fname=buildImageFilename(img);
   var ext=img.mtype&&img.mtype.includes("png")?"png":"jpg";
@@ -818,9 +807,12 @@ function renderHistBilder(){
   var merKnapp=c.querySelector("#bild-visa-fler");
   if(merKnapp)merKnapp.onclick=function(){bildVisaAntal+=10;renderHistBilder();};
 
-  // Lazy-load images that don't have base64 (senaste-4 thumbnails + den paginerade listan, utan dubbelladdning)
+  // Lazy-load images that don't have base64 (senaste-4 thumbnails + den paginerade listan, utan dubbelladdning).
+  // Skyddad mot att loadImageBase64 saknas/har annat namn i core.js (då syns bara "Laddar bild..."
+  // istället för att krascha resten av renderingen).
   var attLadda={};
   senaste4.concat(synliga).forEach(function(img){attLadda[img.id]=img;});
+  if(typeof loadImageBase64!=="function")return;
   Object.keys(attLadda).forEach(function(key){
     var img=attLadda[key];
     if(img.base64||!img.driveId)return;
