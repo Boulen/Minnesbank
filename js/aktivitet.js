@@ -523,6 +523,8 @@ function renderAktivitetBilderTab(c){
         +"<select class='inp w100' id='edit-img-cat-"+img.id+"' style='padding:10px 12px;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;font-family:inherit;margin-bottom:10px'>"
         +bildkategoriOptionsHtml(img.bildkategori)
         +"</select>"
+        +"<div class='lbl'>Kommentar</div>"
+        +"<textarea class='inp w100' id='edit-img-comment-"+img.id+"' rows='1' style='resize:none;overflow:hidden;min-height:44px;line-height:1.4;font-family:inherit;margin-bottom:10px'>"+esc(img.comment||"")+"</textarea>"
         +"<div style='display:flex;gap:8px'>"
         +"<button class='sec' id='save-edit-img-"+img.id+"' style='flex:1'>Spara</button>"
         +"<button class='sec ghost' id='cancel-edit-img-"+img.id+"' style='flex:1'>Avbryt</button>"
@@ -537,7 +539,10 @@ function renderAktivitetBilderTab(c){
       +"<button data-bimg-edit='"+img.id+"' title='Redigera' style='background:rgba(10,10,10,0.7);border:none;color:#4fa8ff;border-radius:6px;width:22px;height:22px;font-size:13px;cursor:pointer;line-height:1'>✎</button>"
       +"<button data-bimg-delete='"+img.id+"' title='Ta bort' style='background:rgba(10,10,10,0.7);border:none;color:#d97a83;border-radius:6px;width:22px;height:22px;font-size:13px;cursor:pointer;line-height:1'>×</button>"
       +"</div>"
-      +"<div style='padding:6px 8px;font-size:11px;color:#f2f2f2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+esc(img.activity||"")+"</div>"
+      +"<div style='padding:6px 8px'>"
+      +"<div style='font-size:11px;color:#f2f2f2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+esc(img.activity||"")+"</div>"
+      +(img.comment?"<div style='font-size:10px;color:#8a8a8a;margin-top:2px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical'>"+esc(img.comment)+"</div>":"")
+      +"</div>"
       +"</div>";
   }
   function gridHtml(imgs,emptyText){
@@ -554,6 +559,8 @@ function renderAktivitetBilderTab(c){
         +"<select class='inp w100' id='edit-img-cat-"+img.id+"' style='padding:10px 12px;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;font-family:inherit;margin-bottom:10px'>"
         +bildkategoriOptionsHtml(img.bildkategori)
         +"</select>"
+        +"<div class='lbl'>Kommentar</div>"
+        +"<textarea class='inp w100' id='edit-img-comment-"+img.id+"' rows='1' style='resize:none;overflow:hidden;min-height:44px;line-height:1.4;font-family:inherit;margin-bottom:10px'>"+esc(img.comment||"")+"</textarea>"
         +"<div style='display:flex;gap:8px'>"
         +"<button class='sec' id='save-edit-img-"+img.id+"' style='flex:1'>Spara</button>"
         +"<button class='sec ghost' id='cancel-edit-img-"+img.id+"' style='flex:1'>Avbryt</button>"
@@ -568,6 +575,7 @@ function renderAktivitetBilderTab(c){
       +thumb
       +"<div style='flex:1;min-width:0'>"
       +"<div style='font-size:13px;color:#f2f2f2;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+esc(img.activity||"")+"</div>"
+      +(img.comment?"<div style='font-size:11px;color:#8a8a8a;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+esc(img.comment)+"</div>":"")
       +"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+dateStr+"</div>"
       +"</div>"
       +"<div style='display:flex;gap:2px;flex-shrink:0'>"
@@ -624,6 +632,8 @@ function renderAktivitetBilderTab(c){
     +"<option value=''>"+(AKTIVITET_BILDKATEGORIER.length?"Ingen kategori":"Inga bildkategorier ännu (lägg till i ⚙️ Inställningar)")+"</option>"
     +AKTIVITET_BILDKATEGORIER.map(function(g){return "<option value='"+esc(g.id)+"'>"+esc(g.e)+" "+esc(g.label)+"</option>";}).join("")
     +"</select>"
+    +"<div class='lbl'>Kommentar</div>"
+    +"<textarea class='inp w100' id='bt-comment' placeholder='Skriv en kommentar...' rows='1' style='resize:none;overflow:hidden;min-height:44px;line-height:1.4;font-family:inherit;margin-bottom:8px'></textarea>"
     +"<button class='cta-log' id='bt-save' style='width:100%;margin-bottom:14px'>Spara bild</button>"
     +"</div>"
     +"<div id='bt-fz'></div>"
@@ -638,6 +648,9 @@ function renderAktivitetBilderTab(c){
   };
 
   bindAktivitetSubtabNav(c);
+
+  var btCommentEl=c.querySelector("#bt-comment");
+  if(btCommentEl)btCommentEl.addEventListener("input",function(){autoResizeTextarea(btCommentEl);});
 
   var pendingBt=[]; // {base64,mtype}
 
@@ -759,10 +772,12 @@ function renderAktivitetBilderTab(c){
     var baseTitle=(titleInp&&titleInp.value.trim())||"Bild";
     var categorySel=c.querySelector("#bt-category");
     var bildkategori=categorySel?categorySel.value:"";
+    var commentInp=c.querySelector("#bt-comment");
+    var comment=commentInp?commentInp.value.trim():"";
     var now=Date.now();
     var newImgs=pendingBt.map(function(img,i){
       var title=pendingBt.length===1?baseTitle:baseTitle+(i+1);
-      return {meta:{id:now+i,logId:null,activity:title,category:"",bildkategori:bildkategori,batchId:now,mtype:img.mtype,timestamp:new Date(now+i).toISOString(),driveId:null},base64:img.base64,mtype:img.mtype};
+      return {meta:{id:now+i,logId:null,activity:title,category:"",bildkategori:bildkategori,comment:comment,batchId:now,mtype:img.mtype,timestamp:new Date(now+i).toISOString(),driveId:null},base64:img.base64,mtype:img.mtype};
     });
     newImgs.forEach(function(x){
       var newImg=Object.assign({base64:x.base64},x.meta);
@@ -771,6 +786,7 @@ function renderAktivitetBilderTab(c){
     saveAktivitetBilderIndex();
     pendingBt=[];
     if(titleInp)titleInp.value="";
+    if(commentInp)commentInp.value="";
     var fz=c.querySelector("#bt-fz");
     if(fz){fz.innerHTML="<div class='ok-toast'>Sparat!</div>";setTimeout(function(){if(fz)fz.innerHTML="";},2200);}
     renderAktivitetBilderTab(c);
@@ -840,6 +856,11 @@ function renderAktivitetBilderTab(c){
   });
   imageHist.forEach(function(img){
     if(editingImgId!==img.id)return;
+    var commentEl=c.querySelector("#edit-img-comment-"+img.id);
+    if(commentEl){
+      autoResizeTextarea(commentEl);
+      commentEl.addEventListener("input",function(){autoResizeTextarea(commentEl);});
+    }
     var saveBtn=c.querySelector("#save-edit-img-"+img.id);
     if(saveBtn)saveBtn.onclick=function(){
       var titleEl=c.querySelector("#edit-img-title-"+img.id);
@@ -848,6 +869,7 @@ function renderAktivitetBilderTab(c){
       if(target){
         if(titleEl&&titleEl.value.trim())target.activity=titleEl.value.trim();
         if(catEl)target.bildkategori=catEl.value;
+        if(commentEl)target.comment=commentEl.value.trim();
         saveAktivitetBilderIndex();
       }
       editingImgId=null;
@@ -1359,7 +1381,8 @@ function showAktivitetSettings(){
             +"<button id='as-edit-confirm' title='Klar' style='background:none;border:none;color:#4fa8ff;cursor:pointer;font-size:14px;padding:2px'>✓</button>"
             +"</span>";
         }
-        return "<span data-cat-chip-idx='"+i+"' style='display:inline-flex;align-items:center;gap:6px;background:#131313;border:1px solid #2a2a2a;border-radius:8px;padding:6px 6px 6px 10px;cursor:pointer;font-size:13px;color:#f2f2f2'>"
+        return "<span draggable='true' data-cat-chip-idx='"+i+"' style='display:inline-flex;align-items:center;gap:6px;background:#131313;border:1px solid #2a2a2a;border-radius:8px;padding:6px 6px 6px 10px;cursor:grab;font-size:13px;color:#f2f2f2'>"
+          +"<span style='color:#5c5c5c;font-size:11px'>⠿</span>"
           +esc(ct.e)+" "+esc(ct.label)
           +"<button data-cat-remove-idx='"+i+"' title='Ta bort' style='background:none;border:none;color:#d97a83;cursor:pointer;font-size:13px;padding:0 2px;line-height:1'>×</button>"
           +"</span>";
@@ -1378,7 +1401,8 @@ function showAktivitetSettings(){
             +"<button id='as-editgroup-confirm' title='Klar' style='background:none;border:none;color:#4fa8ff;cursor:pointer;font-size:14px;padding:2px'>✓</button>"
             +"</span>";
         }
-        return "<span data-group-chip-idx='"+i+"' style='display:inline-flex;align-items:center;gap:6px;background:#131313;border:1px solid #2a2a2a;border-radius:8px;padding:6px 6px 6px 10px;cursor:pointer;font-size:13px;color:#f2f2f2'>"
+        return "<span draggable='true' data-group-chip-idx='"+i+"' style='display:inline-flex;align-items:center;gap:6px;background:#131313;border:1px solid #2a2a2a;border-radius:8px;padding:6px 6px 6px 10px;cursor:grab;font-size:13px;color:#f2f2f2'>"
+          +"<span style='color:#5c5c5c;font-size:11px'>⠿</span>"
           +esc(g.e)+" "+esc(g.label)
           +"<button data-group-remove-idx='"+i+"' title='Ta bort' style='background:none;border:none;color:#d97a83;cursor:pointer;font-size:13px;padding:0 2px;line-height:1'>×</button>"
           +"</span>";
@@ -1394,8 +1418,11 @@ function showAktivitetSettings(){
       +"</div>"
       +"<div style='padding:20px;max-height:70vh;overflow-y:auto'>"
 
-      +"<div class='lbl'>Kategorier <span style='font-size:11px;font-weight:400;color:#5c5c5c'>(Kategori-fältet på Logga-fliken)</span></div>"
-      +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:8px'>Tryck på en kategori för att ändra emoji/namn, eller × för att ta bort.</div>"
+      +"<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:4px'>"
+      +"<div class='lbl' style='margin-bottom:0'>Kategorier <span style='font-size:11px;font-weight:400;color:#5c5c5c'>(Kategori-fältet på Logga-fliken)</span></div>"
+      +"<button id='as-cat-sort' class='sec ghost' style='width:auto;margin:0;padding:4px 10px;font-size:11px'>Sortera A-Ö</button>"
+      +"</div>"
+      +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:8px'>Tryck på en kategori för att ändra emoji/namn, × för att ta bort, eller dra ⠿ för att ändra ordning.</div>"
       +catChipsHtml()
       +"<div style='display:flex;gap:6px;margin-bottom:4px'>"
       +"<input class='inp' id='as-newcat-emoji' readonly placeholder='🏷️' style='width:38px;text-align:center;padding:7px 2px;font-size:13px;flex-shrink:0;cursor:pointer'/>"
@@ -1403,8 +1430,11 @@ function showAktivitetSettings(){
       +"<button class='chip' id='as-newcat-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
       +"</div>"
 
-      +"<div class='lbl' style='margin-top:18px'>Bildkategori <span style='font-size:11px;font-weight:400;color:#5c5c5c'>(dropdown-menyn på Bilder-fliken)</span></div>"
-      +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:8px'>Dyker upp som en dropdown-meny under \"Senaste bilder\" på Bilder-fliken. Tryck på en kategori för att ändra emoji/namn, × för att ta bort.</div>"
+      +"<div style='display:flex;align-items:center;justify-content:space-between;margin-top:18px;margin-bottom:4px'>"
+      +"<div class='lbl' style='margin-bottom:0'>Bildkategori <span style='font-size:11px;font-weight:400;color:#5c5c5c'>(dropdown-menyn på Bilder-fliken)</span></div>"
+      +"<button id='as-group-sort' class='sec ghost' style='width:auto;margin:0;padding:4px 10px;font-size:11px'>Sortera A-Ö</button>"
+      +"</div>"
+      +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:8px'>Dyker upp som en dropdown-meny under \"Senaste bilder\" på Bilder-fliken. Tryck för att ändra emoji/namn, × för att ta bort, dra ⠿ för att ändra ordning.</div>"
       +groupChipsHtml()
       +"<div style='display:flex;gap:6px;margin-bottom:4px'>"
       +"<input class='inp' id='as-newgroup-emoji' readonly placeholder='🏷️' style='width:38px;text-align:center;padding:7px 2px;font-size:13px;flex-shrink:0;cursor:pointer'/>"
@@ -1448,9 +1478,44 @@ function showAktivitetSettings(){
     editGroupIdx=null;
   }
 
+  // Dra-och-släpp för att ändra ordning på chips. Fungerar med musen (HTML5 drag-and-drop);
+  // på pekskärmar utan stöd för det kan man fortfarande ta bort/lägga till som vanligt.
+  function bindChipDragReorder(selector,arr,idxAttr){
+    var dragIdx=null;
+    ov.querySelectorAll(selector).forEach(function(chip){
+      chip.addEventListener("dragstart",function(e){
+        dragIdx=Number(chip.dataset[idxAttr]);
+        e.dataTransfer.effectAllowed="move";
+        chip.style.opacity="0.4";
+      });
+      chip.addEventListener("dragend",function(){chip.style.opacity="1";});
+      chip.addEventListener("dragover",function(e){e.preventDefault();});
+      chip.addEventListener("drop",function(e){
+        e.preventDefault();
+        var dropIdx=Number(chip.dataset[idxAttr]);
+        if(dragIdx===null||dragIdx===dropIdx)return;
+        var moved=arr.splice(dragIdx,1)[0];
+        arr.splice(dropIdx,0,moved);
+        dragIdx=null;
+        rerender();
+      });
+    });
+  }
+
   function bindPanel(){
     ov.querySelector("#as-close").onclick=function(){ov.remove();};
     ov.querySelector("#as-cancel").onclick=function(){ov.remove();};
+
+    ov.querySelector("#as-cat-sort").onclick=function(){
+      wCats.sort(function(a,b){return a.label.localeCompare(b.label,"sv");});
+      rerender();
+    };
+    ov.querySelector("#as-group-sort").onclick=function(){
+      wGroups.sort(function(a,b){return a.label.localeCompare(b.label,"sv");});
+      rerender();
+    };
+    bindChipDragReorder("[data-cat-chip-idx]",wCats,"catChipIdx");
+    bindChipDragReorder("[data-group-chip-idx]",wGroups,"groupChipIdx");
 
     ov.querySelectorAll("[data-cat-chip-idx]").forEach(function(chip){
       chip.onclick=function(e){

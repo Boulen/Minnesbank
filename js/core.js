@@ -451,15 +451,6 @@ async function importFromDrive(){
     totalAdded+=logs.length-before;
   }
 
-  // Bilder
-  var dbi=await driveRead("Bilder/Index");
-  if(dbi&&dbi.images){
-    var mapped=dbi.images.map(function(m){return {id:m.id,logId:m.logId,activity:m.activity,category:m.category,mtype:m.mtype||"image/jpeg",timestamp:m.timestamp,driveId:m.driveId,base64:null};});
-    var before=imageHist.length;
-    imageHist=mergeById(imageHist,mapped);
-    totalAdded+=imageHist.length-before;
-  }
-
   // Samtal
   var dst=await driveRead("Samtal/Text");
   if(dst&&dst.konversationer){var b1=konversationer.length;konversationer=mergeById(konversationer,dst.konversationer);totalAdded+=konversationer.length-b1;}
@@ -585,7 +576,7 @@ async function importFromDrive(){
   setTimeout(function(){updateHandelser(null);},100);
 }
 
-var DRIVE_SYNC_TABS=["aktiviteter","samtaltext","samtalmuntligt","funderingar","vokabular","kunskap","tipstricks","samtalsamnen","media","objekt","plats","inmatningar","skamt","bilder","installningar"];
+var DRIVE_SYNC_TABS=["aktiviteter","samtaltext","samtalmuntligt","funderingar","vokabular","kunskap","tipstricks","samtalsamnen","media","objekt","plats","inmatningar","skamt","installningar"];
 async function syncNow(){
   if(!accessToken){setSyncBtn("err","Ej inloggad");return;}
   setSyncBtn("","Synkar...");
@@ -640,7 +631,6 @@ var DRIVE_STRUCTURE={
   "Utvardering/Media":    ["Betyg","Media"],
   "Utvardering/Foremal":  ["Betyg","Föremål"],
   "Utvardering/Plats":    ["Betyg","Plats"],
-  "Bilder/Index":         ["Bilder"],
   "Installningar":        ["Installningar"],
   "Installningar/Inmatningar": ["Installningar","Inmatningar"],
   "Notering/Lardom/Vokabular": ["Notering","Lärdom","Vokabulär"],
@@ -671,7 +661,7 @@ var PATH_LABELS={
   "Aktivitet":"Aktivitet","Samtal/Text":"Samtal (Text)","Samtal/Muntligt":"Samtal (Muntligt)","Notering/Fundering":"Notering (Fundering)",
   "Konversation/Skamt":"Konversation (Skämt)","Konversation/Samtalsamnen":"Konversation (Samtalsämne)",
   "Utvardering/Media":"Betyg (Media)","Utvardering/Foremal":"Betyg (Föremål)","Utvardering/Plats":"Betyg (Plats)",
-  "Bilder/Index":"Bilder","Installningar":"Inställningar","Installningar/Inmatningar":"Inställningar (Inmatningar)",
+  "Installningar":"Inställningar","Installningar/Inmatningar":"Inställningar (Inmatningar)",
   "Notering/Lardom/Vokabular":"Lärdom (Vokabulär)","Notering/Lardom/Kunskap":"Lärdom (Kunskap)","Notering/Anteckning":"Notering (Anteckning)"
 };
 
@@ -725,12 +715,11 @@ async function driveResolveFolder(def){
   return parentId;
 }
 
-// Filnamn per sökväg — Aktivitet och Bilder har egna namngivna filer istället för det
+// Filnamn per sökväg — Aktivitet har en egen namngiven fil istället för det
 // generiska "data.json". Övriga sökvägar (ej aktiva flikar just nu) behåller "data.json"
 // tills vidare.
 var JSON_FILE_NAME_BY_PATH={
-  "Aktivitet":"aktivitet.json",
-  "Bilder/Index":"bilder.json"
+  "Aktivitet":"aktivitet.json"
 };
 function jsonFileNameFor(path){
   return JSON_FILE_NAME_BY_PATH[path]||"data.json";
@@ -849,7 +838,6 @@ function validateDriveData(path,data){
     "Utvardering/Plats":     function(d){if(!d.platsList||typeof d.platsList!=="object"||Array.isArray(d.platsList))errors.push('"platsList" saknas eller är inte ett objekt');},
     "Installningar/Inmatningar": function(d){if(!Array.isArray(d.aktivitetHistory)&&!Array.isArray(d.platsHistory)&&!Array.isArray(d.anteckningHistory))errors.push('inmatningshistorik saknas eller har fel format');},
     "Konversation/Skamt":       function(d){if(!Array.isArray(d.savedJokes))errors.push('"savedJokes" saknas');},
-    "Bilder/Index":   function(d){if(!Array.isArray(d.images))errors.push('"images" saknas');},
     "Notering/Lardom/Vokabular": function(d){if(!Array.isArray(d.vokabularHist))errors.push('"vokabularHist" saknas');},
     "Notering/Lardom/Kunskap":   function(d){if(!Array.isArray(d.kunskapHist))errors.push('"kunskapHist" saknas');},
     "Notering/Anteckning":function(d){if(!Array.isArray(d.tipsTricksHist))errors.push('"tipsTricksHist" saknas');}
@@ -982,7 +970,8 @@ function showFileMissingError(path,data){
 
 async function driveWriteJpeg(filename,base64,mtype){
   // Get or create top-level Bilder folder
-  var bilderId=await driveMkdir("Bilder",await getAppRootFolderId());
+  var aktivitetId=await driveMkdir("Aktivitet",await getAppRootFolderId());
+  var bilderId=await driveMkdir("Bilder",aktivitetId);
   // Convert base64 to binary
   var binary=atob(base64);
   var bytes=new Uint8Array(binary.length);
@@ -1257,8 +1246,6 @@ async function loadTab(tabName){
     if(tabName==="aktiviteter"){
       var da=await driveRead("Aktivitet");
       applyTabData(tabName,da);
-      var di=await driveRead("Bilder/Index");
-      if(di&&di.images){imageHist=di.images.map(function(m){return {id:m.id,logId:m.logId,activity:m.activity,category:m.category,mtype:m.mtype||"image/jpeg",timestamp:m.timestamp,driveId:m.driveId,base64:null};});}
     } else if(tabName==="samtaltext"){
       applyTabData(tabName,await driveRead("Samtal/Text"));
     } else if(tabName==="samtalmuntligt"){
@@ -1400,9 +1387,6 @@ async function ensureTabMergedBeforeSave(tabName){
     }else if(tabName==="skamt"){
       var d=await driveRead("Konversation/Skamt");
       if(d&&d.savedJokes)savedJokes=mergeStringArraysDedup(savedJokes,d.savedJokes);
-    }else if(tabName==="bilder"){
-      var d=await driveRead("Bilder/Index");
-      if(d&&d.images)imageHist=mergeArraysById(imageHist,d.images);
     }else if(tabName==="installningar"){
       var d=await driveRead("Installningar");
       if(d){
@@ -1438,11 +1422,8 @@ async function saveTab(tabName){
   else if(tabName==="plats"){await driveWrite("Utvardering/Plats",{platsList:platsList,platsFardig:platsFardig});}
   else if(tabName==="inmatningar"){await driveWrite("Installningar/Inmatningar",{aktivitetHistory:aktivitetHistory,platsHistory:platsHistory,anteckningHistory:anteckningHistory,anteckningByCat:ANTECKNING_BY_CAT,actPresetsByCat:ACT_PRESETS_BY_CAT,placePresetsByCat:PLACE_PRESETS_BY_CAT,mediaCreatorByCat:MEDIA_CREATOR_BY_CAT,mediaGenreByCat:MEDIA_GENRE_BY_CAT,objMakerByCat:OBJ_MAKER_BY_CAT,platsKommunByCat:PLATS_KOMMUN_BY_CAT,tipsTricksSubcatByCat:TIPSTRICKS_SUBCAT_BY_CAT});}
   else if(tabName==="skamt"){await driveWrite("Konversation/Skamt",{savedJokes:savedJokes});}
-  else if(tabName==="bilder"){
-    // Save index only (base64 not stored in index)
-    var idx=imageHist.map(function(i){return {id:i.id,logId:i.logId,activity:i.activity,category:i.category,mtype:i.mtype,timestamp:i.timestamp,driveId:i.driveId||null};});
-    await driveWrite("Bilder/Index",{images:idx});
-  }
+  // "bilder" skriver ingen egen JSON-fil längre - bilderna sparas redan som riktiga
+  // filer i Bilder-mappen under Aktivitet, ingen separat indexfil behövs.
   else if(tabName==="installningar"){
     await driveWrite("Installningar",{
       placePresets:PLACE_PRESETS,
