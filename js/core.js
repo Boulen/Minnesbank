@@ -5,6 +5,9 @@ var PROXY = "https://ai-proxy.jenseskilsson95.workers.dev/";
 var CLIENT_ID="167841441516-moo7oedk74f6oj3f79jdqhca3a12dgi5.apps.googleusercontent.com";
 var SCOPE="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile";
 var FOLDER_ID="18DqgJT6lPDc8Sj7Nb5YLmcz8km_9zGZP";
+// All bildhantering (uppladdning/hämtning) ska ske under en "Bilder"-undermapp i DENNA
+// mapp - manuellt angiven av Blå, inte app-skapad. Se varning i core.js där den används.
+var BILDER_PARENT_FOLDER_ID="1gljHM3P7BIrDQef2E5TCfVlVEMAiA2SI";
 var REDIRECT_URI=location.origin+location.pathname.replace(/\/+$/,"/");
 var accessToken=null,userInfo=null;
 // File IDs for each data file
@@ -970,8 +973,11 @@ function showFileMissingError(path,data){
 
 async function driveWriteJpeg(filename,base64,mtype){
   // Get or create top-level Bilder folder
-  var aktivitetId=await driveMkdir("Aktivitet",await getAppRootFolderId());
-  var bilderId=await driveMkdir("Bilder",aktivitetId);
+  // OBS: BILDER_PARENT_FOLDER_ID är manuellt angiven av Blå (inte app-skapad) — samma
+  // typ av mapp som tidigare orsakade 403-fel på ALLA Drive-anrop mot den, eftersom
+  // drive.file-behörigheten bara garanterat ger åtkomst till mappar appen själv skapat.
+  // Om detta 403:ar är det den kända, redan diagnostiserade begränsningen - inte en ny bugg.
+  var bilderId=await driveMkdir("Bilder",BILDER_PARENT_FOLDER_ID);
   // Convert base64 to binary
   var binary=atob(base64);
   var bytes=new Uint8Array(binary.length);
