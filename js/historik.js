@@ -229,6 +229,47 @@ function folderRow(label,key,level,openKey,count){
 
 var histBetygSubview="media"; // media | objekt | plats
 
+// Bild-fliken i Historik (Blås instruktion 2026-08-26): inte längre år/månad/dag-mappar,
+// utan senaste 4 överst + kategori-dropdown + paginerad lista (10 i taget, "Visa fler").
+var bildKategoriFilter=""; // "" = alla kategorier
+var bildVisaAntal=10;
+
+// Bildens egen kategori (Blås instruktion 2026-08-29): kopplad till settings.json ->
+// "bildkategorier", INTE till aktivitetens egna kategorier (CATS/"cats"). Varje bildpost
+// har ett eget "category"-fält (samma nivå som logId/activity/mtype) som pekar in i
+// bildkategorier-listan — helt fristående från vilken loggpost bilden ev. hänger på.
+// "BILDKATEGORIER" sätts av core.js (huvudet) från settings.json:s "bildkategorier"-nyckel.
+// Om den ännu inte finns (äldre core.js-version) faller vi tillbaka på en tom lista, så
+// dropdownen bara visar "Alla kategorier" istället för att krascha.
+function bildKatList(){
+  return (typeof BILDKATEGORIER!=="undefined"&&BILDKATEGORIER)?BILDKATEGORIER:[];
+}
+function getBildKatLabel(id){
+  if(!id)return "";
+  var k=bildKatList().find(function(c){return c.id===id;});
+  return k?k.label:"";
+}
+function imgKategoriId(img){
+  return img.category||"";
+}
+
+function imgThumb(img){
+  var imgSrc=img.base64?"data:"+(img.mtype||"image/jpeg")+";base64,"+img.base64:"";
+  return "<div style='background:#161616;border-radius:10px;border:1px solid #2a2a2a;overflow:hidden'>"
+    +"<div id='thumbwrap-"+img.id+"' style='width:100%;aspect-ratio:1;background:#131313;display:flex;align-items:center;justify-content:center'>"
+    +(imgSrc?"<img src='"+imgSrc+"' style='width:100%;height:100%;object-fit:cover;display:block'/>"
+            :"<span style='color:#5c5c5c;font-size:16px'>⏳</span>")
+    +"</div>"
+    +"<div style='padding:5px 7px;font-family:\"JetBrains Mono\",monospace;font-size:9.5px;color:#5c5c5c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+fd(img.timestamp)+"</div>"
+    +"</div>";
+}
+
+function buildBildKategoriDropdown(){
+  var opts="<option value=''"+(bildKategoriFilter===""?" selected":"")+">Alla kategorier</option>"
+    +bildKatList().map(function(c){return "<option value='"+esc(c.id)+"'"+(c.id===bildKategoriFilter?" selected":"")+">"+c.e+" "+esc(c.label)+"</option>";}).join("");
+  return "<select id='bild-kat-filter' style='width:100%;padding:11px 13px;border-radius:5px;background:#161616;border:1px solid #2a2a2a;color:#f2f2f2;font-size:14px;margin-bottom:16px;font-family:inherit'>"+opts+"</select>";
+}
+
 // Vilka Historik-underflikar som ska visas just nu. Satt till true igen
 // allteftersom respektive del av appen blir klar (Blås instruktion 2026-08-26:
 // bara Aktivitet+Bild aktiva tills vidare, resten aktiveras manuellt senare).
@@ -259,10 +300,22 @@ function renderHistory(){
   });
   if(historySubview==="aktiviteter")renderHistAktiviteter();
   else if(historySubview==="samtal"&&HISTORIK_AKTIVA_FLIKAR.samtal)renderHistSamtal();
-  else if(historySubview==="bilder")renderHistBilder();
+  else if(historySubview==="bilder")loadHistBilderOchRendera();
   else if(historySubview==="betyg"&&HISTORIK_AKTIVA_FLIKAR.betyg)renderHistBetyg();
   else if(historySubview==="funderingar"&&HISTORIK_AKTIVA_FLIKAR.funderingar)renderHistFunderingar();
   else renderHistAktiviteter();
+}
+
+// Bild-datan (imageHist) förladdas INTE tillsammans med aktiviteter/samtal/funderingar/media
+// när man klickar på Historik-huvudfliken - den laddas bara här, när man faktiskt besöker
+// Bild-underfliken i Historik (Blås instruktion 2026-08-26). Skyddar mot dubbelrendering om
+// man hinner klicka bort till en annan underflik innan hämtningen är klar.
+function loadHistBilderOchRendera(){
+  var hc=document.getElementById("hist-content");
+  if(hc)hc.innerHTML=spin();
+  loadTab("bilder").then(function(){
+    if(historySubview==="bilder")renderHistBilder();
+  });
 }
 
 function renderHistBetyg(){
@@ -711,8 +764,7 @@ function renderHistAktiviteter(){
 }
 
 function imgEntry(img){
-  var logEntry2=logs.find(function(l){return l.id===img.logId;});
-  var catName=logEntry2?getCatLabel(logEntry2.category):"";
+  var catName=getBildKatLabel(img.category);
   var title=img.activity||"bild";
   var fname=buildImageFilename(img);
   var ext=img.mtype&&img.mtype.includes("png")?"png":"jpg";
@@ -738,16 +790,47 @@ function imgEntry(img){
 function renderHistBilder(){
   var c=document.getElementById("hist-content");
   if(!imageHist.length){c.innerHTML="<div class='empty'><div class='eico'>🖼️</div>Inga bilder uppladdade annu.</div>";return;}
-  renderGroupedByDate(c,imageHist,function(img){return new Date(img.timestamp);},function(img){return imgEntry(img);});
 
-  // Lazy-load images that don't have base64
-  imageHist.forEach(function(img){
+  var sorterade=imageHist.slice().sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
+  var senaste4=sorterade.slice(0,4);
+  var filtrerade=bildKategoriFilter?sorterade.filter(function(img){return imgKategoriId(img)===bildKategoriFilter;}):sorterade;
+  var synliga=filtrerade.slice(0,bildVisaAntal);
+
+  var html="<div style='margin-bottom:18px'>"
+    +"<div style='font-size:11px;color:#5c5c5c;margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em'>Senaste bilderna</div>"
+    +"<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:8px'>"
+    +senaste4.map(function(img){return imgThumb(img);}).join("")
+    +"</div></div>"
+    +buildBildKategoriDropdown();
+  if(!filtrerade.length){
+    html+="<div class='empty'><div class='eico'>🖼️</div>Inga bilder i denna kategori.</div>";
+  }else{
+    html+="<div id='bild-lista'>"+synliga.map(function(img){return imgEntry(img);}).join("")+"</div>";
+    if(filtrerade.length>synliga.length){
+      html+="<button id='bild-visa-fler' style='width:100%;padding:12px;border-radius:8px;background:#161616;border:1px solid #2a2a2a;color:#c9c9c9;font-size:13px;cursor:pointer;margin-top:4px'>Visa fler ("+(filtrerade.length-synliga.length)+" till)</button>";
+    }
+  }
+  c.innerHTML=html;
+
+  var dd=c.querySelector("#bild-kat-filter");
+  if(dd)dd.onchange=function(){bildKategoriFilter=dd.value;bildVisaAntal=10;renderHistBilder();};
+
+  var merKnapp=c.querySelector("#bild-visa-fler");
+  if(merKnapp)merKnapp.onclick=function(){bildVisaAntal+=10;renderHistBilder();};
+
+  // Lazy-load images that don't have base64 (senaste-4 thumbnails + den paginerade listan, utan dubbelladdning)
+  var attLadda={};
+  senaste4.concat(synliga).forEach(function(img){attLadda[img.id]=img;});
+  Object.keys(attLadda).forEach(function(key){
+    var img=attLadda[key];
     if(img.base64||!img.driveId)return;
     loadImageBase64(img).then(function(b64){
       if(!b64)return;
       img.base64=b64;
-      var wrap=c.querySelector("#imgwrap-"+img.id);
-      if(wrap)wrap.innerHTML="<img src='data:"+(img.mtype||"image/jpeg")+";base64,"+b64+"' style='width:100%;max-height:240px;object-fit:cover;display:block'/>";
+      var thumbwrap=c.querySelector("#thumbwrap-"+img.id);
+      if(thumbwrap)thumbwrap.innerHTML="<img src='data:"+(img.mtype||"image/jpeg")+";base64,"+b64+"' style='width:100%;height:100%;object-fit:cover;display:block'/>";
+      var imgwrap=c.querySelector("#imgwrap-"+img.id);
+      if(imgwrap)imgwrap.innerHTML="<img src='data:"+(img.mtype||"image/jpeg")+";base64,"+b64+"' style='width:100%;max-height:240px;object-fit:cover;display:block'/>";
     });
   });
 
