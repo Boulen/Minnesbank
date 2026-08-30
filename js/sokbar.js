@@ -46,6 +46,47 @@
   document.body.insertAdjacentHTML("beforeend",html);
 })();
 
+// ---- Robust JSON-tolkning av AI-svar (lokalt i sokbar.js, rör inte core.js) ----
+// Bakgrund (2026-08-30): Blå rapporterade att sökningen gav "Kunde inte tolka
+// svaret, försök igen." Grundorsaken kunde jag inte se direkt (ingen tillgång till
+// produktionens konsol/nätverkslogg), men core.js:s delade extractJsonObject()
+// letar bara efter FÖRSTA "{" och SISTA "}" i hela svaret - det går sönder om
+// förklaringstexten själv innehåller en klammer, eller (troligast) om svaret blir
+// avklippt av max_tokens mitt i JSON-objektet, så sista tecknet aldrig blir "}".
+// sokbarExtractBalancedJson räknar ihop matchande klamrar (hoppar över klamrar
+// inuti citattecken) och ger null om den aldrig hittar ett komplett objekt, istället
+// för att gissa fel. sokbarParseJsonReply används i alla tre AI-anropen nedan och
+// faller tillbaka på core.js:s enklare extractJsonObject som sista utväg.
+function sokbarExtractBalancedJson(text){
+  text=String(text||"").replace(/```json|```/gi,"").trim();
+  var start=text.indexOf("{");
+  if(start===-1)return null;
+  var depth=0,inStr=false,esc=false;
+  for(var i=start;i<text.length;i++){
+    var ch=text[i];
+    if(inStr){
+      if(esc){esc=false;continue;}
+      if(ch==="\\"){esc=true;continue;}
+      if(ch==='"')inStr=false;
+      continue;
+    }
+    if(ch==='"'){inStr=true;continue;}
+    if(ch==="{")depth++;
+    else if(ch==="}"){
+      depth--;
+      if(depth===0)return text.slice(start,i+1);
+    }
+  }
+  return null; // obalanserat - oftast ett svar avklippt av max_tokens
+}
+function sokbarParseJsonReply(rawText){
+  var balanced=sokbarExtractBalancedJson(rawText);
+  if(balanced){
+    try{return JSON.parse(balanced);}catch(e){/* fortsätt till reservmetoden nedan */}
+  }
+  try{return JSON.parse(extractJsonObject(rawText));}catch(e){return null;}
+}
+
 async function searchDictionary(){
   var dictInput=document.getElementById("dictInput");
   var dictResult=document.getElementById("dictResult");
@@ -56,16 +97,30 @@ async function searchDictionary(){
   dictResult.innerHTML="<span class='spnr' style='width:14px;height:14px;border-width:2px;display:inline-block;margin:0 6px 0 0;vertical-align:middle'></span>söker …";
   var sys='Du ar en pedagog. Ge en kort, tydlig och lattforstaelig forklaring pa svenska av frasen eller fragan, max 3-4 meningar. Svara ENDAST med JSON, utan markdown-block: {"title":"kort rubrik for det som forklaras","explanation":"..."}';
   var userMsg="Forklara: \""+text+"\"";
-  var parsed=null;
+  var parsed=null,lastRawText="",lastErr=null;
   for(var attempt=0;attempt<2&&!parsed;attempt++){
     try{
-      var res=await aiCall(sys,userMsg,900);
+      var res=await aiCall(sys,userMsg,1200);
       var data=await res.json();
-      parsed=JSON.parse(extractJsonObject(aiText(data)));
-    }catch(err){parsed=null;}
+      lastRawText=aiText(data);
+      if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+      parsed=sokbarParseJsonReply(lastRawText);
+    }catch(err){lastErr=err;parsed=null;}
   }
   if(!parsed){
-    dictResult.innerHTML="<button class='dict-close' id='dictCloseBtn'>×</button>Kunde inte tolka svaret, försök igen.";
+    if(lastRawText&&lastRawText.trim()){
+      // AI svarade med text men inte med giltig/komplett JSON (troligen avklippt av
+      // max_tokens) - visa svaret rakt av istället för att strandsätta med ett tomt fel.
+      console.error("sokbar: kunde inte tolka JSON-svaret från Sök, visar råtext istället",lastErr,lastRawText);
+      dictChat=[{role:"user",content:"Förklara: \""+text+"\""},{role:"assistant",content:lastRawText}];
+      dictHeaderHtml="<span class='note-label'>"+esc(text)+"</span>"
+        +"<div style='margin:6px 0 10px;color:var(--text);font-size:13.5px'>"+esc(lastRawText)+"</div>";
+      dictAiSystemPrompt="Du ar en pedagog. Fortsätt hjälpa personen bygga vidare på det ni just pratat om, svara med vanlig text.";
+      renderDictResultBox();
+      return;
+    }
+    console.error("sokbar: Sök fick inget svar alls från AI",lastErr);
+    dictResult.innerHTML="<button class='dict-close' id='dictCloseBtn'>×</button>Kunde inte hämta ett svar, försök igen.";
     var closeErrBtn=document.getElementById("dictCloseBtn");
     if(closeErrBtn)closeErrBtn.onclick=function(){dictResult.classList.remove("visible");};
     return;
@@ -93,16 +148,24 @@ async function checkSpelling(){
   dictResult.innerHTML="<span class='spnr' style='width:14px;height:14px;border-width:2px;display:inline-block;margin:0 6px 0 0;vertical-align:middle'></span>kontrollerar stavning …";
   var sys='Du ar en svensk korrekturlasare. Leta ENDAST efter felstavade ord i texten som ges - inte grammatik eller stil. Svara ENDAST med JSON, utan markdown-block: {"misspellings":[{"word":"felstavat ord/fras exakt som i texten","correction":"rattstavad form"}]}. Om inga felstavningar hittas: {"misspellings":[]}.';
   var userMsg="Kontrollera stavningen i denna text:\n\n"+text;
-  var parsed=null;
+  var parsed=null,lastRawText="",lastErr=null;
   for(var attempt=0;attempt<2&&!parsed;attempt++){
     try{
-      var res=await aiCall(sys,userMsg,700);
+      var res=await aiCall(sys,userMsg,900);
       var data=await res.json();
-      parsed=JSON.parse(extractJsonObject(aiText(data)));
-    }catch(err){parsed=null;}
+      lastRawText=aiText(data);
+      if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+      var p=sokbarParseJsonReply(lastRawText);
+      if(p&&Array.isArray(p.misspellings))parsed=p;
+    }catch(err){lastErr=err;parsed=null;}
   }
-  if(!parsed||!Array.isArray(parsed.misspellings)){
-    dictResult.innerHTML="<button class='dict-close' id='dictCloseBtn'>×</button>Kunde inte tolka svaret, försök igen.";
+  if(!parsed){
+    console.error("sokbar: kunde inte tolka JSON-svaret från stavningskontrollen",lastErr,lastRawText);
+    dictResult.innerHTML="<button class='dict-close' id='dictCloseBtn'>×</button>"
+      +"<span class='note-label'>Stavningskontroll</span>"
+      +(lastRawText&&lastRawText.trim()
+        ?"<div style='margin:6px 0 4px;color:var(--text);font-size:13.5px'>"+esc(lastRawText)+"</div>"
+        :"<div style='margin:6px 0 4px;color:var(--text);font-size:13.5px'>Kunde inte hämta ett svar, försök igen.</div>");
     var closeErrBtn=document.getElementById("dictCloseBtn");
     if(closeErrBtn)closeErrBtn.onclick=function(){dictResult.classList.remove("visible");};
     return;
@@ -227,16 +290,27 @@ async function searchSynonym(){
   synResult.innerHTML="<span class='spnr' style='width:14px;height:14px;border-width:2px;display:inline-block;margin:0 6px 0 0;vertical-align:middle'></span>söker …";
   var sys='Du ar en svensk assistent for ordbok och synonymer. Ge en kort definition och 4-6 bra synonymer for ordet eller frasen. Kolla ocksa om ordet/frasen troligen ar felstavat pa svenska - om du misstanker det, fyll i "misspelled":true och "correction" med den ratt stavade formen (annars "misspelled":false och "correction":null). Svara ENDAST med JSON, utan markdown-block: {"word":"ordet/frasen","definition":"kort definition, max 2 meningar","synonyms":["syn1","syn2","syn3","syn4"],"misspelled":false,"correction":null}';
   var userMsg="Slå upp: \""+word+"\"";
-  var parsed=null,lastErr=null;
+  var parsed=null,lastRawText="",lastErr=null;
   for(var attempt=0;attempt<2&&!parsed;attempt++){
     try{
-      var res=await aiCall(sys,userMsg,900);
+      var res=await aiCall(sys,userMsg,1100);
       var data=await res.json();
-      parsed=JSON.parse(extractJsonObject(aiText(data)));
+      lastRawText=aiText(data);
+      if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+      parsed=sokbarParseJsonReply(lastRawText);
     }catch(err){lastErr=err;parsed=null;}
   }
   if(!parsed){
-    synResult.innerHTML="<button class='dict-close' id='synCloseBtn'>×</button>Kunde inte tolka svaret, försök igen.";
+    if(lastRawText&&lastRawText.trim()){
+      console.error("sokbar: kunde inte tolka JSON-svaret från Ord, visar råtext istället",lastErr,lastRawText);
+      synChat=[{role:"user",content:"Slå upp: \""+word+"\""},{role:"assistant",content:lastRawText}];
+      synHeaderHtml="<span class='note-label'>"+esc(word)+"</span>"
+        +"<div style='margin:6px 0 10px;color:var(--text);font-size:13.5px'>"+esc(lastRawText)+"</div>";
+      renderSynResultBox();
+      return;
+    }
+    console.error("sokbar: Ord fick inget svar alls från AI",lastErr);
+    synResult.innerHTML="<button class='dict-close' id='synCloseBtn'>×</button>Kunde inte hämta ett svar, försök igen.";
     var closeErrBtn=document.getElementById("synCloseBtn");
     if(closeErrBtn)closeErrBtn.onclick=function(){synResult.classList.remove("visible");};
     return;
