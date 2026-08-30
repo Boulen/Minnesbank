@@ -20,6 +20,14 @@
 // använda helt via tangentbord (se initLashjalp() längre ner: fokus-fälla, Escape
 // stänger, fokus återgår till knappen). All CSS för overlayet injiceras av samma IIFE
 // nedan (rör inte styles.css, som ägs av huvudet) - se lashjalpCss.
+//
+// NYTT (2026-08-30, sent): på Blås begäran - (1) tydligare text-bekräftelse ("✓
+// Sparat"/"⚠ Kunde inte spara") istället för bara en ikon vid alla 📌-sparningar,
+// se flash() i lashjalpPinEntry(); (2) 👓-genvägsknapp till vänster om 📖 som går
+// rakt till historikvyn (openLashjalpHistoryDirect()); (3) Läshjälps översättning har
+// nu fria textfält för Från/Till istället för en fast dropdown (tomt Från = AI:n
+// identifierar själv, tomt Till = svenska), och sparar/visar källspråket i
+// oversattning.json (se lashjalpTranslate()/loadLashjalpHistory()).
 
 var LASHJALP_CSS = ""
   +".lashjalp-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:300;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;}"
@@ -38,12 +46,13 @@ var LASHJALP_CSS = ""
   +".lashjalp-result:empty{display:none;}"
   +"#lashjalpCloseBtn:focus,#lashjalpBtn:focus,#lashjalpTransBtn:focus,#lashjalpOrdBtn:focus,"
   +"#lashjalpSettingsBtn:focus,#lashjalpSettingsCloseBtn:focus,#lashjalpSettingsCancelBtn:focus,#lashjalpSettingsSaveBtn:focus,"
-  +"#lashjalpHistoryBtn:focus,#lashjalpHistoryCloseBtn:focus"
+  +"#lashjalpHistoryBtn:focus,#lashjalpHistoryCloseBtn:focus,#lashjalpHistoryShortcutBtn:focus"
   +"{outline:2px solid var(--main);outline-offset:2px;}"
   +".lashjalp-panel .abtn{padding:8px 18px;}"
   +".lashjalp-history-item{background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:13px;color:var(--text);}"
   +".lashjalp-history-item .lashjalp-history-q{color:var(--sub);font-size:12px;margin-bottom:4px;}"
   +".lashjalp-history-item .lashjalp-history-a{color:var(--text);}"
+  +".lashjalp-history-item .lashjalp-history-lang{color:var(--sub);font-size:11px;margin-top:4px;font-style:italic;}"
   +".lashjalp-history-item .lashjalp-history-time{color:var(--sub);font-size:10.5px;margin-top:6px;font-family:'JetBrains Mono',monospace;}";
 
 (function injectSokbarMarkup(){
@@ -74,12 +83,13 @@ var LASHJALP_CSS = ""
     +'<label class="action-btn" style="cursor:pointer" title="Ladda upp bild eller fil">📁<input type="file" id="dictImgUpload" accept="image/*,.txt,.md,.csv,.json,text/plain" style="display:none"></label>'
     +'<button class="action-btn" id="dictCameraBtn" type="button" title="Ta bild">📷</button>'
     +'</div>'
-    +'<div class="dict-input-row dict-row-main" style="flex:1 1 70px">'
+    +'<div class="dict-input-row dict-row-main" style="flex:1 1 60px">'
     +'<input type="text" id="dictInput" placeholder="Sök">'
     +'<button class="action-btn" id="dictSpellBtn" type="button" title="Stavningskontroll">🔤</button>'
     +'</div>'
-    +'<div class="dict-input-row dict-row-small" style="flex:0 1 115px;min-width:80px">'
+    +'<div class="dict-input-row dict-row-small" style="flex:0 1 170px;min-width:130px">'
     +'<input type="text" id="synInput" placeholder="Ord">'
+    +'<button class="action-btn" id="lashjalpHistoryShortcutBtn" type="button" title="Gå direkt till sparade sökningar" style="padding:6px 12px;font-size:11.5px;flex:0 0 auto">👓</button>'
     +'<button class="action-btn" id="lashjalpBtn" type="button" title="Läshjälp: översättning och ordbok i ett eget fönster" style="padding:6px 12px;font-size:11.5px;flex:0 0 auto">📖</button>'
     +'</div>'
     +'</div>'
@@ -101,14 +111,11 @@ var LASHJALP_CSS = ""
     +'<textarea id="lashjalpTransInput" placeholder="Text att översätta (Enter för att översätta, Skift+Enter för radbrytning)" rows="3"></textarea>'
     +'</div>'
     +'<div class="lashjalp-row">'
-    +'<select id="lashjalpTransLang">'
-    +'<option value="">Från - upptäck automatiskt</option>'
-    +'<option value="engelska">Från engelska</option>'
-    +'<option value="spanska">Från spanska</option>'
-    +'<option value="tyska">Från tyska</option>'
-    +'<option value="franska">Från franska</option>'
-    +'</select>'
-    +'<button type="button" id="lashjalpTransBtn" class="action-btn">Översätt till svenska</button>'
+    +'<input type="text" id="lashjalpTransFromInput" placeholder="Från (t.ex. engelska) - tomt = identifieras automatiskt">'
+    +'<input type="text" id="lashjalpTransToInput" placeholder="Till (tomt = svenska)">'
+    +'</div>'
+    +'<div class="lashjalp-row">'
+    +'<button type="button" id="lashjalpTransBtn" class="action-btn">Översätt</button>'
     +'</div>'
     +'<div class="lashjalp-result" id="lashjalpTransResult"></div>'
     +'</div>'
@@ -224,17 +231,19 @@ var LASHJALP_FOLDER=["Sokruta"];
 var LASHJALP_FILES={sok:"sok.json",ord:"ord.json",oversattning:"oversattning.json"};
 
 // Delad pin-funktion: lägger till en post FÖRST i listan i angiven fil och sparar hela
-// listan tillbaka. btnEl (valfri) får en kort ✓/⚠-bekräftelse.
+// listan tillbaka. btnEl (valfri) får en tydlig text-bekräftelse ("✓ Sparat"/"⚠ Fel")
+// istället för bara en ikon, enligt Blås önskemål om en synligare bekräftelse vid
+// sparning av sökning/ord/översättning.
 async function lashjalpPinEntry(fileName,entry,btnEl){
-  function flash(symbol){
+  function flash(ok){
     if(!btnEl)return;
     var orig=btnEl.textContent;
-    btnEl.textContent=symbol;
-    setTimeout(function(){btnEl.textContent=orig;},1500);
+    btnEl.textContent=ok?"✓ Sparat":"⚠ Kunde inte spara";
+    setTimeout(function(){btnEl.textContent=orig;},1800);
   }
   if(typeof accessToken==="undefined"||!accessToken){
     console.error("sokbar: kan inte spara pin till "+fileName+" - inte inloggad");
-    flash("⚠");
+    flash(false);
     return;
   }
   try{
@@ -242,11 +251,11 @@ async function lashjalpPinEntry(fileName,entry,btnEl){
     var items=(data&&Array.isArray(data.items))?data.items:[];
     items.unshift(entry);
     var ok=await driveWriteJson(LASHJALP_FOLDER,fileName,{items:items});
-    flash(ok?"✓":"⚠");
+    flash(ok);
     if(!ok)console.error("sokbar: driveWriteJson misslyckades för "+fileName);
   }catch(err){
     console.error("sokbar: pin till "+fileName+" misslyckades",err);
-    flash("⚠");
+    flash(false);
   }
 }
 function pinSokResult(btnEl){
@@ -263,9 +272,14 @@ function pinOrdResult(chat,btnEl){
     timestamp:new Date().toISOString()
   },btnEl);
 }
-function pinOversattningResult(kalla,oversattning,btnEl){
+// kallaSprak/tillSprak (2026-08-30, nytt): källspråket AI:n identifierade (eller det
+// Blå skrev in själv) resp. målspråket - sparas med i oversattning.json och visas i
+// historikvyn, se lashjalpTranslate() och loadLashjalpHistory().
+function pinOversattningResult(kalla,oversattning,kallaSprak,tillSprak,btnEl){
   lashjalpPinEntry(LASHJALP_FILES.oversattning,{
-    id:Date.now(),kalla:kalla,oversattning:oversattning,timestamp:new Date().toISOString()
+    id:Date.now(),kalla:kalla,oversattning:oversattning,
+    kallaSprak:kallaSprak||"",tillSprak:tillSprak||"svenska",
+    timestamp:new Date().toISOString()
   },btnEl);
 }
 
@@ -685,8 +699,13 @@ async function loadLashjalpHistory(){
     var timeStr="";
     try{if(item.timestamp)timeStr=new Date(item.timestamp).toLocaleString("sv-SE");}catch(e){/* strunta i tidsstämpeln om den inte går att tolka */}
     if(key==="oversattning"){
+      var langLine="";
+      if(item.kallaSprak||item.tillSprak){
+        langLine="<div class='lashjalp-history-lang'>"+esc(item.kallaSprak||"okänt språk")+" → "+esc(item.tillSprak||"svenska")+"</div>";
+      }
       return "<div class='lashjalp-history-item'>"
         +"<div class='lashjalp-history-q'>"+esc(item.kalla||"")+"</div>"
+        +langLine
         +"<div class='lashjalp-history-a'>"+esc(item.oversattning||"")+"</div>"
         +(timeStr?"<div class='lashjalp-history-time'>"+esc(timeStr)+"</div>":"")
         +"</div>";
@@ -699,38 +718,77 @@ async function loadLashjalpHistory(){
   }).join("");
 }
 
-// Ren textöversättning - inget JSON-svar att tolka här (till skillnad från Sök/Ord),
-// så den är inte känslig för samma avklippnings-/tolkningsproblem som fanns tidigare.
-// Läshjälpen översätter alltid TILL svenska (det är ju syftet - hjälp att läsa något
-// på ett annat språk) - dropdownen väljer bara KÄLLSPRÅKET, med automatisk
-// språkigenkänning som förval om man inte vet/vill ange det.
+// Genväg (👓-knappen till vänster om 📖-knappen i huvudraden): går rakt in i
+// historikvyn utan att först visa Läshjälps huvudpanel. Sköter samma
+// fokus-sparning/overflow-hidden som openLashjalp() gör normalt (annars blir
+// body.style.overflow aldrig återställd när man stänger, eftersom den bara sätts av
+// openLashjalp() annars) - closeLashjalpHistory() lämnar tillbaka en till Läshjälps
+// huvudpanel (som vanligt), och closeLashjalp() därifrån återställer allt.
+function openLashjalpHistoryDirect(){
+  var overlay=document.getElementById("lashjalpOverlay");
+  if(!overlay)return;
+  lashjalpLastFocus=document.activeElement;
+  document.body.style.overflow="hidden";
+  overlay.style.display="none";
+  openLashjalpHistory();
+}
+
+// Ren textöversättning - inget JSON-svar att tolka här förr, men sedan Blå bad om att
+// FÅ VETA (och spara) vilket källspråk AI:n identifierade, ber vi nu om ett litet
+// JSON-svar {oversattning, kallaSprak} istället för ren text - sokbarParseJsonReply
+// (samma robusta klammer-räknare som Sök/Ord använder) sköter tolkningen, med samma
+// råtext-fallback om AI:n mot förmodan inte skulle svara med giltig JSON.
+// Både källspråk ("Från") och målspråk ("Till") är nu fria textfält istället för en
+// fast dropdown: tomt "Från" = AI:n identifierar själv, tomt "Till" = svenska.
 async function lashjalpTranslate(){
   var input=document.getElementById("lashjalpTransInput");
-  var langSel=document.getElementById("lashjalpTransLang");
+  var fromInput=document.getElementById("lashjalpTransFromInput");
+  var toInput=document.getElementById("lashjalpTransToInput");
   var result=document.getElementById("lashjalpTransResult");
   if(!input||!result)return;
   var text=input.value.trim();
   if(!text)return;
-  var sourceLang=(langSel&&langSel.value)||"";
+  var sourceLang=(fromInput&&fromInput.value.trim())||"";
+  var targetLang=(toInput&&toInput.value.trim())||"svenska";
   result.innerHTML="Översätter …";
   var sys=sourceLang
-    ?"Du ar en oversattare. Texten som ges ar skriven pa "+sourceLang+". Oversatt den till svenska. Svara ENDAST med den oversatta texten, ingen extra kommentar och inga citattecken runt om."
-    :"Du ar en oversattare. Identifiera sjalv vilket sprak texten som ges ar skriven pa, och oversatt den till svenska. Svara ENDAST med den oversatta texten, ingen extra kommentar och inga citattecken runt om.";
-  try{
-    var res=await aiCall(sys,text,900);
-    var data=await res.json();
-    if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
-    var translated=(aiText(data)||"").trim();
-    if(translated){
+    ?"Du ar en oversattare. Texten som ges ar skriven pa "+sourceLang+". Oversatt den till "+targetLang+". Svara ENDAST med JSON, utan markdown-block: {\"oversattning\":\"den oversatta texten, inga citattecken runt om\",\"kallaSprak\":\""+sourceLang+"\"}"
+    :"Du ar en oversattare. Identifiera sjalv vilket sprak texten som ges ar skriven pa, och oversatt den till "+targetLang+". Svara ENDAST med JSON, utan markdown-block: {\"oversattning\":\"den oversatta texten, inga citattecken runt om\",\"kallaSprak\":\"spraket du identifierade, kort, pa svenska (t.ex. engelska)\"}";
+  var parsed=null,lastRawText="",lastErr=null;
+  for(var attempt=0;attempt<2&&!parsed;attempt++){
+    try{
+      var res=await aiCall(sys,text,900);
+      var data=await res.json();
+      lastRawText=aiText(data);
+      if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+      parsed=sokbarParseJsonReply(lastRawText);
+    }catch(err){lastErr=err;parsed=null;}
+  }
+  if(!parsed||!parsed.oversattning){
+    if(lastRawText&&lastRawText.trim()){
+      // AI:n svarade men inte med giltig/komplett JSON - visa råtexten (troligen redan
+      // den översatta texten rakt av) istället för att strandsätta med ett tomt fel.
+      console.error("sokbar: läshjälp-översättning kunde inte tolka JSON-svaret, visar råtext istället",lastErr,lastRawText);
+      var rawTranslated=lastRawText.trim();
       result.innerHTML="<button id='lashjalpTransPinBtn' title='Spara översättningen (oversattning.json)' style='float:right;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:0 0 6px 8px'>📌</button>"
-        +"<div>"+esc(translated)+"</div>";
-      var pinBtn=document.getElementById("lashjalpTransPinBtn");
-      if(pinBtn)pinBtn.onclick=function(){pinOversattningResult(text,translated,pinBtn);};
-    } else {
-      result.textContent="Kunde inte hämta en översättning, försök igen.";
+        +"<div>"+esc(rawTranslated)+"</div>";
+      var rawPinBtn=document.getElementById("lashjalpTransPinBtn");
+      if(rawPinBtn)rawPinBtn.onclick=function(){pinOversattningResult(text,rawTranslated,sourceLang,targetLang,rawPinBtn);};
+      return;
     }
-  }catch(err){
-    console.error("sokbar: läshjälp-översättning misslyckades",err);
+    console.error("sokbar: läshjälp-översättning fick inget svar alls från AI",lastErr);
+    result.textContent="Kunde inte hämta en översättning, försök igen.";
+    return;
+  }
+  var translated=String(parsed.oversattning||"").trim();
+  var detectedSprak=sourceLang||String(parsed.kallaSprak||"").trim();
+  if(translated){
+    result.innerHTML="<button id='lashjalpTransPinBtn' title='Spara översättningen (oversattning.json)' style='float:right;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:0 0 6px 8px'>📌</button>"
+      +(detectedSprak?"<div style='color:var(--sub);font-size:11px;margin-bottom:4px'>"+esc(detectedSprak)+" → "+esc(targetLang)+"</div>":"")
+      +"<div>"+esc(translated)+"</div>";
+    var pinBtn=document.getElementById("lashjalpTransPinBtn");
+    if(pinBtn)pinBtn.onclick=function(){pinOversattningResult(text,translated,detectedSprak,targetLang,pinBtn);};
+  } else {
     result.textContent="Kunde inte hämta en översättning, försök igen.";
   }
 }
@@ -805,6 +863,11 @@ function initLashjalp(){
   var lashjalpBtn=document.getElementById("lashjalpBtn");
   if(lashjalpBtn)lashjalpBtn.onclick=openLashjalp;
 
+  // Genvägsknapp (👓) till vänster om 📖 - går rakt till historikvyn, se
+  // openLashjalpHistoryDirect() ovan.
+  var historyShortcutBtn=document.getElementById("lashjalpHistoryShortcutBtn");
+  if(historyShortcutBtn)historyShortcutBtn.onclick=openLashjalpHistoryDirect;
+
   var overlay=document.getElementById("lashjalpOverlay");
   if(!overlay)return;
 
@@ -840,6 +903,14 @@ function initLashjalp(){
   var transInput=document.getElementById("lashjalpTransInput");
   if(transInput)transInput.onkeydown=function(e){
     if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();lashjalpTranslate();}
+  };
+  var transFromInput=document.getElementById("lashjalpTransFromInput");
+  if(transFromInput)transFromInput.onkeydown=function(e){
+    if(e.key==="Enter"){e.preventDefault();lashjalpTranslate();}
+  };
+  var transToInput=document.getElementById("lashjalpTransToInput");
+  if(transToInput)transToInput.onkeydown=function(e){
+    if(e.key==="Enter"){e.preventDefault();lashjalpTranslate();}
   };
   var transBtn=document.getElementById("lashjalpTransBtn");
   if(transBtn)transBtn.onclick=lashjalpTranslate;
