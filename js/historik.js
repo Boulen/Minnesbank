@@ -234,12 +234,21 @@ var histBetygSubview="media"; // media | objekt | plats
 var bildKategoriFilter=""; // "" = alla kategorier
 var bildVisaAntal=10;
 
-// Bildens egen kategori (rättat 2026-08-29 efter besked från huvud-chatten: använd den
-// befintliga globalen CATS, ingen separat BILDKATEGORIER-lista — den koden finns inte i
-// core.js). Varje bildpost har ett eget "category"-fält (samma nivå som logId/activity/
-// mtype) som pekar in i CATS, precis som en loggposts "category" gör.
+// Bildens egen kategori (rättat 2026-08-30 efter besked från Aktivitet-chatten, som äger
+// bilddatamodellen): fältet heter "bildkategori", INTE "category" — "category" finns kvar
+// på bildposter men är alltid tomt/oanvänt (det fältet är egentligen till för loggar).
+// Kategorierna finns i globalen AKTIVITET_BILDKATEGORIER (samma {id,label,e}-form som
+// CATS), satt av aktivitet.js — INTE samma lista som CATS (aktivitetskategorier).
+function bildKatList(){
+  return (typeof AKTIVITET_BILDKATEGORIER!=="undefined"&&AKTIVITET_BILDKATEGORIER)?AKTIVITET_BILDKATEGORIER:[];
+}
+function getBildKatLabel(id){
+  if(!id)return "";
+  var k=bildKatList().find(function(c){return c.id===id;});
+  return k?k.label:"";
+}
 function imgKategoriId(img){
-  return img.category||"";
+  return img.bildkategori||"";
 }
 
 function imgThumb(img){
@@ -255,7 +264,7 @@ function imgThumb(img){
 
 function buildBildKategoriDropdown(){
   var opts="<option value=''"+(bildKategoriFilter===""?" selected":"")+">Alla kategorier</option>"
-    +CATS.map(function(c){return "<option value='"+esc(c.id)+"'"+(c.id===bildKategoriFilter?" selected":"")+">"+c.e+" "+esc(c.label)+"</option>";}).join("");
+    +bildKatList().map(function(c){return "<option value='"+esc(c.id)+"'"+(c.id===bildKategoriFilter?" selected":"")+">"+c.e+" "+esc(c.label)+"</option>";}).join("");
   return "<select id='bild-kat-filter' style='width:100%;padding:11px 13px;border-radius:5px;background:#161616;border:1px solid #2a2a2a;color:#f2f2f2;font-size:14px;margin-bottom:16px;font-family:inherit'>"+opts+"</select>";
 }
 
@@ -299,10 +308,21 @@ function renderHistory(){
 // när man klickar på Historik-huvudfliken - den laddas bara här, när man faktiskt besöker
 // Bild-underfliken i Historik (Blås instruktion 2026-08-26). Skyddar mot dubbelrendering om
 // man hinner klicka bort till en annan underflik innan hämtningen är klar.
+//
+// RÄTTAT 2026-08-30 (besked från Aktivitet-chatten): "bilder" har inget eget domän-baserat
+// loadTab-stöd i core.js (ingen "bilder"-gren i loadTab/applyTabData - bekräftat genom att
+// läsa core.js) - loadTab("bilder") var alltså en no-op hela tiden, därav att bilder bara
+// dök upp i Historik efter ett besök i Aktivitet (vars egen kod var det enda som fyllde
+// imageHist). Rätt funktion är ensureAktivitetBilderIndexLoaded() i aktivitet.js: läser
+// Aktivitet/bilder.json och slår ihop posterna i imageHist (skriver aldrig över). Den beror
+// bara på delade globaler (accessToken/imageHist m.fl.), har en egen en-gång-per-sidladdning-
+// spärr, och är säker att anropa fristående från Historik (bekräftat av Aktivitet-chatten).
+// Skyddad med en typeof-koll ifall en äldre aktivitet.js-version saknar funktionen.
 function loadHistBilderOchRendera(){
   var hc=document.getElementById("hist-content");
   if(hc)hc.innerHTML=spin();
-  loadTab("bilder").then(function(){
+  var ladda=(typeof ensureAktivitetBilderIndexLoaded==="function")?ensureAktivitetBilderIndexLoaded():Promise.resolve();
+  ladda.then(function(){
     if(historySubview==="bilder")renderHistBilder();
   });
 }
@@ -753,7 +773,7 @@ function renderHistAktiviteter(){
 }
 
 function imgEntry(img){
-  var catName=getCatLabel(img.category);
+  var catName=getBildKatLabel(img.bildkategori);
   var title=img.activity||"bild";
   var fname=buildImageFilename(img);
   var ext=img.mtype&&img.mtype.includes("png")?"png":"jpg";

@@ -718,6 +718,72 @@ async function driveResolveFolder(def){
   return parentId;
 }
 
+// ============================================================================
+// GENERISKA, FRITT ANVÄNDBARA DRIVE-FUNKTIONER
+// Till skillnad från driveRead/driveWrite/driveGetFileId ovan (som kräver att
+// sökvägen är förregistrerad i DRIVE_STRUCTURE här i core.js) tar dessa fyra
+// emot mappstig, filnamn och ev. rotmapp-ID direkt som argument. Varje flikfil äger
+// alltså helt sin egen mappstruktur/filnamn/JSON-form - core.js behöver aldrig veta
+// om den i förväg. Använd dessa för ny kod istället för att be om en ny rad i
+// DRIVE_STRUCTURE/saveTab/loadTab.
+// ============================================================================
+
+// folderNames: array av mappnamn, t.ex. ["Aktivitet","Bilder"]. rootId: valfri,
+// annars den app-ägda rotmappen (getAppRootFolderId()).
+async function driveResolveFolderPath(folderNames,rootId){
+  var parentId=rootId||await getAppRootFolderId();
+  for(var i=0;i<folderNames.length;i++){
+    parentId=await driveMkdir(folderNames[i],parentId);
+  }
+  return parentId;
+}
+
+// Hittar (eller skapar, om skapaOmSaknas=true) en fil med angivet namn i mappen.
+// Returnerar filens Drive-ID, eller null om den saknas och inte skulls skapas.
+async function driveGetOrCreateFileId(folderNames,fileName,skapaOmSaknas,rootId){
+  var parentId=await driveResolveFolderPath(folderNames,rootId);
+  var q="name='"+fileName+"' and '"+parentId+"' in parents and trashed=false";
+  var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id,name,createdTime)&orderBy=createdTime",{headers:{Authorization:"Bearer "+accessToken}});
+  var d=await r.json();
+  if(d.files&&d.files.length)return d.files[0].id;
+  if(!skapaOmSaknas)return null;
+  var form=new FormData();
+  form.append("metadata",new Blob([JSON.stringify({name:fileName,parents:[parentId],mimeType:"application/json"})],{type:"application/json"}));
+  form.append("file",new Blob(["{}"],{type:"application/json"}));
+  var r2=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
+  var d2=await r2.json();
+  return d2.id;
+}
+
+// Läser valfri JSON-fil på valfri mappstig. Returnerar det parsade objektet,
+// eller null om filen saknas/är tom/inte går att läsa.
+async function driveReadJson(folderNames,fileName,rootId){
+  try{
+    var id=await driveGetOrCreateFileId(folderNames,fileName,false,rootId);
+    if(!id)return null;
+    var r=await fetch(DRIVE_API+"/"+id+"?alt=media",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)return null;
+    var text=await r.text();
+    if(!text||!text.trim()||text.trim()==="{}")return null;
+    return JSON.parse(text);
+  }catch(e){
+    console.warn("driveReadJson("+folderNames.join("/")+"/"+fileName+") misslyckades:",e);
+    return null;
+  }
+}
+
+// Skriver valfri JSON-fil på valfri mappstig. Skapar filen om den inte finns.
+async function driveWriteJson(folderNames,fileName,data,rootId){
+  try{
+    var id=await driveGetOrCreateFileId(folderNames,fileName,true,rootId);
+    var r=await fetch(DRIVE_UPLOAD+"/"+id+"?uploadType=media",{method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:JSON.stringify(data,null,2)});
+    return r.ok;
+  }catch(e){
+    console.warn("driveWriteJson("+folderNames.join("/")+"/"+fileName+") misslyckades:",e);
+    return false;
+  }
+}
+
 // Filnamn per sökväg — Aktivitet har en egen namngiven fil istället för det
 // generiska "data.json". Övriga sökvägar (ej aktiva flikar just nu) behåller "data.json"
 // tills vidare.
