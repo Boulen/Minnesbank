@@ -1,7 +1,50 @@
 // SOKBAR.JS (fd dictbar.js, kortvarigt sökrad.js/sökbar.js) — sökrutorna längst ner ("dict-bar"), synliga på alla flikar samtidigt.
 // Två sökfunktioner: Sök (förklara text/bild/fil) och Ord (synonymer/ordbok).
 // Beroenden: core.js (esc, aiCall, aiChat, aiText, extractJsonObject, chatContinuationHtml,
-// bindChatContinuation, pinChatToKunskap). Laddas EFTER core.js.
+// bindChatContinuation). Laddas EFTER core.js.
+//
+// NYTT (2026-08-30): pin-knapparna (📌K "Spara till Kunskap" och 📌V "Spara till
+// Vokabulär") är borttagna på Blås begäran, tills vidare. Anledning: 📌V:s
+// saveAndSync("vokabular")-anrop var redan trasigt (no-op) efter core.js:s nya
+// Drive-arkitektur, och fokus just nu är att få sökbaren att fungera, inte sparande.
+// dictChat/synChat lever kvar som vanligt (används av "fortsätt konversationen").
+//
+// NYTT (enligt HANDOFF_sokrutor från huvudet): sökradens HTML-markup ligger inte
+// längre i index.html. Den byggs och läggs till i document.body av injectSokbarMarkup()
+// nedan, som körs direkt när filen laddas. Ändras layouten på sökraden, gör det HÄR —
+// index.html behöver bara en script-tagg som pekar på js/sokbar.js, inget annat.
+
+(function injectSokbarMarkup(){
+  // Skydd mot dubblett-injektion om index.html av misstag ändå har kvar markupen.
+  if(document.getElementById("dictInput"))return;
+  var html=''
+    +'<div class="dict-bar">'
+    +'<div class="dict-result" id="dictResult"></div>'
+    +'<div class="dict-result" id="synResult"></div>'
+    +'<div id="dictCameraContainer" style="display:none;max-width:940px;margin:0 auto 10px;">'
+    +'<video id="dictCameraVideo" autoplay playsinline style="width:100%;border-radius:10px;max-height:220px;object-fit:cover;background:#000"></video>'
+    +'<div style="display:flex;gap:8px;margin-top:8px">'
+    +'<button id="dictSnapBtn" type="button" class="action-btn" style="flex:1">📸 Ta foto</button>'
+    +'<button id="dictCloseCameraBtn" type="button" class="action-btn" style="color:var(--error)">✕</button>'
+    +'</div>'
+    +'</div>'
+    +'<canvas id="dictSnapCanvas" style="display:none"></canvas>'
+    +'<div class="dict-combined-row">'
+    +'<div class="dict-input-row dict-row-uploads">'
+    +'<label class="action-btn" style="cursor:pointer" title="Ladda upp bild eller fil">📁<input type="file" id="dictImgUpload" accept="image/*,.txt,.md,.csv,.json,text/plain" style="display:none"></label>'
+    +'<button class="action-btn" id="dictCameraBtn" type="button" title="Ta bild">📷</button>'
+    +'</div>'
+    +'<div class="dict-input-row dict-row-main">'
+    +'<input type="text" id="dictInput" placeholder="Sök">'
+    +'<button class="action-btn" id="dictSpellBtn" type="button" title="Stavningskontroll">🔤</button>'
+    +'</div>'
+    +'<div class="dict-input-row dict-row-small">'
+    +'<input type="text" id="synInput" placeholder="Ord">'
+    +'</div>'
+    +'</div>'
+    +'</div>';
+  document.body.insertAdjacentHTML("beforeend",html);
+})();
 
 async function searchDictionary(){
   var dictInput=document.getElementById("dictInput");
@@ -146,47 +189,21 @@ function renderDictResultBox(){
   var dictResult=document.getElementById("dictResult");
   if(!dictResult)return;
   dictResult.innerHTML="<button class='dict-close' id='dictCloseBtn'>×</button>"
-    +"<button id='dict-pin-btn' title='Spara till Kunskap' style='position:absolute;top:10px;right:50px;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:2px 4px'>📌K</button>"
     +dictHeaderHtml
     +chatContinuationHtml(dictChat,"dictai");
   document.getElementById("dictCloseBtn").onclick=function(){dictResult.classList.remove("visible");dictChat=null;};
-  var dictPinBtn=dictResult.querySelector("#dict-pin-btn");
-  if(dictPinBtn)dictPinBtn.onclick=function(){
-    pinChatToKunskap(dictChat);
-    var orig=dictPinBtn.textContent;
-    dictPinBtn.textContent="✓";
-    setTimeout(function(){dictPinBtn.textContent=orig;},1200);
-  };
   bindChatContinuation(dictResult,"dictai",dictAiSystemPrompt,function(){return dictChat;},renderDictResultBox);
 }
 
 // ---- Ordlista och Synonymer (mindre, egen ruta) - samma funktion som innan sammanslagningen ----
-var synChat=null, synHeaderHtml="", synLastWord="", synLastSynonyms=[];
+var synChat=null, synHeaderHtml="";
 function renderSynResultBox(){
   var synResult=document.getElementById("synResult");
   if(!synResult)return;
   synResult.innerHTML="<button class='dict-close' id='synCloseBtn'>×</button>"
-    +"<button id='syn-pin-kunskap-btn' title='Spara till Kunskap' style='position:absolute;top:10px;right:50px;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:2px 4px'>📌K</button>"
-    +"<button id='syn-pin-vokabular-btn' title='Spara till Vokabulär' style='position:absolute;top:10px;right:76px;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:2px 4px'>📌V</button>"
     +synHeaderHtml
     +chatContinuationHtml(synChat,"synai");
   document.getElementById("synCloseBtn").onclick=function(){synResult.classList.remove("visible");synChat=null;};
-  var synPinVokabularBtn=synResult.querySelector("#syn-pin-vokabular-btn");
-  if(synPinVokabularBtn)synPinVokabularBtn.onclick=function(){
-    var entryText=synLastWord+" → "+synLastSynonyms.join(", ");
-    vokabularHist.push({id:Date.now(),text:entryText,timestamp:new Date().toISOString()});
-    saveAndSync("vokabular");
-    var orig=synPinVokabularBtn.textContent;
-    synPinVokabularBtn.textContent="✓";
-    setTimeout(function(){synPinVokabularBtn.textContent=orig;},1200);
-  };
-  var synPinKunskapBtn=synResult.querySelector("#syn-pin-kunskap-btn");
-  if(synPinKunskapBtn)synPinKunskapBtn.onclick=function(){
-    pinChatToKunskap(synChat);
-    var orig=synPinKunskapBtn.textContent;
-    synPinKunskapBtn.textContent="✓";
-    setTimeout(function(){synPinKunskapBtn.textContent=orig;},1200);
-  };
   synResult.querySelectorAll("[data-copyword]").forEach(function(chip){
     chip.onclick=function(){
       var word=chip.dataset.copyword;
@@ -232,8 +249,6 @@ async function searchSynonym(){
     }
     var answerText=(parsed.definition||"")+((parsed.synonyms||[]).length?"\nSynonymer: "+parsed.synonyms.join(", "):"");
     synChat=[{role:"user",content:"Slå upp: \""+word+"\""},{role:"assistant",content:answerText}];
-    synLastWord=parsed.word||word;
-    synLastSynonyms=parsed.synonyms||[];
     synHeaderHtml="<span class='note-label'>"+esc(parsed.word||word)+"</span>"
       +suggestionHtml
       +"<div style='margin:6px 0 10px;color:var(--text);font-size:13.5px'>"+esc(parsed.definition||"")+"</div>"

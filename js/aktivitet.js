@@ -593,14 +593,14 @@ function renderAktivitetBilderTab(c){
 
   var senaste=getSenasteBilder();
   if(aktivitetSelectedBildkategori&&!AKTIVITET_BILDKATEGORIER.some(function(g){return g.id===aktivitetSelectedBildkategori;}))aktivitetSelectedBildkategori="";
-  if(!aktivitetSelectedBildkategori&&AKTIVITET_BILDKATEGORIER.length)aktivitetSelectedBildkategori=AKTIVITET_BILDKATEGORIER[0].id;
   var kategoriSektion="<div class='lbl' style='margin-top:18px'>Bildkategori</div>"
     +(!AKTIVITET_BILDKATEGORIER.length
       ? "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Inga bildkategorier ännu - lägg till i ⚙️ Inställningar.</div>"
       : "<select id='bt-category-select' style='width:100%;background:#131313;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;padding:9px 10px;margin-bottom:4px'>"
+        +"<option value=''"+(!aktivitetSelectedBildkategori?" selected":"")+">Välj Kategori</option>"
         +AKTIVITET_BILDKATEGORIER.map(function(g){return "<option value='"+esc(g.id)+"'"+(g.id===aktivitetSelectedBildkategori?" selected":"")+">"+esc(g.e)+" "+esc(g.label)+"</option>";}).join("")
         +"</select>"
-        +listHtml(getGroupedBilder(aktivitetSelectedBildkategori),"Inga bilder i den här kategorin ännu.")
+        +(aktivitetSelectedBildkategori?listHtml(getGroupedBilder(aktivitetSelectedBildkategori),"Inga bilder i den här kategorin ännu."):"")
     );
 
   c.innerHTML=aktivitetSubtabNavHtml()
