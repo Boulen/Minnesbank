@@ -349,13 +349,6 @@ function initDictBar(){
   var synInput=document.getElementById("synInput");
   if(synInput)synInput.onkeydown=function(e){if(e.key==="Enter")searchSynonym();};
 
-  var synToTranslateBtn=document.getElementById("syn-to-translate-btn");
-  if(synToTranslateBtn)synToTranslateBtn.onclick=function(){
-    setView("ai");
-    aiSubview="oversattning";
-    renderAI();
-  };
-
   // Klick utanför sökresultatet (Sök/Ordråd) stänger ner rutan, som ett alternativ till x-knappen.
   document.addEventListener("mousedown",function(e){
     var dr=document.getElementById("dictResult");
