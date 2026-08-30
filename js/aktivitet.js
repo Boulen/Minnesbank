@@ -223,6 +223,8 @@ async function ensureAktivitetSettingsLoaded(){
     if(parsed.falt)AKTIVITET_FALT=Object.assign({plats:true,anteckning:true,bild:true},parsed.falt);
     if(parsed.beteende)AKTIVITET_BETEENDE=Object.assign({standardKategori:"",kameraRiktning:"environment",handelserSortering:"nyast"},parsed.beteende);
     if(parsed.bildkategorier&&Array.isArray(parsed.bildkategorier))AKTIVITET_BILDKATEGORIER=parsed.bildkategorier;
+    if(parsed.actPresetsByCat)ACT_PRESETS_BY_CAT=parsed.actPresetsByCat;
+    if(parsed.placePresetsByCat)PLACE_PRESETS_BY_CAT=parsed.placePresetsByCat;
     if(document.getElementById("body")&&view==="aktivitet")renderLogAktivitet();
   }catch(e){
     aktivitetSettingsLoaded=false; // tillåt nytt försök nästa gång vyn öppnas
@@ -275,7 +277,7 @@ async function saveAktivitetSettings(){
     var q="name='settings.json' and '"+aktId+"' in parents and trashed=false";
     var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
     var d=await r.json();
-    var body=JSON.stringify({cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE,bildkategorier:AKTIVITET_BILDKATEGORIER},null,2);
+    var body=JSON.stringify({cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE,bildkategorier:AKTIVITET_BILDKATEGORIER,actPresetsByCat:ACT_PRESETS_BY_CAT,placePresetsByCat:PLACE_PRESETS_BY_CAT},null,2);
     if(d.files&&d.files.length){
       var pr=await fetch(DRIVE_UPLOAD+"/"+d.files[0].id+"?uploadType=media",{method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:body});
       if(!pr.ok)throw new Error("HTTP "+pr.status+" vid uppdatering av settings.json");
@@ -898,6 +900,101 @@ function renderAktivitetBilderTab(c){
 }
 
 // ---- Logga-flik: formuläret för att logga en aktivitet ----
+// Egen snabbvals-dropdown för Aktivitet/Plats-fälten, byggd helt inom aktivitet.js -
+// ersätter beroendet av den delade bindCatPresetDropdown() i core.js. All data
+// (ACT_PRESETS_BY_CAT/PLACE_PRESETS_BY_CAT) sparas i Aktivitet/settings.json via
+// saveAktivitetSettings(), inte via det delade saveAndSync("inmatningar").
+// Stödjer både musklick och tangentbord (pil upp/ner, Enter, Escape) från start.
+function bindAktivitetPresetDropdown(inputEl,toggleBtn,dropdownEl,addBtn,getDict,getCat){
+  if(!inputEl||!toggleBtn||!dropdownEl||!addBtn)return {handleKey:function(){},handleEnter:function(){return false;}};
+  var activeIdx=-1;
+
+  function items(){return Array.prototype.slice.call(dropdownEl.querySelectorAll("[data-catval]"));}
+  function isOpen(){return dropdownEl.style.display==="block";}
+  function highlight(idx){
+    items().forEach(function(el,i){el.style.background=i===idx?"#1c3c5a":"";});
+    var list=items();
+    if(list[idx]&&list[idx].scrollIntoView)list[idx].scrollIntoView({block:"nearest"});
+  }
+  function selectValue(val){
+    // Väljer bara texten in i fältet - loggar/sparar ALDRIG något, oavsett om det
+    // sker via musklick eller tangentbord (Enter).
+    var current=inputEl.value.trim();
+    inputEl.value=current?(current+", "+val):val;
+    close();
+    inputEl.focus();
+  }
+  function close(){
+    dropdownEl.style.display="none";
+    if(_openCatDropdown&&_openCatDropdown.dropdownEl===dropdownEl)_openCatDropdown=null;
+    activeIdx=-1;
+  }
+  function renderList(){
+    var list=(getDict()[getCat()]||[]);
+    dropdownEl.innerHTML=list.length?list.map(function(s){
+      return "<div class='ac-item'><span class='ac-item-text' data-catval='"+esc(s)+"'>"+esc(s)+"</span><button class='ac-item-remove' data-catremove='"+esc(s)+"' title='Ta bort'>×</button></div>";
+    }).join(""):"<div class='empty' style='padding:10px;font-size:12px'>Inga snabbval för denna kategori än.</div>";
+    dropdownEl.style.display="block";
+    activeIdx=-1;
+    _openCatDropdown={dropdownEl:dropdownEl,toggleBtn:toggleBtn};
+    dropdownEl.querySelectorAll("[data-catval]").forEach(function(item){
+      item.onmousedown=function(e){e.preventDefault();e.stopPropagation();selectValue(item.dataset.catval);};
+    });
+    dropdownEl.querySelectorAll("[data-catremove]").forEach(function(btn){
+      btn.onmousedown=function(e){
+        e.preventDefault();e.stopPropagation();
+        var dict=getDict();var c=getCat();
+        if(dict[c])dict[c]=dict[c].filter(function(x){return x!==btn.dataset.catremove;});
+        saveAktivitetSettings();
+        renderList();
+      };
+    });
+  }
+  toggleBtn.onclick=function(){
+    if(isOpen()){close();}else{renderList();}
+  };
+  addBtn.onclick=function(){
+    var v=inputEl.value.trim();
+    if(!v)return;
+    var dict=getDict();var c=getCat();
+    if(!dict[c])dict[c]=[];
+    if(dict[c].indexOf(v)<0)dict[c].unshift(v);
+    saveAktivitetSettings();
+    if(isOpen())renderList();
+  };
+
+  return {
+    // ArrowDown/ArrowUp navigerar, Escape stänger. Anropa för alla tangenttryck utom Enter.
+    handleKey:function(e){
+      if(e.key==="ArrowDown"){
+        e.preventDefault();
+        if(!isOpen())renderList();
+        var list=items();
+        if(!list.length)return;
+        activeIdx=Math.min(activeIdx+1,list.length-1);
+        highlight(activeIdx);
+      }else if(e.key==="ArrowUp"){
+        if(isOpen()){
+          e.preventDefault();
+          activeIdx=Math.max(activeIdx-1,0);
+          highlight(activeIdx);
+        }
+      }else if(e.key==="Escape"){
+        if(isOpen())close();
+      }
+    },
+    // Anropa vid Enter. Returnerar true om ett markerat snabbval valdes (då ska den
+    // vanliga Enter-hanteringen, t.ex. spara/logga, INTE köras av anroparen).
+    handleEnter:function(){
+      if(!isOpen()||activeIdx<0)return false;
+      var el=items()[activeIdx];
+      if(!el)return false;
+      selectValue(el.dataset.catval);
+      return true;
+    }
+  };
+}
+
 function renderAktivitetLoggaTab(c){
   // Save current Händelser content before overwriting
   var savedHandelser=window._handelserHtml||"";
@@ -983,7 +1080,6 @@ function renderAktivitetLoggaTab(c){
   function logOrSaveImageOnly(){
     if(ci.value.trim())addAct(ci.value.trim());
   }
-  ci.onkeydown=function(e){if(e.key==="Enter")logOrSaveImageOnly();};
   c.querySelector("#addbtn").onclick=logOrSaveImageOnly;
   bindShiftEnterSubmit(ci,logOrSaveImageOnly);
   if(ni){
@@ -992,10 +1088,29 @@ function renderAktivitetLoggaTab(c){
     bindShiftEnterSubmit(ni,logOrSaveImageOnly);
   }
   if(ni)ni.onkeydown=function(e){if(e.key==="Enter"){e.preventDefault();logOrSaveImageOnly();}};
-  // Kategori-specifika snabbval (varje kategori har sin egen lista, med X för att ta bort)
-  bindCatPresetDropdown(c.querySelector("#ci"),c.querySelector("#ci-preset-toggle"),c.querySelector("#ci-preset-dd"),c.querySelector("#ci-preset-add"),function(){return ACT_PRESETS_BY_CAT;},function(){return cat;},"inmatningar");
-  bindCatPresetDropdown(c.querySelector("#pi"),c.querySelector("#pi-preset-toggle"),c.querySelector("#pi-preset-dd"),c.querySelector("#pi-preset-add"),function(){return PLACE_PRESETS_BY_CAT;},function(){return cat;},"inmatningar");
+  // Kategori-specifika snabbval (varje kategori har sin egen lista, med X för att ta bort).
+  // Egen implementation - sparar till Aktivitet/settings.json, inte till den delade
+  // "inmatningar"/shared-domänen. Tangentbord (piltangenter/Enter/Escape) inbyggt.
+  var ciNav=bindAktivitetPresetDropdown(c.querySelector("#ci"),c.querySelector("#ci-preset-toggle"),c.querySelector("#ci-preset-dd"),c.querySelector("#ci-preset-add"),function(){return ACT_PRESETS_BY_CAT;},function(){return cat;});
+  var piNav=bindAktivitetPresetDropdown(c.querySelector("#pi"),c.querySelector("#pi-preset-toggle"),c.querySelector("#pi-preset-dd"),c.querySelector("#pi-preset-add"),function(){return PLACE_PRESETS_BY_CAT;},function(){return cat;});
   bindShiftEnterSubmit(c.querySelector("#pi"),logOrSaveImageOnly);
+
+  ci.onkeydown=function(e){
+    if(e.key==="Enter"){
+      if(ciNav.handleEnter()){e.preventDefault();return;} // valde ett snabbval istället för att logga
+      logOrSaveImageOnly();
+    }else{
+      ciNav.handleKey(e);
+    }
+  };
+  var piEl=c.querySelector("#pi");
+  if(piEl)piEl.onkeydown=function(e){
+    if(e.key==="Enter"){
+      if(piNav.handleEnter())e.preventDefault(); // Plats har ingen egen submit-on-enter, bara Shift+Enter
+      return;
+    }
+    piNav.handleKey(e);
+  };
   // Kategori-specifika förslag för Anteckning
   bindAutocomplete(c.querySelector("#ni"),c.querySelector("#ni-ac"),function(){return ANTECKNING_BY_CAT[cat]||[];},function(v){if(ANTECKNING_BY_CAT[cat])ANTECKNING_BY_CAT[cat]=ANTECKNING_BY_CAT[cat].filter(function(x){return x!==v;});saveAndSync("inmatningar");},function(v){if(ci.value.trim())addAct(ci.value.trim());});
   var niAddBtn=c.querySelector("#ni-add-btn");
@@ -1101,7 +1216,7 @@ function openJsonEditor(){
   function dataFor(key){
     if(key==="aktivitet")return {logs:logs};
     if(key==="bilder")return {images:imageHist.map(function(i){var c=Object.assign({},i);delete c.base64;return c;})};
-    return {cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE,bildkategorier:AKTIVITET_BILDKATEGORIER};
+    return {cats:CATS,falt:AKTIVITET_FALT,beteende:AKTIVITET_BETEENDE,bildkategorier:AKTIVITET_BILDKATEGORIER,actPresetsByCat:ACT_PRESETS_BY_CAT,placePresetsByCat:PLACE_PRESETS_BY_CAT};
   }
   // Var respektive JSON faktiskt ligger i Drive - används av "Öppna i Google Drive"-knappen
   // och av kontrollen som visar vilka filer som saknas.
@@ -1269,6 +1384,8 @@ function openJsonEditor(){
         if(parsed.falt)AKTIVITET_FALT=Object.assign({plats:true,anteckning:true,bild:true},parsed.falt);
         if(parsed.beteende)AKTIVITET_BETEENDE=Object.assign({standardKategori:"",kameraRiktning:"environment",handelserSortering:"nyast"},parsed.beteende);
         if(parsed.bildkategorier&&Array.isArray(parsed.bildkategorier))AKTIVITET_BILDKATEGORIER=parsed.bildkategorier;
+        if(parsed.actPresetsByCat)ACT_PRESETS_BY_CAT=parsed.actPresetsByCat;
+        if(parsed.placePresetsByCat)PLACE_PRESETS_BY_CAT=parsed.placePresetsByCat;
         saveAktivitetSettings();
       }
       ov2.remove();

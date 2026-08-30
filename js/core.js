@@ -542,8 +542,8 @@ async function importFromDrive(){
         dict[cat]=r.list;totalAdded+=r.added;
       });
     }
-    mergeByCatDict(ACT_PRESETS_BY_CAT,dinm.actPresetsByCat);
-    mergeByCatDict(PLACE_PRESETS_BY_CAT,dinm.placePresetsByCat);
+    // actPresetsByCat/placePresetsByCat borttagna härifrån - Aktivitet-fliken äger och
+    // synkar dem numera själv (egen driveWriteJson-fil), inte via denna delade väg.
     mergeByCatDict(MEDIA_CREATOR_BY_CAT,dinm.mediaCreatorByCat);
     mergeByCatDict(MEDIA_GENRE_BY_CAT,dinm.mediaGenreByCat);
     mergeByCatDict(OBJ_MAKER_BY_CAT,dinm.objMakerByCat);
@@ -1285,8 +1285,8 @@ function applyTabData(tabName,da){
       if(da.anteckningHistory)anteckningHistory=da.anteckningHistory;
       if(da.anteckningByCat)ANTECKNING_BY_CAT=da.anteckningByCat;
       migrateAnteckningByCatOnce();
-      if(da.actPresetsByCat)ACT_PRESETS_BY_CAT=da.actPresetsByCat;
-      if(da.placePresetsByCat)PLACE_PRESETS_BY_CAT=da.placePresetsByCat;
+      // actPresetsByCat/placePresetsByCat borttagna härifrån - Aktivitet-fliken äger
+      // och sparar dem numera själv (egen driveWriteJson-fil), se HANDOFF från Aktivitet.
       if(da.mediaCreatorByCat)MEDIA_CREATOR_BY_CAT=da.mediaCreatorByCat;
       if(da.mediaGenreByCat)MEDIA_GENRE_BY_CAT=da.mediaGenreByCat;
       if(da.objMakerByCat)OBJ_MAKER_BY_CAT=da.objMakerByCat;
@@ -1448,8 +1448,7 @@ async function ensureTabMergedBeforeSave(tabName){
         platsHistory=mergeStringArraysDedup(platsHistory,d.platsHistory);
         anteckningHistory=mergeStringArraysDedup(anteckningHistory,d.anteckningHistory);
         ANTECKNING_BY_CAT=mergeCatStringDict(ANTECKNING_BY_CAT,d.anteckningByCat);
-        ACT_PRESETS_BY_CAT=mergeCatStringDict(ACT_PRESETS_BY_CAT,d.actPresetsByCat);
-        PLACE_PRESETS_BY_CAT=mergeCatStringDict(PLACE_PRESETS_BY_CAT,d.placePresetsByCat);
+        // actPresetsByCat/placePresetsByCat borttagna härifrån - se ovan.
         MEDIA_CREATOR_BY_CAT=mergeCatStringDict(MEDIA_CREATOR_BY_CAT,d.mediaCreatorByCat);
         MEDIA_GENRE_BY_CAT=mergeCatStringDict(MEDIA_GENRE_BY_CAT,d.mediaGenreByCat);
         OBJ_MAKER_BY_CAT=mergeCatStringDict(OBJ_MAKER_BY_CAT,d.objMakerByCat);
@@ -1492,7 +1491,7 @@ async function saveTab(tabName){
   else if(tabName==="media"){await driveWrite("Utvardering/Media",{mediaList:mediaList,mediaFardig:mediaFardig});}
   else if(tabName==="objekt"){await driveWrite("Utvardering/Foremal",{objList:objList,objFardig:objFardig});}
   else if(tabName==="plats"){await driveWrite("Utvardering/Plats",{platsList:platsList,platsFardig:platsFardig});}
-  else if(tabName==="inmatningar"){await driveWrite("Installningar/Inmatningar",{aktivitetHistory:aktivitetHistory,platsHistory:platsHistory,anteckningHistory:anteckningHistory,anteckningByCat:ANTECKNING_BY_CAT,actPresetsByCat:ACT_PRESETS_BY_CAT,placePresetsByCat:PLACE_PRESETS_BY_CAT,mediaCreatorByCat:MEDIA_CREATOR_BY_CAT,mediaGenreByCat:MEDIA_GENRE_BY_CAT,objMakerByCat:OBJ_MAKER_BY_CAT,platsKommunByCat:PLATS_KOMMUN_BY_CAT,tipsTricksSubcatByCat:TIPSTRICKS_SUBCAT_BY_CAT});}
+  else if(tabName==="inmatningar"){await driveWrite("Installningar/Inmatningar",{aktivitetHistory:aktivitetHistory,platsHistory:platsHistory,anteckningHistory:anteckningHistory,anteckningByCat:ANTECKNING_BY_CAT,mediaCreatorByCat:MEDIA_CREATOR_BY_CAT,mediaGenreByCat:MEDIA_GENRE_BY_CAT,objMakerByCat:OBJ_MAKER_BY_CAT,platsKommunByCat:PLATS_KOMMUN_BY_CAT,tipsTricksSubcatByCat:TIPSTRICKS_SUBCAT_BY_CAT});}
   else if(tabName==="skamt"){await driveWrite("Konversation/Skamt",{savedJokes:savedJokes});}
   // "bilder" skriver ingen egen JSON-fil längre - bilderna sparas redan som riktiga
   // filer i Bilder-mappen under Aktivitet, ingen separat indexfil behövs.
@@ -1605,6 +1604,16 @@ var logs=[], tHist=[], sentMsgs=[], sentPeople=[], sentConvs=[], fundHist=[], im
 var aktivitetHistory=[], platsHistory=[], anteckningHistory=[];
 // Nytt kategori-specifikt förslag för Anteckning (Aktivitet)
 var ANTECKNING_BY_CAT={};
+// Dessa fem hör konceptuellt till Betyg-fliken (betyg.js, för närvarande vilande/inte
+// laddad) men core.js läser/skriver dem ändå i sin delade "inmatningar"/"installningar"-
+// hantering. Måste finnas deklarerade här oavsett om betyg.js är laddad, annars kraschar
+// core.js (ReferenceError) första gången den koden körs. Samma standardvärden som i
+// betyg.js, så det blir sömlöst den dagen betyg.js aktiveras igen.
+var MEDIA_CAT_PRESETS=["📚 Bok","🎵 Musik","🎬 Film","📺 Serie","🎙️ Podcast","📹 Videodelning","🎮 Spel","✨ Övrigt"];
+var OBJ_CAT_PRESETS=[];
+var OBJ_MAKER_BY_CAT={};
+var PLATS_CAT_PRESETS=[];
+var PLATS_KOMMUN_BY_CAT={};
 function migrateAnteckningByCatOnce(){
   if(!Object.keys(ANTECKNING_BY_CAT).length&&anteckningHistory.length){ANTECKNING_BY_CAT.ovrigt=anteckningHistory.slice();}
 }
