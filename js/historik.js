@@ -233,6 +233,10 @@ var histBetygSubview="media"; // media | objekt | plats
 // utan senaste 4 överst + kategori-dropdown + paginerad lista (10 i taget, "Visa fler").
 var bildKategoriFilter=""; // "" = alla kategorier
 var bildVisaAntal=10;
+// Id på bilden som just nu redigeras (titel/kommentar), delad mellan senaste-4-raden och
+// den paginerade listan - null = ingen redigering pågår (Blås instruktion 2026-08-30: bilder
+// ska bara gå att redigera efter att man klickat en ✏️-knapp, inte fritt hela tiden).
+var editingImgId=null;
 
 // Bildens egen kategori (rättat 2026-08-30 efter besked från Aktivitet-chatten, som äger
 // bilddatamodellen): fältet heter "bildkategori", INTE "category" — "category" finns kvar
@@ -253,12 +257,29 @@ function imgKategoriId(img){
 
 function imgThumb(img){
   var imgSrc=img.base64?"data:"+(img.mtype||"image/jpeg")+";base64,"+img.base64:"";
-  return "<div style='background:#161616;border-radius:10px;border:1px solid #2a2a2a;overflow:hidden'>"
-    +"<div id='thumbwrap-"+img.id+"' style='width:100%;aspect-ratio:1;background:#131313;display:flex;align-items:center;justify-content:center'>"
+  var thumbHtml="<div id='thumbwrap-"+img.id+"' style='width:100%;aspect-ratio:1;background:#131313;display:flex;align-items:center;justify-content:center'>"
     +(imgSrc?"<img src='"+imgSrc+"' style='width:100%;height:100%;object-fit:cover;display:block'/>"
             :"<span style='color:#5c5c5c;font-size:16px'>⏳</span>")
+    +"</div>";
+
+  if(editingImgId===img.id){
+    return "<div style='background:#161616;border-radius:10px;border:1px solid #2a2a2a;overflow:hidden'>"
+      +thumbHtml
+      +"<div style='padding:6px 7px'>"
+      +"<input class='inp w100' id='thumb-edit-title-"+img.id+"' value='"+esc(img.activity||"")+"' placeholder='Titel' style='font-size:11px;padding:5px 7px;margin-bottom:4px'/>"
+      +"<input class='inp w100' id='thumb-edit-comment-"+img.id+"' value='"+esc(img.comment||"")+"' placeholder='Kommentar' style='font-size:11px;padding:5px 7px;margin-bottom:4px'/>"
+      +"<div style='display:flex;gap:4px'>"
+      +"<button data-savethumbimg='"+img.id+"' style='flex:1;padding:5px;border-radius:6px;background:#1c3c5a;border:1px solid #4fa8ff;color:#4fa8ff;font-size:10px;cursor:pointer'>✓</button>"
+      +"<button data-cancelthumbimg='"+img.id+"' style='flex:1;padding:5px;border-radius:6px;background:none;border:1px solid #2a2a2a;color:#5c5c5c;font-size:10px;cursor:pointer'>Avbryt</button>"
+      +"</div></div></div>";
+  }
+
+  return "<div style='background:#161616;border-radius:10px;border:1px solid #2a2a2a;overflow:hidden'>"
+    +thumbHtml
+    +"<div style='display:flex;align-items:center;gap:4px;padding:5px 7px'>"
+    +"<div style='flex:1;font-family:\"JetBrains Mono\",monospace;font-size:9.5px;color:#5c5c5c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+fd(img.timestamp)+"</div>"
+    +"<button data-editthumbimg='"+img.id+"' style='background:none;border:none;color:#5c5c5c;cursor:pointer;font-size:12px;padding:0 2px;flex-shrink:0'>✏️</button>"
     +"</div>"
-    +"<div style='padding:5px 7px;font-family:\"JetBrains Mono\",monospace;font-size:9.5px;color:#5c5c5c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+fd(img.timestamp)+"</div>"
     +"</div>";
 }
 
@@ -784,20 +805,36 @@ function renderHistAktiviteter(){
 
 function imgEntry(img){
   var catName=getBildKatLabel(img.bildkategori);
-  var title=img.activity||"bild";
   var fname=buildImageFilename(img);
-  var ext=img.mtype&&img.mtype.includes("png")?"png":"jpg";
   var imgSrc=img.base64?"data:"+(img.mtype||"image/jpeg")+";base64,"+img.base64:"";
-  return "<div data-histimg='"+img.id+"' style='background:#161616;border-radius:12px;border:1px solid #2a2a2a;overflow:hidden;margin-bottom:12px'>"
-    +"<div id='imgwrap-"+img.id+"' style='width:100%;min-height:120px;background:#131313;display:flex;align-items:center;justify-content:center'>"
+  var imgWrapHtml="<div id='imgwrap-"+img.id+"' style='width:100%;min-height:120px;background:#131313;display:flex;align-items:center;justify-content:center'>"
     +(imgSrc?"<img src='"+imgSrc+"' style='width:100%;max-height:240px;object-fit:cover;display:block'/>"
             :"<span style='color:#5c5c5c;font-size:13px'>⏳ Laddar bild...</span>")
-    +"</div>"
+    +"</div>";
+
+  if(editingImgId===img.id){
+    return "<div data-histimg='"+img.id+"' style='background:#161616;border-radius:12px;border:1px solid #2a2a2a;overflow:hidden;margin-bottom:12px'>"
+      +imgWrapHtml
+      +"<div style='padding:10px 14px'>"
+      +"<div class='lbl'>Titel</div>"
+      +"<input class='inp w100' id='img-title-"+img.id+"' value='"+esc(img.activity||"")+"' style='font-size:13px;padding:7px 10px;margin-bottom:8px'/>"
+      +"<div class='lbl'>Kommentar</div>"
+      +"<input class='inp w100' id='img-comment-"+img.id+"' value='"+esc(img.comment||"")+"' placeholder='Kommentar...' style='font-size:13px;padding:7px 10px;margin-bottom:8px'/>"
+      +"<div style='display:flex;gap:8px'>"
+      +"<button class='sec' data-saveimg='"+img.id+"' style='flex:1'>Spara</button>"
+      +"<button class='sec ghost' data-cancelimg='"+img.id+"' style='flex:1'>Avbryt</button>"
+      +"</div></div></div>";
+  }
+
+  var title=img.activity||"bild";
+  return "<div data-histimg='"+img.id+"' style='background:#161616;border-radius:12px;border:1px solid #2a2a2a;overflow:hidden;margin-bottom:12px'>"
+    +imgWrapHtml
     +"<div style='padding:10px 14px'>"
-    +"<div style='display:flex;align-items:center;gap:8px;margin-bottom:8px'>"
-    +"<input class='inp' id='img-title-"+img.id+"' value='"+esc(title)+"' style='flex:1;font-size:13px;padding:7px 10px'/>"
-    +"<button data-savetitle='"+img.id+"' style='padding:7px 12px;border-radius:8px;background:#1c3c5a;border:1px solid #4fa8ff;color:#4fa8ff;font-size:12px;cursor:pointer;white-space:nowrap'>✓</button>"
+    +"<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>"
+    +"<div style='flex:1;font-size:13px;color:#f2f2f2'>"+esc(title)+"</div>"
+    +"<button data-editimg='"+img.id+"' style='background:none;border:none;color:#5c5c5c;cursor:pointer;font-size:14px;padding:0 4px;flex-shrink:0'>✏️</button>"
     +"</div>"
+    +(img.comment?"<div style='font-size:12px;color:#8a8a8a;margin-bottom:6px'>"+esc(img.comment)+"</div>":"")
     +(catName?"<div style='font-size:11px;color:#5c5c5c;margin-bottom:6px'>"+esc(catName)+"</div>":"")
     +"<div style='font-size:10px;color:#5c5c5c;margin-bottom:8px'>"+fd(img.timestamp)+"</div>"
     +"<div style='display:flex;gap:8px'>"
@@ -812,18 +849,22 @@ function renderHistBilder(){
 
   var sorterade=imageHist.slice().sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
   var senaste4=sorterade.slice(0,4);
-  // "" (Välj kategori, ej vald än) och BILD_KAT_ALLA (explicit "Alla kategorier") ger
-  // samma resultat - visa allt. BILD_KAT_INGEN visar bara bilder utan bildkategori satt.
-  // Allt annat är ett riktigt kategori-id från AKTIVITET_BILDKATEGORIER.
+  // "" (Välj kategori) betyder att inget val gjorts än - Blås instruktion 2026-08-30:
+  // visa då INGENTING under dropdownen, bara senaste-4-raden ovanför. Först när man
+  // faktiskt väljer nagot - BILD_KAT_ALLA, BILD_KAT_INGEN eller en riktig kategori -
+  // dyker listan upp. filtrerade===null markerar "inget valt an" (skilt fran en tom
+  // array, som betyder "ett val gjort men inga traffar").
   var filtrerade;
-  if(bildKategoriFilter===BILD_KAT_INGEN){
+  if(bildKategoriFilter===""){
+    filtrerade=null;
+  }else if(bildKategoriFilter===BILD_KAT_INGEN){
     filtrerade=sorterade.filter(function(img){return !imgKategoriId(img);});
-  }else if(bildKategoriFilter&&bildKategoriFilter!==BILD_KAT_ALLA){
-    filtrerade=sorterade.filter(function(img){return imgKategoriId(img)===bildKategoriFilter;});
-  }else{
+  }else if(bildKategoriFilter===BILD_KAT_ALLA){
     filtrerade=sorterade;
+  }else{
+    filtrerade=sorterade.filter(function(img){return imgKategoriId(img)===bildKategoriFilter;});
   }
-  var synliga=filtrerade.slice(0,bildVisaAntal);
+  var synliga=filtrerade?filtrerade.slice(0,bildVisaAntal):[];
 
   var html="<div style='margin-bottom:18px'>"
     +"<div style='font-size:11px;color:#5c5c5c;margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em'>Senaste bilderna</div>"
@@ -831,7 +872,9 @@ function renderHistBilder(){
     +senaste4.map(function(img){return imgThumb(img);}).join("")
     +"</div></div>"
     +buildBildKategoriDropdown();
-  if(!filtrerade.length){
+  if(filtrerade===null){
+    // Inget kategorival gjort än - visa ingenting alls har, inte ens ett tomt-meddelande.
+  }else if(!filtrerade.length){
     html+="<div class='empty'><div class='eico'>🖼️</div>Inga bilder i denna kategori.</div>";
   }else{
     html+="<div id='bild-lista'>"+synliga.map(function(img){return imgEntry(img);}).join("")+"</div>";
@@ -866,13 +909,49 @@ function renderHistBilder(){
     });
   });
 
-  c.querySelectorAll("[data-savetitle]").forEach(function(btn){
+  // Redigering av titel/kommentar (Blås instruktion 2026-08-30): kräver ett klick på en
+  // ✏️-knapp - inte längre fritt redigerbart hela tiden. Samma editingImgId-flagga delas
+  // mellan senaste-4-tumnaglarna och den paginerade listan, men var sitt DOM-id-prefix
+  // (thumb-edit-* / img-*) så bägge kan renderas i sitt korrekta läge oberoende av varandra.
+  c.querySelectorAll("[data-editimg]").forEach(function(btn){
+    btn.onclick=function(){editingImgId=Number(btn.dataset.editimg);renderHistBilder();};
+  });
+  c.querySelectorAll("[data-saveimg]").forEach(function(btn){
     btn.onclick=function(){
-      var id=Number(btn.dataset.savetitle);
-      var inp=c.querySelector("#img-title-"+id);
+      var id=Number(btn.dataset.saveimg);
       var img=imageHist.find(function(i){return i.id===id;});
-      if(img&&inp){img.activity=inp.value.trim()||img.activity;saveAndSync("bilder");renderHistBilder();}
+      var titleInp=c.querySelector("#img-title-"+id);
+      var commentInp=c.querySelector("#img-comment-"+id);
+      if(img){
+        if(titleInp)img.activity=titleInp.value.trim()||img.activity;
+        if(commentInp)img.comment=commentInp.value.trim();
+        saveAndSync("bilder");
+      }
+      editingImgId=null;renderHistBilder();
     };
+  });
+  c.querySelectorAll("[data-cancelimg]").forEach(function(btn){
+    btn.onclick=function(){editingImgId=null;renderHistBilder();};
+  });
+  c.querySelectorAll("[data-editthumbimg]").forEach(function(btn){
+    btn.onclick=function(){editingImgId=Number(btn.dataset.editthumbimg);renderHistBilder();};
+  });
+  c.querySelectorAll("[data-savethumbimg]").forEach(function(btn){
+    btn.onclick=function(){
+      var id=Number(btn.dataset.savethumbimg);
+      var img=imageHist.find(function(i){return i.id===id;});
+      var titleInp=c.querySelector("#thumb-edit-title-"+id);
+      var commentInp=c.querySelector("#thumb-edit-comment-"+id);
+      if(img){
+        if(titleInp)img.activity=titleInp.value.trim()||img.activity;
+        if(commentInp)img.comment=commentInp.value.trim();
+        saveAndSync("bilder");
+      }
+      editingImgId=null;renderHistBilder();
+    };
+  });
+  c.querySelectorAll("[data-cancelthumbimg]").forEach(function(btn){
+    btn.onclick=function(){editingImgId=null;renderHistBilder();};
   });
   c.querySelectorAll("[data-dlimg]").forEach(function(btn){
     btn.onclick=function(){
