@@ -849,6 +849,7 @@ function showFileMissingError(path,data){
 
   (async function(){
     try{
+      var listDiv=overlay.querySelector("#fmr-list");
       var appRootId=await getAppRootFolderId();
       var q="name='"+fname+"' and '"+appRootId+"' in parents and trashed=false";
       var r=await fetch(DRIVE_API+"?q="+encodeURIComponent("name='"+fname+"' and trashed=false")+"&fields=files(id,name,parents)&pageSize=50",{headers:{Authorization:"Bearer "+accessToken}});
@@ -865,14 +866,14 @@ function showFileMissingError(path,data){
       });
 
       if(!relevantFiles.length){
-        listDiv.innerHTML="<div style='color:#5c5c5c;font-size:13px'>Inga "+fname+"-filer hittades i "+APP_ROOT_FOLDER_NAME+"-mappen.</div>";
+        listDiv.innerHTML="<div style='color:#5c5c5c;font-size:13px'>Inga "+fname+"-filer hittades i appens rotmapp.</div>";
         return;
       }
 
       // Build folder name lookup
       var folderNameMap={};
       Object.entries(driveDirCache).forEach(function(e){folderNameMap[e[1]]=e[0].split("/").pop();});
-      folderNameMap[appRootId]=APP_ROOT_FOLDER_NAME;
+      folderNameMap[appRootId]="Rotmapp";
 
       listDiv.innerHTML="<div style='font-size:13px;color:#f2f2f2;margin-bottom:8px'>Välj fil att länka:</div>"
         +relevantFiles.map(function(f){
@@ -1375,6 +1376,16 @@ var CTXS = ["Kompis","Partner","Familj","Kollega","Rekryterare","Företag","Chef
 var OTONES = ["Vanlig","Professionell","Direkt","Empatisk","Lekfull"];
 
 var logs=[], tHist=[], sentMsgs=[], sentPeople=[], sentConvs=[], fundHist=[], imageHist=[], savedJokes=[];
+// konversationer/muntKonversationer hör konceptuellt till Samtal-fliken (samtal.js, för
+// närvarande vilande/inte laddad) men buildContext()/mergeData() i core.js läser dem ändå.
+// Måste finnas deklarerade här oavsett om samtal.js är laddad, annars kraschar aiCall/
+// aiChat (ReferenceError) för ALLA flikar som anropar dem - bekräftat av Sökbar-chatten.
+var konversationer=[], muntKonversationer=[];
+// kunskapHist hör till Notering-fliken (notering.js, för närvarande vilande) men den
+// delade pinChatToKunskap()-funktionen (används av sokbar.js och andra flikars
+// AI-resultat) skriver till den ändå. Måste finnas deklarerad oavsett om notering.js
+// är laddad, annars kraschar "spara till Kunskap"-knappen (ReferenceError).
+var kunskapHist=[];
 // Fritt inmatade värden (för autoifyllnadsförslag i Plats/Aktivitet/Anteckning på Aktivitet-fliken)
 var aktivitetHistory=[], platsHistory=[], anteckningHistory=[];
 // Nytt kategori-specifikt förslag för Anteckning (Aktivitet)
@@ -1385,6 +1396,10 @@ var ANTECKNING_BY_CAT={};
 // core.js (ReferenceError) första gången den koden körs. Samma standardvärden som i
 // betyg.js, så det blir sömlöst den dagen betyg.js aktiveras igen.
 var MEDIA_CAT_PRESETS=["📚 Bok","🎵 Musik","🎬 Film","📺 Serie","🎙️ Podcast","📹 Videodelning","🎮 Spel","✨ Övrigt"];
+// mediaList/mediaFardig hör till Betyg-fliken (betyg.js, för närvarande vilande) men
+// mergeData()/syncNow() i core.js läser/skriver dem ändå. Måste finnas deklarerade
+// oavsett om betyg.js är laddad, annars kraschar synk-knappen i Installningar.
+var mediaList={},mediaFardig=[];
 var OBJ_CAT_PRESETS=[];
 var OBJ_MAKER_BY_CAT={};
 var PLATS_CAT_PRESETS=[];
