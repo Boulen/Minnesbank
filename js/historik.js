@@ -262,8 +262,18 @@ function imgThumb(img){
     +"</div>";
 }
 
+// Dropdownens värden (Blås instruktion 2026-08-30): "" är inte längre "alla kategorier"
+// utan en ren platshållare ("Välj kategori") - ingen filtrering är egentligen vald än,
+// men listan visar ändå allt tills vidare (samma som innan). "Alla kategorier" flyttas
+// ner som ett eget, explicit alternativ (samma funktionella resultat som "" - visa allt -
+// men går att välja tillbaka till aktivt efter att man filtrerat på något annat).
+// Nytt: "Ingen kategori" visar bilder som helt saknar bildkategori.
+var BILD_KAT_ALLA="__alla__";
+var BILD_KAT_INGEN="__ingen__";
 function buildBildKategoriDropdown(){
-  var opts="<option value=''"+(bildKategoriFilter===""?" selected":"")+">Alla kategorier</option>"
+  var opts="<option value=''"+(bildKategoriFilter===""?" selected":"")+">Välj kategori</option>"
+    +"<option value='"+BILD_KAT_ALLA+"'"+(bildKategoriFilter===BILD_KAT_ALLA?" selected":"")+">Alla kategorier</option>"
+    +"<option value='"+BILD_KAT_INGEN+"'"+(bildKategoriFilter===BILD_KAT_INGEN?" selected":"")+">Ingen kategori</option>"
     +bildKatList().map(function(c){return "<option value='"+esc(c.id)+"'"+(c.id===bildKategoriFilter?" selected":"")+">"+c.e+" "+esc(c.label)+"</option>";}).join("");
   return "<select id='bild-kat-filter' style='width:100%;padding:11px 13px;border-radius:5px;background:#161616;border:1px solid #2a2a2a;color:#f2f2f2;font-size:14px;margin-bottom:16px;font-family:inherit'>"+opts+"</select>";
 }
@@ -802,7 +812,17 @@ function renderHistBilder(){
 
   var sorterade=imageHist.slice().sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
   var senaste4=sorterade.slice(0,4);
-  var filtrerade=bildKategoriFilter?sorterade.filter(function(img){return imgKategoriId(img)===bildKategoriFilter;}):sorterade;
+  // "" (Välj kategori, ej vald än) och BILD_KAT_ALLA (explicit "Alla kategorier") ger
+  // samma resultat - visa allt. BILD_KAT_INGEN visar bara bilder utan bildkategori satt.
+  // Allt annat är ett riktigt kategori-id från AKTIVITET_BILDKATEGORIER.
+  var filtrerade;
+  if(bildKategoriFilter===BILD_KAT_INGEN){
+    filtrerade=sorterade.filter(function(img){return !imgKategoriId(img);});
+  }else if(bildKategoriFilter&&bildKategoriFilter!==BILD_KAT_ALLA){
+    filtrerade=sorterade.filter(function(img){return imgKategoriId(img)===bildKategoriFilter;});
+  }else{
+    filtrerade=sorterade;
+  }
   var synliga=filtrerade.slice(0,bildVisaAntal);
 
   var html="<div style='margin-bottom:18px'>"
