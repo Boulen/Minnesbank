@@ -291,27 +291,8 @@ async function migrateFunderingRestructure(){
   }catch(e){}
 }
 async function migrateSamtalSplit(){
-  try{
-    var samtalId=await driveFindFolder("Samtal",FOLDER_ID);
-    if(!samtalId)return; // ingen Samtal-mapp än, inget att migrera
-    // Om Text/Muntligt-undermapparna redan finns är migreringen redan gjord
-    var textFolder=await driveFindFolder("Text",samtalId);
-    var muntFolder=await driveFindFolder("Muntligt",samtalId);
-    if(textFolder&&muntFolder)return;
-    // Läs den gamla odelade filen (Samtal/data.json) om den finns
-    var old=await driveRead("SamtalLegacy");
-    if(old&&(old.konversationer||old.muntKonversationer)){
-      if(old.konversationer&&old.konversationer.length){
-        await driveWrite("Samtal/Text",{konversationer:old.konversationer});
-      }
-      if(old.muntKonversationer&&old.muntKonversationer.length){
-        await driveWrite("Samtal/Muntligt",{muntKonversationer:old.muntKonversationer});
-      }
-      console.log("Samtal-data migrerad till separata Text/Muntligt-filer.");
-    }
-  }catch(e){
-    console.error("Migrering av Samtal-uppdelningen misslyckades:",e);
-  }
+  // Samtal-fliken äger numera sin egen Drive-struktur helt själv (driveWriteJson) -
+  // denna migrering av den gamla odelade filen är inte längre core.js:s ansvar.
 }
 
 var activeTabLoads=0;
@@ -454,66 +435,8 @@ async function importFromDrive(){
     totalAdded+=logs.length-before;
   }
 
-  // Samtal
-  var dst=await driveRead("Samtal/Text");
-  if(dst&&dst.konversationer){var b1=konversationer.length;konversationer=mergeById(konversationer,dst.konversationer);totalAdded+=konversationer.length-b1;}
-  var dsm=await driveRead("Samtal/Muntligt");
-  if(dsm&&dsm.muntKonversationer){var b2=muntKonversationer.length;muntKonversationer=mergeById(muntKonversationer,dsm.muntKonversationer);totalAdded+=muntKonversationer.length-b2;}
-
-  // Notering
-  var df=await driveRead("Notering/Fundering");
-  if(df&&df.fundHist){var b=fundHist.length;fundHist=mergeById(fundHist,df.fundHist);totalAdded+=fundHist.length-b;}
-
-  // Notering → Lärdom
-  var dvo=await driveRead("Notering/Lardom/Vokabular");
-  if(dvo&&dvo.vokabularHist){var b=vokabularHist.length;vokabularHist=mergeById(vokabularHist,dvo.vokabularHist);totalAdded+=vokabularHist.length-b;}
-  var dku=await driveRead("Notering/Lardom/Kunskap");
-  if(dku&&dku.kunskapHist){var b=kunskapHist.length;kunskapHist=mergeById(kunskapHist,dku.kunskapHist);totalAdded+=kunskapHist.length-b;}
-  var dtt=await driveRead("Notering/Anteckning");
-  if(dtt&&dtt.tipsTricksHist){var b=tipsTricksHist.length;tipsTricksHist=mergeById(tipsTricksHist,dtt.tipsTricksHist);totalAdded+=tipsTricksHist.length-b;}
-
-  // Konversation → Samtalsämnen
-  var dam=await driveRead("Konversation/Samtalsamnen");
-  if(dam&&dam.amneHist){var b=amneHist.length;amneHist=mergeById(amneHist,dam.amneHist);totalAdded+=amneHist.length-b;}
-
-  // Media
-  var dm=await driveRead("Utvardering/Media");
-  if(dm){
-    if(dm.mediaList){
-      var rm=mergeCatItemList(mediaList,dm.mediaList,function(item){return mediaItemTitle(item)+"|"+mediaItemCreator(item)+"|"+mediaItemGenre(item);});
-      mediaList=rm.result;totalAdded+=rm.added;
-    }
-    if(dm.mediaFardig){var b=mediaFardig.length;mediaFardig=mergeById(mediaFardig,dm.mediaFardig);totalAdded+=mediaFardig.length-b;}
-    migrateMediaCategories();
-  }
-
-  // Föremål
-  var dob=await driveRead("Utvardering/Foremal");
-  if(dob){
-    if(dob.objList){
-      var ro=mergeCatItemList(objList,dob.objList,function(item){return objItemTitle(item)+"|"+((item&&item.tillverkare)||"");});
-      objList=ro.result;totalAdded+=ro.added;
-    }
-    if(dob.objFardig){var b=objFardig.length;objFardig=mergeById(objFardig,dob.objFardig);totalAdded+=objFardig.length-b;}
-  }
-
-  // Plats
-  var dpl=await driveRead("Utvardering/Plats");
-  if(dpl){
-    if(dpl.platsList){
-      var rp=mergeCatItemList(platsList,dpl.platsList,function(item){return platsItemTitle(item)+"|"+((item&&item.kommun)||"");});
-      platsList=rp.result;totalAdded+=rp.added;
-    }
-    if(dpl.platsFardig){var b=platsFardig.length;platsFardig=mergeById(platsFardig,dpl.platsFardig);totalAdded+=platsFardig.length-b;}
-  }
-
-  // Skämt
-  var dsk=await driveRead("Konversation/Skamt");
-  if(dsk&&dsk.savedJokes){
-    var s=new Set(savedJokes);var b2=s.size;
-    dsk.savedJokes.forEach(function(j){s.add(j);});
-    totalAdded+=s.size-b2;savedJokes=Array.from(s);
-  }
+  // Notering, Samtal, Konversation, Betyg äger numera sin egen JSON/mappstruktur helt
+  // själva (driveReadJson/driveWriteJson) - ingen synk av dem sker längre härifrån.
 
   // Inställningar → Inmatningar (autocomplete-historik)
   var dinm=await driveRead("Installningar/Inmatningar");
@@ -531,24 +454,6 @@ async function importFromDrive(){
       });
     }
     migrateAnteckningByCatOnce();
-    // De 6 "kategori+dropdown+textinmatning"-snabbvalslistorna (avsnitt 6 i handoff), per kategori.
-    function mergeByCatDict(dict,remoteDict){
-      if(!remoteDict)return;
-      var cats={};
-      Object.keys(dict||{}).forEach(function(c){cats[c]=true;});
-      Object.keys(remoteDict).forEach(function(c){cats[c]=true;});
-      Object.keys(cats).forEach(function(cat){
-        var r=mergeStringList(dict[cat]||[],remoteDict[cat]||[]);
-        dict[cat]=r.list;totalAdded+=r.added;
-      });
-    }
-    // actPresetsByCat/placePresetsByCat borttagna härifrån - Aktivitet-fliken äger och
-    // synkar dem numera själv (egen driveWriteJson-fil), inte via denna delade väg.
-    mergeByCatDict(MEDIA_CREATOR_BY_CAT,dinm.mediaCreatorByCat);
-    mergeByCatDict(MEDIA_GENRE_BY_CAT,dinm.mediaGenreByCat);
-    mergeByCatDict(OBJ_MAKER_BY_CAT,dinm.objMakerByCat);
-    mergeByCatDict(PLATS_KOMMUN_BY_CAT,dinm.platsKommunByCat);
-    mergeByCatDict(TIPSTRICKS_SUBCAT_BY_CAT,dinm.tipsTricksSubcatByCat);
     migrateCatPresetsOnce();
   }
 
@@ -579,7 +484,7 @@ async function importFromDrive(){
   setTimeout(function(){updateHandelser(null);},100);
 }
 
-var DRIVE_SYNC_TABS=["aktiviteter","samtaltext","samtalmuntligt","funderingar","vokabular","kunskap","tipstricks","samtalsamnen","media","objekt","plats","inmatningar","skamt","installningar"];
+var DRIVE_SYNC_TABS=["aktiviteter","inmatningar","installningar"];
 async function syncNow(){
   if(!accessToken){setSyncBtn("err","Ej inloggad");return;}
   setSyncBtn("","Synkar...");
@@ -623,49 +528,27 @@ var DRIVE_UPLOAD="https://www.googleapis.com/upload/drive/v3/files";
 
 // Structure: path -> [folder, subfolder (or null)]
 // All files named data.json inside their folder
+// OBS: bara Aktivitet och Installningar hanteras här längre. Övriga flikar (Notering,
+// Samtal, Konversation, Betyg, AI) äger numera sin egen JSON/mappstruktur helt själva via
+// driveReadJson/driveWriteJson - se HANDOFF_generic_drive_api.md. Be inte huvud-chatten
+// lägga till nya rader här för dem.
 var DRIVE_STRUCTURE={
   "Aktivitet":            ["Aktivitet"],
-  "Notering/Fundering":   ["Notering","Fundering"],
-  "Samtal/Text":          ["Samtal","Text"],
-  "Samtal/Muntligt":      ["Samtal","Muntligt"],
-  "SamtalLegacy":         ["Samtal"], // gammal, odelad fil - bara för engångsmigrering, används inte av UI
-  "Konversation/Skamt":   ["Konversation","Skämt"],
-  "Konversation/Samtalsamnen": ["Konversation","Samtalsämne"],
-  "Utvardering/Media":    ["Betyg","Media"],
-  "Utvardering/Foremal":  ["Betyg","Föremål"],
-  "Utvardering/Plats":    ["Betyg","Plats"],
   "Installningar":        ["Installningar"],
-  "Installningar/Inmatningar": ["Installningar","Inmatningar"],
-  "Notering/Lardom/Vokabular": ["Notering","Lärdom","Vokabulär"],
-  "Notering/Lardom/Kunskap": ["Notering","Lärdom","Kunskap"],
-  "Notering/Anteckning": ["Notering","Anteckning"]
+  "Installningar/Inmatningar": ["Installningar","Inmatningar"]
 };
 
 // tabName (som används i saveTab/loadTab) -> DRIVE_STRUCTURE-nyckel
 var DRIVE_STRUCTURE_BY_TAB={
   aktiviteter:   "Aktivitet",
-  samtaltext:    "Samtal/Text",
-  samtalmuntligt:"Samtal/Muntligt",
-  funderingar:   "Notering/Fundering",
-  samtalsamnen:  "Konversation/Samtalsamnen",
-  media:         "Utvardering/Media",
-  objekt:        "Utvardering/Foremal",
-  plats:         "Utvardering/Plats",
-  skamt:         "Konversation/Skamt",
   installningar: "Installningar",
-  inmatningar:   "Installningar/Inmatningar",
-  vokabular:     "Notering/Lardom/Vokabular",
-  kunskap:       "Notering/Lardom/Kunskap",
-  tipstricks:    "Notering/Anteckning"
+  inmatningar:   "Installningar/Inmatningar"
 };
 
 // Läsbara etiketter för varje DRIVE_STRUCTURE-nyckel (delas av Inställningar-dropdownen och export av väntande inmatningar)
 var PATH_LABELS={
-  "Aktivitet":"Aktivitet","Samtal/Text":"Samtal (Text)","Samtal/Muntligt":"Samtal (Muntligt)","Notering/Fundering":"Notering (Fundering)",
-  "Konversation/Skamt":"Konversation (Skämt)","Konversation/Samtalsamnen":"Konversation (Samtalsämne)",
-  "Utvardering/Media":"Betyg (Media)","Utvardering/Foremal":"Betyg (Föremål)","Utvardering/Plats":"Betyg (Plats)",
-  "Installningar":"Inställningar","Installningar/Inmatningar":"Inställningar (Inmatningar)",
-  "Notering/Lardom/Vokabular":"Lärdom (Vokabulär)","Notering/Lardom/Kunskap":"Lärdom (Kunskap)","Notering/Anteckning":"Notering (Anteckning)"
+  "Aktivitet":"Aktivitet",
+  "Installningar":"Inställningar","Installningar/Inmatningar":"Inställningar (Inmatningar)"
 };
 
 var driveIdCache={};         // path -> file id
@@ -898,18 +781,7 @@ function validateDriveData(path,data){
         if(!l.timestamp)errors.push("logs["+i+']: "timestamp" saknas');
       });}
     },
-    "Samtal/Text":     function(d){if(!Array.isArray(d.konversationer))errors.push('"konversationer" saknas');},
-    "Samtal/Muntligt": function(d){if(!Array.isArray(d.muntKonversationer))errors.push('"muntKonversationer" saknas');},
-    "Notering/Fundering":function(d){if(!Array.isArray(d.fundHist))errors.push('"fundHist" saknas');},
-    "Konversation/Samtalsamnen":function(d){if(!Array.isArray(d.amneHist))errors.push('"amneHist" saknas');},
-    "Utvardering/Media":      function(d){if(!d.mediaList||typeof d.mediaList!=="object"||Array.isArray(d.mediaList))errors.push('"mediaList" saknas eller är inte ett objekt');},
-    "Utvardering/Foremal":     function(d){if(!d.objList||typeof d.objList!=="object"||Array.isArray(d.objList))errors.push('"objList" saknas eller är inte ett objekt');},
-    "Utvardering/Plats":     function(d){if(!d.platsList||typeof d.platsList!=="object"||Array.isArray(d.platsList))errors.push('"platsList" saknas eller är inte ett objekt');},
-    "Installningar/Inmatningar": function(d){if(!Array.isArray(d.aktivitetHistory)&&!Array.isArray(d.platsHistory)&&!Array.isArray(d.anteckningHistory))errors.push('inmatningshistorik saknas eller har fel format');},
-    "Konversation/Skamt":       function(d){if(!Array.isArray(d.savedJokes))errors.push('"savedJokes" saknas');},
-    "Notering/Lardom/Vokabular": function(d){if(!Array.isArray(d.vokabularHist))errors.push('"vokabularHist" saknas');},
-    "Notering/Lardom/Kunskap":   function(d){if(!Array.isArray(d.kunskapHist))errors.push('"kunskapHist" saknas');},
-    "Notering/Anteckning":function(d){if(!Array.isArray(d.tipsTricksHist))errors.push('"tipsTricksHist" saknas');}
+    "Installningar/Inmatningar": function(d){if(!Array.isArray(d.aktivitetHistory)&&!Array.isArray(d.platsHistory)&&!Array.isArray(d.anteckningHistory))errors.push('inmatningshistorik saknas eller har fel format');}
   };
   if(checks[path])checks[path](data);
   // Report warnings but always return true — don't block data
@@ -1257,27 +1129,6 @@ function openJsonEditor(path){
 function applyTabData(tabName,da){
   if(tabName==="aktiviteter"){
     if(da&&da.logs)logs=da.logs.map(function(l){l.id=Number(l.id)||l.id;return l;});
-  } else if(tabName==="samtaltext"){
-    if(da&&da.konversationer)konversationer=da.konversationer;
-  } else if(tabName==="samtalmuntligt"){
-    if(da&&da.muntKonversationer)muntKonversationer=da.muntKonversationer;
-  } else if(tabName==="funderingar"){
-    if(da&&da.fundHist)fundHist=da.fundHist;
-  } else if(tabName==="vokabular"){
-    if(da&&da.vokabularHist)vokabularHist=da.vokabularHist;
-  } else if(tabName==="kunskap"){
-    if(da&&da.kunskapHist)kunskapHist=da.kunskapHist;
-  } else if(tabName==="tipstricks"){
-    if(da&&da.tipsTricksHist)tipsTricksHist=da.tipsTricksHist;
-  } else if(tabName==="samtalsamnen"){
-    if(da&&da.amneHist)amneHist=da.amneHist;
-  } else if(tabName==="media"){
-    if(da){if(da.mediaList)mediaList=da.mediaList;if(da.mediaFardig)mediaFardig=da.mediaFardig;}
-    migrateMediaCategories();
-  } else if(tabName==="objekt"){
-    if(da){if(da.objList)objList=da.objList;if(da.objFardig)objFardig=da.objFardig;}
-  } else if(tabName==="plats"){
-    if(da){if(da.platsList)platsList=da.platsList;if(da.platsFardig)platsFardig=da.platsFardig;}
   } else if(tabName==="inmatningar"){
     if(da){
       if(da.aktivitetHistory)aktivitetHistory=da.aktivitetHistory;
@@ -1294,8 +1145,6 @@ function applyTabData(tabName,da){
       if(da.tipsTricksSubcatByCat)TIPSTRICKS_SUBCAT_BY_CAT=da.tipsTricksSubcatByCat;
       migrateCatPresetsOnce();
     }
-  } else if(tabName==="skamt"){
-    if(da)savedJokes=da.savedJokes||[];
   } else if(tabName==="installningar"){
     if(da){
       if(da.placePresets)PLACE_PRESETS=da.placePresets;
@@ -1318,30 +1167,8 @@ async function loadTab(tabName){
     if(tabName==="aktiviteter"){
       var da=await driveRead("Aktivitet");
       applyTabData(tabName,da);
-    } else if(tabName==="samtaltext"){
-      applyTabData(tabName,await driveRead("Samtal/Text"));
-    } else if(tabName==="samtalmuntligt"){
-      applyTabData(tabName,await driveRead("Samtal/Muntligt"));
-    } else if(tabName==="funderingar"){
-      applyTabData(tabName,await driveRead("Notering/Fundering"));
-    } else if(tabName==="vokabular"){
-      applyTabData(tabName,await driveRead("Notering/Lardom/Vokabular"));
-    } else if(tabName==="kunskap"){
-      applyTabData(tabName,await driveRead("Notering/Lardom/Kunskap"));
-    } else if(tabName==="tipstricks"){
-      applyTabData(tabName,await driveRead("Notering/Anteckning"));
-    } else if(tabName==="samtalsamnen"){
-      applyTabData(tabName,await driveRead("Konversation/Samtalsamnen"));
-    } else if(tabName==="media"){
-      applyTabData(tabName,await driveRead("Utvardering/Media"));
-    } else if(tabName==="objekt"){
-      applyTabData(tabName,await driveRead("Utvardering/Foremal"));
-    } else if(tabName==="plats"){
-      applyTabData(tabName,await driveRead("Utvardering/Plats"));
     } else if(tabName==="inmatningar"){
       applyTabData(tabName,await driveRead("Installningar/Inmatningar"));
-    } else if(tabName==="skamt"){
-      applyTabData(tabName,await driveRead("Konversation/Skamt"));
     } else if(tabName==="installningar"){
       applyTabData(tabName,await driveRead("Installningar"));
     }
@@ -1403,45 +1230,6 @@ async function ensureTabMergedBeforeSave(tabName){
       var d=await driveRead("Aktivitet");
       if(d&&d.logs)logs=mergeArraysById(logs,d.logs);
     }else if(tabName==="samtaltext"){
-      var d=await driveRead("Samtal/Text");
-      if(d&&d.konversationer)konversationer=mergeArraysById(konversationer,d.konversationer);
-    }else if(tabName==="samtalmuntligt"){
-      var d=await driveRead("Samtal/Muntligt");
-      if(d&&d.muntKonversationer)muntKonversationer=mergeArraysById(muntKonversationer,d.muntKonversationer);
-    }else if(tabName==="funderingar"){
-      var d=await driveRead("Notering/Fundering");
-      if(d&&d.fundHist)fundHist=mergeArraysById(fundHist,d.fundHist);
-    }else if(tabName==="vokabular"){
-      var d=await driveRead("Notering/Lardom/Vokabular");
-      if(d&&d.vokabularHist)vokabularHist=mergeArraysById(vokabularHist,d.vokabularHist);
-    }else if(tabName==="kunskap"){
-      var d=await driveRead("Notering/Lardom/Kunskap");
-      if(d&&d.kunskapHist)kunskapHist=mergeArraysById(kunskapHist,d.kunskapHist);
-    }else if(tabName==="tipstricks"){
-      var d=await driveRead("Notering/Anteckning");
-      if(d&&d.tipsTricksHist)tipsTricksHist=mergeArraysById(tipsTricksHist,d.tipsTricksHist);
-    }else if(tabName==="samtalsamnen"){
-      var d=await driveRead("Konversation/Samtalsamnen");
-      if(d&&d.amneHist)amneHist=mergeArraysById(amneHist,d.amneHist);
-    }else if(tabName==="media"){
-      var d=await driveRead("Utvardering/Media");
-      if(d){
-        if(d.mediaFardig)mediaFardig=mergeArraysById(mediaFardig,d.mediaFardig);
-        if(d.mediaList)mediaList=mergeCatItemDict(mediaList,d.mediaList,function(item){return mediaItemTitle(item)+"|"+mediaItemCreator(item)+"|"+mediaItemGenre(item);});
-      }
-    }else if(tabName==="objekt"){
-      var d=await driveRead("Utvardering/Foremal");
-      if(d){
-        if(d.objFardig)objFardig=mergeArraysById(objFardig,d.objFardig);
-        if(d.objList)objList=mergeCatItemDict(objList,d.objList,function(item){return objItemTitle(item)+"|"+((item&&item.tillverkare)||"");});
-      }
-    }else if(tabName==="plats"){
-      var d=await driveRead("Utvardering/Plats");
-      if(d){
-        if(d.platsFardig)platsFardig=mergeArraysById(platsFardig,d.platsFardig);
-        if(d.platsList)platsList=mergeCatItemDict(platsList,d.platsList,function(item){return platsItemTitle(item)+"|"+((item&&item.kommun)||"");});
-      }
-    }else if(tabName==="inmatningar"){
       var d=await driveRead("Installningar/Inmatningar");
       if(d){
         aktivitetHistory=mergeStringArraysDedup(aktivitetHistory,d.aktivitetHistory);
@@ -1455,9 +1243,6 @@ async function ensureTabMergedBeforeSave(tabName){
         PLATS_KOMMUN_BY_CAT=mergeCatStringDict(PLATS_KOMMUN_BY_CAT,d.platsKommunByCat);
         TIPSTRICKS_SUBCAT_BY_CAT=mergeCatStringDict(TIPSTRICKS_SUBCAT_BY_CAT,d.tipsTricksSubcatByCat);
       }
-    }else if(tabName==="skamt"){
-      var d=await driveRead("Konversation/Skamt");
-      if(d&&d.savedJokes)savedJokes=mergeStringArraysDedup(savedJokes,d.savedJokes);
     }else if(tabName==="installningar"){
       var d=await driveRead("Installningar");
       if(d){
@@ -1481,20 +1266,10 @@ async function saveTab(tabName){
   if(!accessToken)return;
   await ensureTabMergedBeforeSave(tabName);
   if(tabName==="aktiviteter"){await driveWrite("Aktivitet",{logs:logs});}
-  else if(tabName==="samtaltext"){await driveWrite("Samtal/Text",{konversationer:konversationer});}
-  else if(tabName==="samtalmuntligt"){await driveWrite("Samtal/Muntligt",{muntKonversationer:muntKonversationer});}
-  else if(tabName==="funderingar"){await driveWrite("Notering/Fundering",{fundHist:fundHist});}
-  else if(tabName==="vokabular"){await driveWrite("Notering/Lardom/Vokabular",{vokabularHist:vokabularHist});}
-  else if(tabName==="kunskap"){await driveWrite("Notering/Lardom/Kunskap",{kunskapHist:kunskapHist});}
-  else if(tabName==="tipstricks"){await driveWrite("Notering/Anteckning",{tipsTricksHist:tipsTricksHist});}
-  else if(tabName==="samtalsamnen"){await driveWrite("Konversation/Samtalsamnen",{amneHist:amneHist});}
-  else if(tabName==="media"){await driveWrite("Utvardering/Media",{mediaList:mediaList,mediaFardig:mediaFardig});}
-  else if(tabName==="objekt"){await driveWrite("Utvardering/Foremal",{objList:objList,objFardig:objFardig});}
-  else if(tabName==="plats"){await driveWrite("Utvardering/Plats",{platsList:platsList,platsFardig:platsFardig});}
   else if(tabName==="inmatningar"){await driveWrite("Installningar/Inmatningar",{aktivitetHistory:aktivitetHistory,platsHistory:platsHistory,anteckningHistory:anteckningHistory,anteckningByCat:ANTECKNING_BY_CAT,mediaCreatorByCat:MEDIA_CREATOR_BY_CAT,mediaGenreByCat:MEDIA_GENRE_BY_CAT,objMakerByCat:OBJ_MAKER_BY_CAT,platsKommunByCat:PLATS_KOMMUN_BY_CAT,tipsTricksSubcatByCat:TIPSTRICKS_SUBCAT_BY_CAT});}
-  else if(tabName==="skamt"){await driveWrite("Konversation/Skamt",{savedJokes:savedJokes});}
   // "bilder" skriver ingen egen JSON-fil längre - bilderna sparas redan som riktiga
   // filer i Bilder-mappen under Aktivitet, ingen separat indexfil behövs.
+  // "skamt" (Konversation) skriver inte längre via denna delade väg - se HANDOFF_generic_drive_api.md.
   else if(tabName==="installningar"){
     await driveWrite("Installningar",{
       placePresets:PLACE_PRESETS,
