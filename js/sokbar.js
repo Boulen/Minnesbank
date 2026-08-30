@@ -1,7 +1,8 @@
 // SOKBAR.JS (fd dictbar.js, kortvarigt sökrad.js/sökbar.js) — sökrutorna längst ner ("dict-bar"), synliga på alla flikar samtidigt.
 // Två sökfunktioner: Sök (förklara text/bild/fil) och Ord (synonymer/ordbok).
 // Beroenden: core.js (esc, aiCall, aiChat, aiText, extractJsonObject, chatContinuationHtml,
-// bindChatContinuation). Laddas EFTER core.js.
+// bindChatContinuation, driveReadJson, driveWriteJson, driveGetOrCreateFileId, accessToken).
+// Laddas EFTER core.js.
 //
 // NYTT (2026-08-30): pin-knapparna (📌K "Spara till Kunskap" och 📌V "Spara till
 // Vokabulär") är borttagna på Blås begäran, tills vidare. Anledning: 📌V:s
@@ -13,10 +14,49 @@
 // längre i index.html. Den byggs och läggs till i document.body av injectSokbarMarkup()
 // nedan, som körs direkt när filen laddas. Ändras layouten på sökraden, gör det HÄR —
 // index.html behöver bara en script-tagg som pekar på js/sokbar.js, inget annat.
+//
+// NYTT (2026-08-30): "Läshjälp" - en knapp till höger om Ord-fältet som öppnar ett eget
+// overlay-fönster (översättning + ett eget ordboks-uppslag), byggt för att gå att
+// använda helt via tangentbord (se initLashjalp() längre ner: fokus-fälla, Escape
+// stänger, fokus återgår till knappen). All CSS för overlayet injiceras av samma IIFE
+// nedan (rör inte styles.css, som ägs av huvudet) - se lashjalpCss.
+
+var LASHJALP_CSS = ""
+  +".lashjalp-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:300;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;}"
+  +".lashjalp-panel{background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;max-width:640px;width:100%;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.5);}"
+  +".lashjalp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}"
+  +".lashjalp-header .note-label{margin:0;font-size:13px;}"
+  +".lashjalp-hint{color:var(--sub);font-size:11px;font-family:'JetBrains Mono',monospace;margin:-10px 0 16px;}"
+  +".lashjalp-section{margin-bottom:22px;}"
+  +".lashjalp-section:last-child{margin-bottom:0;}"
+  +".lashjalp-row{display:flex;gap:8px;margin-bottom:8px;align-items:stretch;}"
+  +".lashjalp-row textarea{flex:1;min-height:70px;padding:10px 12px;border-radius:5px;background:var(--bg-alt);border:1px solid var(--border);color:var(--text-bright);font-family:'JetBrains Mono',monospace;font-size:13px;resize:vertical;outline:none;}"
+  +".lashjalp-row input[type=text]{flex:1;min-width:0;padding:10px 12px;border-radius:5px;background:var(--bg-alt);border:1px solid var(--border);color:var(--text-bright);font-family:'JetBrains Mono',monospace;font-size:13px;outline:none;}"
+  +".lashjalp-row select{padding:8px 10px;border-radius:5px;background:var(--bg-alt);border:1px solid var(--border);color:var(--text-bright);font-family:'JetBrains Mono',monospace;font-size:12.5px;outline:none;}"
+  +".lashjalp-row textarea:focus,.lashjalp-row input:focus,.lashjalp-row select:focus{border-color:var(--main);}"
+  +".lashjalp-result{background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;padding:12px 14px;color:var(--text);font-size:13.5px;min-height:20px;}"
+  +".lashjalp-result:empty{display:none;}"
+  +"#lashjalpCloseBtn:focus,#lashjalpBtn:focus,#lashjalpTransBtn:focus,#lashjalpOrdBtn:focus,"
+  +"#lashjalpSettingsBtn:focus,#lashjalpSettingsCloseBtn:focus,#lashjalpSettingsCancelBtn:focus,#lashjalpSettingsSaveBtn:focus,"
+  +"#lashjalpHistoryBtn:focus,#lashjalpHistoryCloseBtn:focus"
+  +"{outline:2px solid var(--main);outline-offset:2px;}"
+  +".lashjalp-panel .abtn{padding:8px 18px;}"
+  +".lashjalp-history-item{background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:13px;color:var(--text);}"
+  +".lashjalp-history-item .lashjalp-history-q{color:var(--sub);font-size:12px;margin-bottom:4px;}"
+  +".lashjalp-history-item .lashjalp-history-a{color:var(--text);}"
+  +".lashjalp-history-item .lashjalp-history-time{color:var(--sub);font-size:10.5px;margin-top:6px;font-family:'JetBrains Mono',monospace;}";
 
 (function injectSokbarMarkup(){
   // Skydd mot dubblett-injektion om index.html av misstag ändå har kvar markupen.
   if(document.getElementById("dictInput"))return;
+
+  if(!document.getElementById("lashjalpStyle")){
+    var styleEl=document.createElement("style");
+    styleEl.id="lashjalpStyle";
+    styleEl.textContent=LASHJALP_CSS;
+    document.head.appendChild(styleEl);
+  }
+
   var html=''
     +'<div class="dict-bar">'
     +'<div class="dict-result" id="dictResult"></div>'
@@ -34,13 +74,97 @@
     +'<label class="action-btn" style="cursor:pointer" title="Ladda upp bild eller fil">📁<input type="file" id="dictImgUpload" accept="image/*,.txt,.md,.csv,.json,text/plain" style="display:none"></label>'
     +'<button class="action-btn" id="dictCameraBtn" type="button" title="Ta bild">📷</button>'
     +'</div>'
-    +'<div class="dict-input-row dict-row-main">'
+    +'<div class="dict-input-row dict-row-main" style="flex:1 1 70px">'
     +'<input type="text" id="dictInput" placeholder="Sök">'
     +'<button class="action-btn" id="dictSpellBtn" type="button" title="Stavningskontroll">🔤</button>'
     +'</div>'
-    +'<div class="dict-input-row dict-row-small">'
+    +'<div class="dict-input-row dict-row-small" style="flex:0 1 115px;min-width:80px">'
     +'<input type="text" id="synInput" placeholder="Ord">'
+    +'<button class="action-btn" id="lashjalpBtn" type="button" title="Läshjälp: översättning och ordbok i ett eget fönster" style="padding:6px 12px;font-size:11.5px;flex:0 0 auto">📖</button>'
     +'</div>'
+    +'</div>'
+    +'</div>'
+    +'<div class="lashjalp-overlay" id="lashjalpOverlay" role="dialog" aria-modal="true" aria-labelledby="lashjalpTitle">'
+    +'<div class="lashjalp-panel">'
+    +'<div class="lashjalp-header">'
+    +'<span class="note-label" id="lashjalpTitle">📖 Läshjälp</span>'
+    +'<div style="display:flex;gap:6px">'
+    +'<button type="button" id="lashjalpHistoryBtn" class="action-btn" title="Visa sparade sökningar (📌-knapparna)">📋</button>'
+    +'<button type="button" id="lashjalpSettingsBtn" class="action-btn" title="Inställningar: läs/redigera sparade sökningar (sok.json/ord.json/oversattning.json)">⚙️</button>'
+    +'<button type="button" id="lashjalpCloseBtn" class="action-btn" title="Stäng (Esc)">✕ Stäng</button>'
+    +'</div>'
+    +'</div>'
+    +'<div class="lashjalp-hint">Tab/Skift+Tab för att flytta dig, Esc för att stänga.</div>'
+    +'<div class="lashjalp-section">'
+    +'<div class="lbl">Översättning</div>'
+    +'<div class="lashjalp-row">'
+    +'<textarea id="lashjalpTransInput" placeholder="Text att översätta (Enter för att översätta, Skift+Enter för radbrytning)" rows="3"></textarea>'
+    +'</div>'
+    +'<div class="lashjalp-row">'
+    +'<select id="lashjalpTransLang">'
+    +'<option value="">Från - upptäck automatiskt</option>'
+    +'<option value="engelska">Från engelska</option>'
+    +'<option value="spanska">Från spanska</option>'
+    +'<option value="tyska">Från tyska</option>'
+    +'<option value="franska">Från franska</option>'
+    +'</select>'
+    +'<button type="button" id="lashjalpTransBtn" class="action-btn">Översätt till svenska</button>'
+    +'</div>'
+    +'<div class="lashjalp-result" id="lashjalpTransResult"></div>'
+    +'</div>'
+    +'<div class="lashjalp-section">'
+    +'<div class="lbl">Ordbok / synonymer</div>'
+    +'<div class="lashjalp-row">'
+    +'<input type="text" id="lashjalpOrdInput" placeholder="Ord (Enter för att söka)">'
+    +'<button type="button" id="lashjalpOrdBtn" class="action-btn">Sök</button>'
+    +'</div>'
+    +'<div class="lashjalp-result" id="lashjalpOrdResult"></div>'
+    +'</div>'
+    +'</div>'
+    +'</div>'
+    +'<div class="lashjalp-overlay" id="lashjalpSettingsOverlay" role="dialog" aria-modal="true" aria-labelledby="lashjalpSettingsTitle">'
+    +'<div class="lashjalp-panel">'
+    +'<div class="lashjalp-header">'
+    +'<span class="note-label" id="lashjalpSettingsTitle">⚙️ Läshjälp — sparad data</span>'
+    +'<button type="button" id="lashjalpSettingsCloseBtn" class="action-btn" title="Stäng (Esc)">✕ Stäng</button>'
+    +'</div>'
+    +'<div class="lashjalp-hint">Tab/Skift+Tab för att flytta dig, Esc för att stänga.</div>'
+    +'<div class="lashjalp-section">'
+    +'<div class="lbl">Fil</div>'
+    +'<div class="lashjalp-row">'
+    +'<select id="lashjalpSettingsFileSelect">'
+    +'<option value="sok">Sök (sok.json)</option>'
+    +'<option value="ord">Ord (ord.json)</option>'
+    +'<option value="oversattning">Översättning (oversattning.json)</option>'
+    +'</select>'
+    +'</div>'
+    +'<div class="lashjalp-hint" id="lashjalpSettingsStatus" style="margin:0 0 10px"></div>'
+    +'<div class="lashjalp-row">'
+    +'<textarea id="lashjalpSettingsJsonArea" rows="12" style="min-height:260px" placeholder="Laddar …"></textarea>'
+    +'</div>'
+    +'<div id="lashjalpSettingsMsg" class="lashjalp-hint" style="margin:0"></div>'
+    +'</div>'
+    +'<div class="lashjalp-header" style="margin-top:4px;border-top:1px solid var(--border);padding-top:14px;margin-bottom:0">'
+    +'<button type="button" id="lashjalpSettingsCancelBtn" class="action-btn">Avbryt</button>'
+    +'<button type="button" id="lashjalpSettingsSaveBtn" class="abtn">Spara</button>'
+    +'</div>'
+    +'</div>'
+    +'</div>'
+    +'<div class="lashjalp-overlay" id="lashjalpHistoryOverlay" role="dialog" aria-modal="true" aria-labelledby="lashjalpHistoryTitle">'
+    +'<div class="lashjalp-panel">'
+    +'<div class="lashjalp-header">'
+    +'<span class="note-label" id="lashjalpHistoryTitle">📋 Sparade sökningar</span>'
+    +'<button type="button" id="lashjalpHistoryCloseBtn" class="action-btn" title="Stäng (Esc)">✕ Stäng</button>'
+    +'</div>'
+    +'<div class="lashjalp-hint">Tab/Skift+Tab för att flytta dig, Esc för att stänga.</div>'
+    +'<div class="lashjalp-row">'
+    +'<select id="lashjalpHistoryFileSelect">'
+    +'<option value="sok">Sök (sok.json)</option>'
+    +'<option value="ord">Ord (ord.json)</option>'
+    +'<option value="oversattning">Översättning (oversattning.json)</option>'
+    +'</select>'
+    +'</div>'
+    +'<div id="lashjalpHistoryList" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-top:4px"></div>'
     +'</div>'
     +'</div>';
   document.body.insertAdjacentHTML("beforeend",html);
@@ -85,6 +209,64 @@ function sokbarParseJsonReply(rawText){
     try{return JSON.parse(balanced);}catch(e){/* fortsätt till reservmetoden nedan */}
   }
   try{return JSON.parse(extractJsonObject(rawText));}catch(e){return null;}
+}
+
+// ---- Pinnat/sparat innehåll från Sök/Ord/Översättning, eget Drive-utrymme ----
+// (2026-08-30, enligt Blås önskemål + HANDOFF_own_your_data.md/HANDOFF om
+// inställningsmönstret från Aktivitet). Tre separata filer, en per källa, i en egen
+// mapp "Sokruta" i den app-ägda rotmappen (samma mapp Blå länkade till - bekräftat
+// tidigare att FOLDER_ID redan pekar dit). Byggt direkt på core.js:s generiska
+// driveReadJson/driveWriteJson (INTE en egen hopskriven fetch-variant) - de skapar
+// filen automatiskt om den saknas när man sparar, så ingen separat "Skapa fil"-knapp
+// behövs för själva pin-flödet (däremot finns filstatus synlig i inställningspanelen,
+// se lashjalpCheckFiles()).
+var LASHJALP_FOLDER=["Sokruta"];
+var LASHJALP_FILES={sok:"sok.json",ord:"ord.json",oversattning:"oversattning.json"};
+
+// Delad pin-funktion: lägger till en post FÖRST i listan i angiven fil och sparar hela
+// listan tillbaka. btnEl (valfri) får en kort ✓/⚠-bekräftelse.
+async function lashjalpPinEntry(fileName,entry,btnEl){
+  function flash(symbol){
+    if(!btnEl)return;
+    var orig=btnEl.textContent;
+    btnEl.textContent=symbol;
+    setTimeout(function(){btnEl.textContent=orig;},1500);
+  }
+  if(typeof accessToken==="undefined"||!accessToken){
+    console.error("sokbar: kan inte spara pin till "+fileName+" - inte inloggad");
+    flash("⚠");
+    return;
+  }
+  try{
+    var data=await driveReadJson(LASHJALP_FOLDER,fileName);
+    var items=(data&&Array.isArray(data.items))?data.items:[];
+    items.unshift(entry);
+    var ok=await driveWriteJson(LASHJALP_FOLDER,fileName,{items:items});
+    flash(ok?"✓":"⚠");
+    if(!ok)console.error("sokbar: driveWriteJson misslyckades för "+fileName);
+  }catch(err){
+    console.error("sokbar: pin till "+fileName+" misslyckades",err);
+    flash("⚠");
+  }
+}
+function pinSokResult(btnEl){
+  if(!dictChat||!dictChat.length)return;
+  lashjalpPinEntry(LASHJALP_FILES.sok,{
+    id:Date.now(),fraga:dictChat[0].content,svar:dictChat[dictChat.length-1].content,
+    timestamp:new Date().toISOString()
+  },btnEl);
+}
+function pinOrdResult(chat,btnEl){
+  if(!chat||!chat.length)return;
+  lashjalpPinEntry(LASHJALP_FILES.ord,{
+    id:Date.now(),fraga:chat[0].content,svar:chat[chat.length-1].content,
+    timestamp:new Date().toISOString()
+  },btnEl);
+}
+function pinOversattningResult(kalla,oversattning,btnEl){
+  lashjalpPinEntry(LASHJALP_FILES.oversattning,{
+    id:Date.now(),kalla:kalla,oversattning:oversattning,timestamp:new Date().toISOString()
+  },btnEl);
 }
 
 async function searchDictionary(){
@@ -252,9 +434,12 @@ function renderDictResultBox(){
   var dictResult=document.getElementById("dictResult");
   if(!dictResult)return;
   dictResult.innerHTML="<button class='dict-close' id='dictCloseBtn'>×</button>"
+    +"<button id='dict-pin-btn' title='Spara sökningen (sok.json)' style='position:absolute;top:10px;right:50px;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:2px 4px'>📌</button>"
     +dictHeaderHtml
     +chatContinuationHtml(dictChat,"dictai");
   document.getElementById("dictCloseBtn").onclick=function(){dictResult.classList.remove("visible");dictChat=null;};
+  var dictPinBtn=dictResult.querySelector("#dict-pin-btn");
+  if(dictPinBtn)dictPinBtn.onclick=function(){pinSokResult(dictPinBtn);};
   bindChatContinuation(dictResult,"dictai",dictAiSystemPrompt,function(){return dictChat;},renderDictResultBox);
 }
 
@@ -264,9 +449,12 @@ function renderSynResultBox(){
   var synResult=document.getElementById("synResult");
   if(!synResult)return;
   synResult.innerHTML="<button class='dict-close' id='synCloseBtn'>×</button>"
+    +"<button id='syn-pin-btn' title='Spara sökningen (ord.json)' style='position:absolute;top:10px;right:50px;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:2px 4px'>📌</button>"
     +synHeaderHtml
     +chatContinuationHtml(synChat,"synai");
   document.getElementById("synCloseBtn").onclick=function(){synResult.classList.remove("visible");synChat=null;};
+  var synPinBtn=synResult.querySelector("#syn-pin-btn");
+  if(synPinBtn)synPinBtn.onclick=function(){pinOrdResult(synChat,synPinBtn);};
   synResult.querySelectorAll("[data-copyword]").forEach(function(chip){
     chip.onclick=function(){
       var word=chip.dataset.copyword;
@@ -339,6 +527,410 @@ async function searchSynonym(){
   }
 }
 
+// ---- Läshjälp: fristående overlay med översättning + eget ordboks-uppslag ----
+// Öppnas av knappen till höger om Ord-fältet. Byggd för att navigeras helt via
+// tangentbord: fokus flyttas in vid öppning, Tab/Skift+Tab hålls kvar inom fönstret
+// (fokus-fälla) så den aldrig läcker ut till resten av sidan, Escape stänger och
+// lämnar tillbaka fokus dit den kom ifrån. Se initLashjalp() för bindningarna.
+var lashjalpLastFocus=null;
+
+function openLashjalp(){
+  var overlay=document.getElementById("lashjalpOverlay");
+  if(!overlay)return;
+  lashjalpLastFocus=document.activeElement;
+  overlay.style.display="flex";
+  document.body.style.overflow="hidden";
+  var firstField=document.getElementById("lashjalpTransInput");
+  if(firstField)firstField.focus();
+}
+function closeLashjalp(){
+  var overlay=document.getElementById("lashjalpOverlay");
+  if(!overlay)return;
+  overlay.style.display="none";
+  document.body.style.overflow="";
+  if(lashjalpLastFocus&&typeof lashjalpLastFocus.focus==="function")lashjalpLastFocus.focus();
+  lashjalpLastFocus=null;
+}
+
+// ---- Läshjälp-inställningar: läs/redigera sok.json/ord.json/oversattning.json direkt ----
+// (enligt HANDOFF_installningsmonster_fran_aktivitet.md - samma idé som Aktivitets egen
+// JSON-redigerare, men byggd på core.js:s generiska driveReadJson/driveWriteJson istället
+// för att kopiera Aktivitets handskrivna fetch-kod rakt av. FÖRENKLING jämfört med
+// Aktivitets mönster: ingen separat "Skapa fil"-knapp per saknad fil - status visas i
+// klartext (lashjalpCheckFiles) och driveWriteJson skapar filen automatiskt första gången
+// man trycker Spara, vilket är säkert eftersom det är samma vetterade, delade funktion
+// alla andra flikar redan litar på. Säg till om du hellre vill ha exakt samma
+// knapp-per-fil-flöde som Aktivitet har, går att bygga om.
+// Egen overlay (döljer/visar lashjalpOverlay istället för att ligga kapslad i den) så att
+// fokus-fällorna aldrig krockar - se openLashjalpSettings/closeLashjalpSettings.
+function openLashjalpSettings(){
+  var lashjalpOv=document.getElementById("lashjalpOverlay");
+  var settingsOv=document.getElementById("lashjalpSettingsOverlay");
+  if(!settingsOv)return;
+  if(lashjalpOv)lashjalpOv.style.display="none";
+  settingsOv.style.display="flex";
+  var sel=document.getElementById("lashjalpSettingsFileSelect");
+  if(sel)sel.focus();
+  lashjalpCheckFiles();
+  loadLashjalpSettingsFile();
+}
+function closeLashjalpSettings(){
+  var lashjalpOv=document.getElementById("lashjalpOverlay");
+  var settingsOv=document.getElementById("lashjalpSettingsOverlay");
+  if(settingsOv)settingsOv.style.display="none";
+  if(lashjalpOv)lashjalpOv.style.display="flex";
+  var settingsBtn=document.getElementById("lashjalpSettingsBtn");
+  if(settingsBtn)settingsBtn.focus();
+}
+async function loadLashjalpSettingsFile(){
+  var sel=document.getElementById("lashjalpSettingsFileSelect");
+  var area=document.getElementById("lashjalpSettingsJsonArea");
+  var msg=document.getElementById("lashjalpSettingsMsg");
+  if(!sel||!area)return;
+  if(msg)msg.textContent="";
+  if(typeof accessToken==="undefined"||!accessToken){
+    area.value="{}";
+    if(msg)msg.textContent="Inte inloggad - kan varken läsa eller spara just nu.";
+    return;
+  }
+  var fileName=LASHJALP_FILES[sel.value];
+  area.disabled=true;
+  area.value="Laddar …";
+  var data=await driveReadJson(LASHJALP_FOLDER,fileName);
+  area.value=JSON.stringify(data||{items:[]},null,2);
+  area.disabled=false;
+}
+async function saveLashjalpSettingsFile(){
+  var sel=document.getElementById("lashjalpSettingsFileSelect");
+  var area=document.getElementById("lashjalpSettingsJsonArea");
+  var msg=document.getElementById("lashjalpSettingsMsg");
+  if(!sel||!area||!msg)return;
+  if(typeof accessToken==="undefined"||!accessToken){
+    msg.textContent="Inte inloggad - kan inte spara.";
+    return;
+  }
+  var parsed;
+  try{
+    parsed=JSON.parse(area.value);
+  }catch(e){
+    msg.textContent="Ogiltig JSON - rätta till innan du sparar (fel: "+e.message+").";
+    return;
+  }
+  var fileName=LASHJALP_FILES[sel.value];
+  msg.textContent="Sparar …";
+  var ok=await driveWriteJson(LASHJALP_FOLDER,fileName,parsed);
+  msg.textContent=ok?"✓ Sparat.":"Kunde inte spara just nu (nätverksfel?), försök igen.";
+  if(!ok)console.error("sokbar: kunde inte spara "+fileName+" via inställningspanelen");
+  if(ok)lashjalpCheckFiles();
+}
+// Kollar (utan att skapa) om alla tre filerna redan finns i Sokruta-mappen, och visar
+// det som en kort statusrad - motsvarar "listar de som saknas" i Aktivitets mönster,
+// fast utan egna Skapa-knappar (se kommentar ovanför openLashjalpSettings).
+async function lashjalpCheckFiles(){
+  var statusEl=document.getElementById("lashjalpSettingsStatus");
+  if(!statusEl)return;
+  if(typeof accessToken==="undefined"||!accessToken){statusEl.textContent="";return;}
+  statusEl.textContent="Kollar filer …";
+  var lines=[];
+  for(var key in LASHJALP_FILES){
+    var fileName=LASHJALP_FILES[key];
+    var id=null;
+    try{id=await driveGetOrCreateFileId(LASHJALP_FOLDER,fileName,false);}catch(e){/* visas som saknad nedan */}
+    lines.push((id?"✓ ":"— ")+fileName+(id?"":" (skapas automatiskt vid Spara)"));
+  }
+  statusEl.textContent=lines.join("  ·  ");
+}
+
+// ---- Läshjälp-historik: visa de sparade (📌:ade) sökningarna, läsbart - inte som råa JSON ----
+// Skiljer sig från inställningspanelen ovan (⚙️) genom att den bara VISAR posterna som
+// snygga kort (fråga/svar resp. källtext/översättning + tidsstämpel), inte redigerbar
+// råtext. Egen overlay, samma syskon-mönster som lashjalpSettingsOverlay (döljer/visar
+// lashjalpOverlay istället för att ligga kapslad i den) så fokus-fällorna aldrig krockar.
+function openLashjalpHistory(){
+  var lashjalpOv=document.getElementById("lashjalpOverlay");
+  var historyOv=document.getElementById("lashjalpHistoryOverlay");
+  if(!historyOv)return;
+  if(lashjalpOv)lashjalpOv.style.display="none";
+  historyOv.style.display="flex";
+  var sel=document.getElementById("lashjalpHistoryFileSelect");
+  if(sel)sel.focus();
+  loadLashjalpHistory();
+}
+function closeLashjalpHistory(){
+  var lashjalpOv=document.getElementById("lashjalpOverlay");
+  var historyOv=document.getElementById("lashjalpHistoryOverlay");
+  if(historyOv)historyOv.style.display="none";
+  if(lashjalpOv)lashjalpOv.style.display="flex";
+  var historyBtn=document.getElementById("lashjalpHistoryBtn");
+  if(historyBtn)historyBtn.focus();
+}
+async function loadLashjalpHistory(){
+  var sel=document.getElementById("lashjalpHistoryFileSelect");
+  var list=document.getElementById("lashjalpHistoryList");
+  if(!sel||!list)return;
+  if(typeof accessToken==="undefined"||!accessToken){
+    list.innerHTML="<div class='lashjalp-hint' style='margin:0'>Inte inloggad - kan inte visa sparade sökningar just nu.</div>";
+    return;
+  }
+  var key=sel.value;
+  var fileName=LASHJALP_FILES[key];
+  list.innerHTML="<div class='lashjalp-hint' style='margin:0'>Laddar …</div>";
+  var data=await driveReadJson(LASHJALP_FOLDER,fileName);
+  var items=(data&&Array.isArray(data.items))?data.items:[];
+  if(!items.length){
+    list.innerHTML="<div class='lashjalp-hint' style='margin:0'>Inga sparade sökningar än - tryck på 📌 vid ett resultat för att spara det hit.</div>";
+    return;
+  }
+  list.innerHTML=items.map(function(item){
+    var timeStr="";
+    try{if(item.timestamp)timeStr=new Date(item.timestamp).toLocaleString("sv-SE");}catch(e){/* strunta i tidsstämpeln om den inte går att tolka */}
+    if(key==="oversattning"){
+      return "<div class='lashjalp-history-item'>"
+        +"<div class='lashjalp-history-q'>"+esc(item.kalla||"")+"</div>"
+        +"<div class='lashjalp-history-a'>"+esc(item.oversattning||"")+"</div>"
+        +(timeStr?"<div class='lashjalp-history-time'>"+esc(timeStr)+"</div>":"")
+        +"</div>";
+    }
+    return "<div class='lashjalp-history-item'>"
+      +"<div class='lashjalp-history-q'>"+esc(item.fraga||"")+"</div>"
+      +"<div class='lashjalp-history-a'>"+esc(item.svar||"")+"</div>"
+      +(timeStr?"<div class='lashjalp-history-time'>"+esc(timeStr)+"</div>":"")
+      +"</div>";
+  }).join("");
+}
+
+// Ren textöversättning - inget JSON-svar att tolka här (till skillnad från Sök/Ord),
+// så den är inte känslig för samma avklippnings-/tolkningsproblem som fanns tidigare.
+// Läshjälpen översätter alltid TILL svenska (det är ju syftet - hjälp att läsa något
+// på ett annat språk) - dropdownen väljer bara KÄLLSPRÅKET, med automatisk
+// språkigenkänning som förval om man inte vet/vill ange det.
+async function lashjalpTranslate(){
+  var input=document.getElementById("lashjalpTransInput");
+  var langSel=document.getElementById("lashjalpTransLang");
+  var result=document.getElementById("lashjalpTransResult");
+  if(!input||!result)return;
+  var text=input.value.trim();
+  if(!text)return;
+  var sourceLang=(langSel&&langSel.value)||"";
+  result.innerHTML="Översätter …";
+  var sys=sourceLang
+    ?"Du ar en oversattare. Texten som ges ar skriven pa "+sourceLang+". Oversatt den till svenska. Svara ENDAST med den oversatta texten, ingen extra kommentar och inga citattecken runt om."
+    :"Du ar en oversattare. Identifiera sjalv vilket sprak texten som ges ar skriven pa, och oversatt den till svenska. Svara ENDAST med den oversatta texten, ingen extra kommentar och inga citattecken runt om.";
+  try{
+    var res=await aiCall(sys,text,900);
+    var data=await res.json();
+    if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+    var translated=(aiText(data)||"").trim();
+    if(translated){
+      result.innerHTML="<button id='lashjalpTransPinBtn' title='Spara översättningen (oversattning.json)' style='float:right;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:0 0 6px 8px'>📌</button>"
+        +"<div>"+esc(translated)+"</div>";
+      var pinBtn=document.getElementById("lashjalpTransPinBtn");
+      if(pinBtn)pinBtn.onclick=function(){pinOversattningResult(text,translated,pinBtn);};
+    } else {
+      result.textContent="Kunde inte hämta en översättning, försök igen.";
+    }
+  }catch(err){
+    console.error("sokbar: läshjälp-översättning misslyckades",err);
+    result.textContent="Kunde inte hämta en översättning, försök igen.";
+  }
+}
+
+// Eget ordboks-uppslag för läshjälpen - egen chat-tråd (lashjalpOrdChat) så den inte
+// blandas ihop med Ord-fältet i den vanliga sökraden. Samma robusta JSON-tolkning och
+// råtext-fallback som Sök/Ord (se sokbarParseJsonReply högst upp i filen).
+var lashjalpOrdChat=null, lashjalpOrdHeaderHtml="";
+function renderLashjalpOrdResult(){
+  var el=document.getElementById("lashjalpOrdResult");
+  if(!el)return;
+  el.innerHTML="<button id='lashjalpOrdPinBtn' title='Spara sökningen (ord.json)' style='float:right;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:0 0 6px 8px'>📌</button>"
+    +lashjalpOrdHeaderHtml
+    +chatContinuationHtml(lashjalpOrdChat,"lashjalpordai");
+  var lashjalpOrdPinBtn=document.getElementById("lashjalpOrdPinBtn");
+  if(lashjalpOrdPinBtn)lashjalpOrdPinBtn.onclick=function(){pinOrdResult(lashjalpOrdChat,lashjalpOrdPinBtn);};
+  bindChatContinuation(el,"lashjalpordai","Du ar en svensk assistent for ordbok och synonymer. Fortsätt hjälpa personen bygga vidare på det ni just pratat om, svara med vanlig text.",function(){return lashjalpOrdChat;},renderLashjalpOrdResult);
+  el.querySelectorAll("[data-copyword]").forEach(function(chip){
+    chip.onclick=function(){
+      var word=chip.dataset.copyword;
+      if(!navigator.clipboard||!navigator.clipboard.writeText)return;
+      navigator.clipboard.writeText(word).then(function(){
+        var orig=chip.textContent;
+        chip.textContent="✓ Kopierat";
+        setTimeout(function(){chip.textContent=orig;},1200);
+      }).catch(function(){});
+    };
+  });
+}
+async function lashjalpSearchWord(){
+  var input=document.getElementById("lashjalpOrdInput");
+  var el=document.getElementById("lashjalpOrdResult");
+  if(!input||!el)return;
+  var word=input.value.trim();
+  if(!word)return;
+  el.innerHTML="<span class='spnr' style='width:14px;height:14px;border-width:2px;display:inline-block;margin:0 6px 0 0;vertical-align:middle'></span>söker …";
+  var sys='Du ar en svensk assistent for ordbok och synonymer. Ge en kort definition och 4-6 bra synonymer for ordet eller frasen. Svara ENDAST med JSON, utan markdown-block: {"word":"ordet/frasen","definition":"kort definition, max 2 meningar","synonyms":["syn1","syn2","syn3","syn4"]}';
+  var userMsg="Slå upp: \""+word+"\"";
+  var parsed=null,lastRawText="",lastErr=null;
+  for(var attempt=0;attempt<2&&!parsed;attempt++){
+    try{
+      var res=await aiCall(sys,userMsg,1100);
+      var data=await res.json();
+      lastRawText=aiText(data);
+      if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+      parsed=sokbarParseJsonReply(lastRawText);
+    }catch(err){lastErr=err;parsed=null;}
+  }
+  if(!parsed){
+    if(lastRawText&&lastRawText.trim()){
+      console.error("sokbar: läshjälp kunde inte tolka JSON-svaret, visar råtext istället",lastErr,lastRawText);
+      lashjalpOrdChat=[{role:"user",content:"Slå upp: \""+word+"\""},{role:"assistant",content:lastRawText}];
+      lashjalpOrdHeaderHtml="<span class='note-label'>"+esc(word)+"</span>"
+        +"<div style='margin:6px 0 10px;color:var(--text);font-size:13.5px'>"+esc(lastRawText)+"</div>";
+      renderLashjalpOrdResult();
+      return;
+    }
+    console.error("sokbar: läshjälp fick inget svar alls från AI",lastErr);
+    el.innerHTML="Kunde inte hämta ett svar, försök igen.";
+    return;
+  }
+  var chips=(parsed.synonyms||[]).map(function(s){return "<span class='synonym-chip' data-copyword='"+esc(s)+"' style='cursor:pointer' title='Klicka för att kopiera'>"+esc(s)+"</span>";}).join("");
+  var answerText=(parsed.definition||"")+((parsed.synonyms||[]).length?"\nSynonymer: "+parsed.synonyms.join(", "):"");
+  lashjalpOrdChat=[{role:"user",content:"Slå upp: \""+word+"\""},{role:"assistant",content:answerText}];
+  lashjalpOrdHeaderHtml="<span class='note-label'>"+esc(parsed.word||word)+"</span>"
+    +"<div style='margin:6px 0 10px;color:var(--text);font-size:13.5px'>"+esc(parsed.definition||"")+"</div>"
+    +"<div>"+chips+"</div>";
+  renderLashjalpOrdResult();
+}
+
+function initLashjalp(){
+  var lashjalpBtn=document.getElementById("lashjalpBtn");
+  if(lashjalpBtn)lashjalpBtn.onclick=openLashjalp;
+
+  var overlay=document.getElementById("lashjalpOverlay");
+  if(!overlay)return;
+
+  var closeBtn=document.getElementById("lashjalpCloseBtn");
+  if(closeBtn)closeBtn.onclick=closeLashjalp;
+
+  // Klick på den mörka bakgrunden (utanför panelen) stänger, som ett alternativ till Esc/X.
+  overlay.addEventListener("mousedown",function(e){
+    if(e.target===overlay)closeLashjalp();
+  });
+
+  // Fokus-fälla: håller Tab/Skift+Tab inom overlayet så länge det är öppet, och
+  // Escape stänger det - detta är kärnan i "navigera bara via tangentbordet".
+  overlay.addEventListener("keydown",function(e){
+    if(e.key==="Escape"){
+      e.preventDefault();
+      closeLashjalp();
+      return;
+    }
+    if(e.key!=="Tab")return;
+    var focusables=Array.prototype.slice.call(
+      overlay.querySelectorAll('button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])')
+    ).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
+    if(!focusables.length)return;
+    var first=focusables[0], last=focusables[focusables.length-1];
+    if(e.shiftKey&&document.activeElement===first){
+      e.preventDefault();last.focus();
+    } else if(!e.shiftKey&&document.activeElement===last){
+      e.preventDefault();first.focus();
+    }
+  });
+
+  var transInput=document.getElementById("lashjalpTransInput");
+  if(transInput)transInput.onkeydown=function(e){
+    if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();lashjalpTranslate();}
+  };
+  var transBtn=document.getElementById("lashjalpTransBtn");
+  if(transBtn)transBtn.onclick=lashjalpTranslate;
+
+  var ordInput=document.getElementById("lashjalpOrdInput");
+  if(ordInput)ordInput.onkeydown=function(e){
+    if(e.key==="Enter")lashjalpSearchWord();
+  };
+  var ordBtn=document.getElementById("lashjalpOrdBtn");
+  if(ordBtn)ordBtn.onclick=lashjalpSearchWord;
+
+  var settingsBtn=document.getElementById("lashjalpSettingsBtn");
+  if(settingsBtn)settingsBtn.onclick=openLashjalpSettings;
+
+  var settingsOverlay=document.getElementById("lashjalpSettingsOverlay");
+  if(settingsOverlay){
+    var settingsCloseBtn=document.getElementById("lashjalpSettingsCloseBtn");
+    if(settingsCloseBtn)settingsCloseBtn.onclick=closeLashjalpSettings;
+    var settingsCancelBtn=document.getElementById("lashjalpSettingsCancelBtn");
+    if(settingsCancelBtn)settingsCancelBtn.onclick=closeLashjalpSettings;
+    var settingsSaveBtn=document.getElementById("lashjalpSettingsSaveBtn");
+    if(settingsSaveBtn)settingsSaveBtn.onclick=saveLashjalpSettingsFile;
+    var settingsFileSelect=document.getElementById("lashjalpSettingsFileSelect");
+    if(settingsFileSelect)settingsFileSelect.onchange=loadLashjalpSettingsFile;
+
+    // Klick på den mörka bakgrunden stänger, precis som huvud-overlayet.
+    settingsOverlay.addEventListener("mousedown",function(e){
+      if(e.target===settingsOverlay)closeLashjalpSettings();
+    });
+
+    // Egen fokus-fälla, exakt samma mönster som huvud-overlayet (se kommentaren där) -
+    // de två overlayen ligger aldrig öppna/tab-bara samtidigt (öppning av det ena döljer
+    // det andra), så fällorna krockar aldrig med varandra.
+    settingsOverlay.addEventListener("keydown",function(e){
+      if(e.key==="Escape"){
+        e.preventDefault();
+        closeLashjalpSettings();
+        return;
+      }
+      if(e.key!=="Tab")return;
+      var focusables=Array.prototype.slice.call(
+        settingsOverlay.querySelectorAll('button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])')
+      ).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
+      if(!focusables.length)return;
+      var first=focusables[0], last=focusables[focusables.length-1];
+      if(e.shiftKey&&document.activeElement===first){
+        e.preventDefault();last.focus();
+      } else if(!e.shiftKey&&document.activeElement===last){
+        e.preventDefault();first.focus();
+      }
+    });
+  }
+
+  var historyBtn=document.getElementById("lashjalpHistoryBtn");
+  if(historyBtn)historyBtn.onclick=openLashjalpHistory;
+
+  var historyOverlay=document.getElementById("lashjalpHistoryOverlay");
+  if(historyOverlay){
+    var historyCloseBtn=document.getElementById("lashjalpHistoryCloseBtn");
+    if(historyCloseBtn)historyCloseBtn.onclick=closeLashjalpHistory;
+    var historyFileSelect=document.getElementById("lashjalpHistoryFileSelect");
+    if(historyFileSelect)historyFileSelect.onchange=loadLashjalpHistory;
+
+    // Klick på den mörka bakgrunden stänger, precis som de andra overlayen.
+    historyOverlay.addEventListener("mousedown",function(e){
+      if(e.target===historyOverlay)closeLashjalpHistory();
+    });
+
+    // Egen fokus-fälla, exakt samma mönster som huvud-/inställnings-overlayet - bara ett
+    // av de tre overlayen är någonsin synligt/tab-bart åt gången, så fällorna krockar aldrig.
+    historyOverlay.addEventListener("keydown",function(e){
+      if(e.key==="Escape"){
+        e.preventDefault();
+        closeLashjalpHistory();
+        return;
+      }
+      if(e.key!=="Tab")return;
+      var focusables=Array.prototype.slice.call(
+        historyOverlay.querySelectorAll('button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])')
+      ).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
+      if(!focusables.length)return;
+      var first=focusables[0], last=focusables[focusables.length-1];
+      if(e.shiftKey&&document.activeElement===first){
+        e.preventDefault();last.focus();
+      } else if(!e.shiftKey&&document.activeElement===last){
+        e.preventDefault();first.focus();
+      }
+    });
+  }
+}
+
 function initDictBar(){
   var dictInput=document.getElementById("dictInput");
   if(dictInput)dictInput.onkeydown=function(e){if(e.key==="Enter")searchDictionary();};
@@ -348,6 +940,8 @@ function initDictBar(){
 
   var synInput=document.getElementById("synInput");
   if(synInput)synInput.onkeydown=function(e){if(e.key==="Enter")searchSynonym();};
+
+  initLashjalp();
 
   // Klick utanför sökresultatet (Sök/Ordråd) stänger ner rutan, som ett alternativ till x-knappen.
   document.addEventListener("mousedown",function(e){

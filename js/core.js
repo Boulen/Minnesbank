@@ -352,12 +352,6 @@ async function showApp(){
         var st=samtalTabMap[samtalSubview]||"samtaltext";
         loadTabsProgressively([st],renderSamtalTop);
       }
-      else if(v==="konversation"){
-        setView("konversation");
-        var konvTabMap={skamt:"skamt",samtalsamnen:"samtalsamnen"};
-        var kt=konvTabMap[konvSubview]||"skamt";
-        loadTabsProgressively([kt],renderKonversationTop);
-      }
       else if(v==="utvarderingar"){
         setView("utvarderingar");
         var utvTabMap={media:"media",objekt:"objekt",plats:"plats"};
@@ -1834,7 +1828,6 @@ function render(){
   if(view==="aktivitet")renderLogAktivitet();
   else if(view==="funderingar")renderLogFunderingar();
   else if(view==="samtal")renderSamtalTop();
-  else if(view==="konversation")renderKonversationTop();
   else if(view==="utvarderingar")renderUtvarderingarTop();
   else if(view==="history")renderHistory();
   else if(view==="ai")renderAI();
