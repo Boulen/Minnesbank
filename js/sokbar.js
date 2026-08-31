@@ -37,6 +37,16 @@
 // window.confirm(), som skulle blockera sidan och inte passar en tangentbords-först-
 // design. Se lashjalpHistoryItems/lashjalpHistoryKey + renderLashjalpHistoryList()
 // och grannfunktionerna längre ner.
+//
+// NYTT (2026-08-31): (1) 📚-knapp bredvid 📌 på Läshjälps översättningsresultat -
+// fyller i den översatta texten i Ordbok/synonymer-fältet och söker direkt, se
+// lashjalpLookupTranslatedInOrdbok(). (2) Klick UTANFÖR historik-rutan (📋/👓) stänger
+// nu ner hela Läshjälp istället för att landa på huvudpanelen (Escape/✕ Stäng gör
+// fortfarande det senare, oförändrat) - se closeLashjalpHistoryToOutsideClick().
+// (3) Ny 🤖-knapp längst till vänster i sökraden öppnar ett fristående AI-chat-fönster
+// (samma tangentbords-mönster som Läshjälp, men INTE en syskon-panel till något -
+// stängs helt via klick utanför/Escape/✕), med egen bild-/filbifogning och kamera.
+// Se "---- AI-chat ----"-blocket och initAiChat() längre ner.
 
 var LASHJALP_CSS = ""
   +".lashjalp-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:300;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;}"
@@ -55,8 +65,11 @@ var LASHJALP_CSS = ""
   +".lashjalp-result:empty{display:none;}"
   +"#lashjalpCloseBtn:focus,#lashjalpBtn:focus,#lashjalpTransBtn:focus,#lashjalpOrdBtn:focus,"
   +"#lashjalpSettingsBtn:focus,#lashjalpSettingsCloseBtn:focus,#lashjalpSettingsCancelBtn:focus,#lashjalpSettingsSaveBtn:focus,"
-  +"#lashjalpHistoryBtn:focus,#lashjalpHistoryCloseBtn:focus,#lashjalpHistoryShortcutBtn:focus"
+  +"#lashjalpHistoryBtn:focus,#lashjalpHistoryCloseBtn:focus,#lashjalpHistoryShortcutBtn:focus,"
+  +"#aiChatBtn:focus,#aiChatCloseBtn:focus,#aiChatSendBtn:focus,#aiChatCameraBtn:focus,#aiChatSnapBtn:focus,#aiChatCloseCameraBtn:focus"
   +"{outline:2px solid var(--main);outline-offset:2px;}"
+  +".ai-chat-messages{max-height:340px;overflow-y:auto;margin-bottom:10px;}"
+  +".ai-chat-attach-preview{display:flex;align-items:center;margin-bottom:8px;}"
   +".lashjalp-panel .abtn{padding:8px 18px;}"
   +".lashjalp-history-item{background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:13px;color:var(--text);}"
   +".lashjalp-history-item .lashjalp-history-q{color:var(--sub);font-size:12px;margin-bottom:4px;}"
@@ -100,6 +113,9 @@ var LASHJALP_CSS = ""
     +'</div>'
     +'<canvas id="dictSnapCanvas" style="display:none"></canvas>'
     +'<div class="dict-combined-row">'
+    +'<div class="dict-input-row dict-row-ai" style="flex:0 0 auto;margin-right:10px">'
+    +'<button class="action-btn" id="aiChatBtn" type="button" title="AI-chat: ha en konversation med AI, bifoga bild eller fil">🤖</button>'
+    +'</div>'
     +'<div class="dict-input-row dict-row-uploads">'
     +'<label class="action-btn" style="cursor:pointer" title="Ladda upp bild eller fil">📁<input type="file" id="dictImgUpload" accept="image/*,.txt,.md,.csv,.json,text/plain" style="display:none"></label>'
     +'<button class="action-btn" id="dictCameraBtn" type="button" title="Ta bild">📷</button>'
@@ -193,6 +209,31 @@ var LASHJALP_CSS = ""
     +'</select>'
     +'</div>'
     +'<div id="lashjalpHistoryList" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-top:4px"></div>'
+    +'</div>'
+    +'</div>'
+    +'<div class="lashjalp-overlay" id="aiChatOverlay" role="dialog" aria-modal="true" aria-labelledby="aiChatTitle">'
+    +'<div class="lashjalp-panel">'
+    +'<div class="lashjalp-header">'
+    +'<span class="note-label" id="aiChatTitle">🤖 AI-chat</span>'
+    +'<button type="button" id="aiChatCloseBtn" class="action-btn" title="Stäng (Esc)">✕ Stäng</button>'
+    +'</div>'
+    +'<div class="lashjalp-hint">Tab/Skift+Tab för att flytta dig, Esc för att stänga.</div>'
+    +'<div id="aiChatMessages" class="ai-chat-messages"></div>'
+    +'<div id="aiChatCameraContainer" style="display:none;margin:0 0 10px;">'
+    +'<video id="aiChatCameraVideo" autoplay playsinline style="width:100%;border-radius:10px;max-height:220px;object-fit:cover;background:#000"></video>'
+    +'<div style="display:flex;gap:8px;margin-top:8px">'
+    +'<button id="aiChatSnapBtn" type="button" class="action-btn" style="flex:1">📸 Ta foto</button>'
+    +'<button id="aiChatCloseCameraBtn" type="button" class="action-btn" style="color:var(--error)">✕</button>'
+    +'</div>'
+    +'</div>'
+    +'<canvas id="aiChatSnapCanvas" style="display:none"></canvas>'
+    +'<div id="aiChatAttachPreview" class="ai-chat-attach-preview" style="display:none"></div>'
+    +'<div class="lashjalp-row">'
+    +'<label class="action-btn" style="cursor:pointer" title="Bifoga bild eller fil">📁<input type="file" id="aiChatImgUpload" accept="image/*,.txt,.md,.csv,.json,text/plain" style="display:none"></label>'
+    +'<button class="action-btn" id="aiChatCameraBtn" type="button" title="Ta bild">📷</button>'
+    +'<input type="text" id="aiChatInput" placeholder="Skriv ett meddelande (Enter för att skicka)">'
+    +'<button type="button" id="aiChatSendBtn" class="action-btn">Skicka</button>'
+    +'</div>'
     +'</div>'
     +'</div>';
   document.body.insertAdjacentHTML("beforeend",html);
@@ -699,6 +740,17 @@ function closeLashjalpHistory(){
   var historyBtn=document.getElementById("lashjalpHistoryBtn");
   if(historyBtn)historyBtn.focus();
 }
+// NYTT (2026-08-31): klick UTANFÖR historik-rutan (på den mörka bakgrunden) ska stänga
+// ner alltihop istället för att landa på Läshjälps huvudpanel (som closeLashjalpHistory()
+// ovan gör - det beteendet gäller fortfarande Escape och ✕ Stäng, oförändrat). Döljer
+// historik-overlayet och återanvänder closeLashjalp() för resten (den är redan dold via
+// openLashjalpHistory()/openLashjalpHistoryDirect(), så closeLashjalp() bara nollställer
+// body.style.overflow och lämnar tillbaka fokus dit hela Läshjälp-resan startade).
+function closeLashjalpHistoryToOutsideClick(){
+  var historyOv=document.getElementById("lashjalpHistoryOverlay");
+  if(historyOv)historyOv.style.display="none";
+  closeLashjalp();
+}
 // lashjalpHistoryItems/lashjalpHistoryKey håller den just nu inlästa listan/filen så att
 // redigera/ta bort kan jobba mot den (och skriva tillbaka HELA listan) utan att läsa om
 // från Drive för varje knapptryckning. Index i arrayen (inte item.id) används för att
@@ -1027,6 +1079,224 @@ async function lashjalpSearchWord(){
   renderLashjalpOrdResult();
 }
 
+// ---- AI-chat: fristående overlay (🤖-knappen längst till vänster i sökraden) för en
+// fri, flerstegs konversation med AI - separat från Sök/Ord/Läshjälp, med egen
+// bild-/filbifogning och egen kamera (egna element, delar inget med dict-bar:ens
+// 📁/📷 för Sök). Byggd på core.js:s generiska aiChat()/aiText() (samma som
+// "fortsätt konversationen" använder), inte aiCall() (som bara tar en enstaka fråga).
+// Samma tangentbords-mönster som övriga overlay (fokus-fälla, Escape stänger). Till
+// skillnad från Läshjälps under-paneler (⚙️/📋) är detta INTE en syskon-overlay till
+// något annat - den öppnas direkt från sökraden och stängs helt (inte till någon
+// "förälder"), så klick utanför/Escape/✕ gör alla samma sak här.
+var aiChatMessages=[];
+var aiChatPendingAttachment=null; // {type:"image",dataUrl} eller {type:"text",name,content}
+var aiChatLastFocus=null;
+var aiChatCamStream=null;
+
+function renderAiChatMessages(){
+  var box=document.getElementById("aiChatMessages");
+  if(!box)return;
+  if(!aiChatMessages.length){
+    box.innerHTML="<div class='lashjalp-hint' style='margin:0'>Ställ en fråga, eller bifoga en bild/fil nedan.</div>";
+    return;
+  }
+  box.innerHTML=aiChatMessages.map(function(m){
+    var txt=chatContentToText(m.content);
+    var justify=m.role==="user"?"flex-end":"flex-start";
+    var bubbleClass=m.role==="user"?"bubble-me":"bubble-them";
+    return "<div style='display:flex;justify-content:"+justify+";margin-bottom:8px'><div class='"+bubbleClass+"'>"+esc(txt)+"</div></div>";
+  }).join("");
+  box.scrollTop=box.scrollHeight;
+}
+function aiChatRenderAttachmentPreview(){
+  var el=document.getElementById("aiChatAttachPreview");
+  if(!el)return;
+  if(!aiChatPendingAttachment){el.style.display="none";el.innerHTML="";return;}
+  el.style.display="flex";
+  if(aiChatPendingAttachment.type==="image"){
+    el.innerHTML="<img src='"+aiChatPendingAttachment.dataUrl+"' style='height:40px;border-radius:4px'>"
+      +"<button type='button' id='aiChatRemoveAttachBtn' class='action-btn' title='Ta bort bifogning' style='margin-left:8px'>✕</button>";
+  } else {
+    el.innerHTML="<span style='font-size:12px;color:var(--sub)'>📎 "+esc(aiChatPendingAttachment.name)+"</span>"
+      +"<button type='button' id='aiChatRemoveAttachBtn' class='action-btn' title='Ta bort bifogning' style='margin-left:8px'>✕</button>";
+  }
+  var removeBtn=document.getElementById("aiChatRemoveAttachBtn");
+  if(removeBtn)removeBtn.onclick=function(){
+    aiChatPendingAttachment=null;
+    aiChatRenderAttachmentPreview();
+    var inp=document.getElementById("aiChatInput");
+    if(inp)inp.focus();
+  };
+}
+async function aiChatSend(){
+  var input=document.getElementById("aiChatInput");
+  if(!input)return;
+  var text=input.value.trim();
+  if(!text&&!aiChatPendingAttachment)return;
+  var userContent;
+  if(aiChatPendingAttachment&&aiChatPendingAttachment.type==="image"){
+    userContent=[{type:"image_url",image_url:{url:aiChatPendingAttachment.dataUrl}},{type:"text",text:text||"Vad ser du på bilden?"}];
+  } else if(aiChatPendingAttachment&&aiChatPendingAttachment.type==="text"){
+    userContent="Bifogad fil (\""+aiChatPendingAttachment.name+"\"):\n\n"+aiChatPendingAttachment.content.slice(0,6000)+(text?"\n\n"+text:"");
+  } else {
+    userContent=text;
+  }
+  aiChatMessages.push({role:"user",content:userContent});
+  input.value="";
+  aiChatPendingAttachment=null;
+  aiChatRenderAttachmentPreview();
+  renderAiChatMessages();
+  var box=document.getElementById("aiChatMessages");
+  var loadingLine=document.createElement("div");
+  loadingLine.className="lashjalp-hint";
+  loadingLine.style.margin="0 0 8px";
+  loadingLine.textContent="Skriver …";
+  if(box){box.appendChild(loadingLine);box.scrollTop=box.scrollHeight;}
+  try{
+    var sys="Du ar en hjalpsam AI-assistent i en chatt. Svara pa svenska om inte annat begars, kortfattat och tydligt.";
+    var res=await aiChat(sys,aiChatMessages,900);
+    var data=await res.json();
+    if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+    var answer=aiText(data)||"Kunde inte svara, försök igen.";
+    aiChatMessages.push({role:"assistant",content:answer});
+  }catch(err){
+    console.error("sokbar: AI-chat misslyckades",err);
+    aiChatMessages.push({role:"assistant",content:"Kunde inte hämta ett svar, försök igen."});
+  }
+  renderAiChatMessages();
+}
+function aiChatStopCamera(){
+  if(aiChatCamStream){aiChatCamStream.getTracks().forEach(function(t){t.stop();});aiChatCamStream=null;}
+  var cameraContainer=document.getElementById("aiChatCameraContainer");
+  if(cameraContainer)cameraContainer.style.display="none";
+}
+function openAiChat(){
+  var overlay=document.getElementById("aiChatOverlay");
+  if(!overlay)return;
+  aiChatLastFocus=document.activeElement;
+  overlay.style.display="flex";
+  document.body.style.overflow="hidden";
+  renderAiChatMessages();
+  var input=document.getElementById("aiChatInput");
+  if(input)input.focus();
+}
+function closeAiChat(){
+  var overlay=document.getElementById("aiChatOverlay");
+  if(!overlay)return;
+  aiChatStopCamera();
+  overlay.style.display="none";
+  document.body.style.overflow="";
+  if(aiChatLastFocus&&typeof aiChatLastFocus.focus==="function")aiChatLastFocus.focus();
+  aiChatLastFocus=null;
+}
+function initAiChat(){
+  var aiChatBtn=document.getElementById("aiChatBtn");
+  if(aiChatBtn)aiChatBtn.onclick=openAiChat;
+
+  var overlay=document.getElementById("aiChatOverlay");
+  if(!overlay)return;
+
+  var closeBtn=document.getElementById("aiChatCloseBtn");
+  if(closeBtn)closeBtn.onclick=closeAiChat;
+
+  // Fristående overlay (inte en syskon-panel till något annat) - klick utanför,
+  // Escape och ✕ stänger alla helt, till skillnad från Läshjälps under-paneler.
+  overlay.addEventListener("mousedown",function(e){
+    if(e.target===overlay)closeAiChat();
+  });
+  overlay.addEventListener("keydown",function(e){
+    if(e.key==="Escape"){
+      e.preventDefault();
+      closeAiChat();
+      return;
+    }
+    if(e.key!=="Tab")return;
+    var focusables=Array.prototype.slice.call(
+      overlay.querySelectorAll('button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])')
+    ).filter(function(el){return !el.disabled&&el.offsetParent!==null;});
+    if(!focusables.length)return;
+    var first=focusables[0], last=focusables[focusables.length-1];
+    if(e.shiftKey&&document.activeElement===first){
+      e.preventDefault();last.focus();
+    } else if(!e.shiftKey&&document.activeElement===last){
+      e.preventDefault();first.focus();
+    }
+  });
+
+  var input=document.getElementById("aiChatInput");
+  if(input)input.onkeydown=function(e){
+    if(e.key==="Enter"){e.preventDefault();aiChatSend();}
+  };
+  var sendBtn=document.getElementById("aiChatSendBtn");
+  if(sendBtn)sendBtn.onclick=aiChatSend;
+
+  var imgUpload=document.getElementById("aiChatImgUpload");
+  if(imgUpload)imgUpload.onchange=function(){
+    var file=imgUpload.files&&imgUpload.files[0];
+    if(file){
+      if(file.type.indexOf("image/")===0){
+        var r=new FileReader();
+        r.onload=function(){
+          aiChatPendingAttachment={type:"image",dataUrl:r.result};
+          aiChatRenderAttachmentPreview();
+          var inp=document.getElementById("aiChatInput");
+          if(inp)inp.focus();
+        };
+        r.readAsDataURL(file);
+      } else {
+        var r2=new FileReader();
+        r2.onload=function(){
+          aiChatPendingAttachment={type:"text",name:file.name,content:String(r2.result||"")};
+          aiChatRenderAttachmentPreview();
+          var inp=document.getElementById("aiChatInput");
+          if(inp)inp.focus();
+        };
+        r2.readAsText(file);
+      }
+    }
+    imgUpload.value="";
+  };
+
+  var cameraBtn=document.getElementById("aiChatCameraBtn");
+  if(cameraBtn){
+    cameraBtn.onclick=function(){
+      if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){alert("Kameran stöds inte.");return;}
+      var showStream=function(s){
+        aiChatCamStream=s;
+        var v=document.getElementById("aiChatCameraVideo");
+        if(v)v.srcObject=s;
+        var c=document.getElementById("aiChatCameraContainer");
+        if(c)c.style.display="block";
+      };
+      navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false})
+        .then(showStream)
+        .catch(function(){
+          navigator.mediaDevices.getUserMedia({video:true,audio:false})
+            .then(showStream)
+            .catch(function(e){alert("Kunde inte starta kameran: "+e.message);});
+        });
+    };
+  }
+  var closeCameraBtn=document.getElementById("aiChatCloseCameraBtn");
+  if(closeCameraBtn)closeCameraBtn.onclick=aiChatStopCamera;
+  var snapBtn=document.getElementById("aiChatSnapBtn");
+  if(snapBtn){
+    snapBtn.onclick=function(){
+      var video=document.getElementById("aiChatCameraVideo");
+      var canvas=document.getElementById("aiChatSnapCanvas");
+      if(!video||!canvas)return;
+      canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+      canvas.getContext("2d").drawImage(video,0,0);
+      var dataUrl=canvas.toDataURL("image/jpeg",0.92);
+      aiChatStopCamera();
+      aiChatPendingAttachment={type:"image",dataUrl:dataUrl};
+      aiChatRenderAttachmentPreview();
+      var inp=document.getElementById("aiChatInput");
+      if(inp)inp.focus();
+    };
+  }
+}
+
 function initLashjalp(){
   var lashjalpBtn=document.getElementById("lashjalpBtn");
   if(lashjalpBtn)lashjalpBtn.onclick=openLashjalp;
@@ -1142,9 +1412,10 @@ function initLashjalp(){
     var historyFileSelect=document.getElementById("lashjalpHistoryFileSelect");
     if(historyFileSelect)historyFileSelect.onchange=loadLashjalpHistory;
 
-    // Klick på den mörka bakgrunden stänger, precis som de andra overlayen.
+    // Klick på den mörka bakgrunden stänger HELT (till skillnad från Escape/✕ Stäng,
+    // som går tillbaka till Läshjälps huvudpanel) - se closeLashjalpHistoryToOutsideClick().
     historyOverlay.addEventListener("mousedown",function(e){
-      if(e.target===historyOverlay)closeLashjalpHistory();
+      if(e.target===historyOverlay)closeLashjalpHistoryToOutsideClick();
     });
 
     // Egen fokus-fälla, exakt samma mönster som huvud-/inställnings-overlayet - bara ett
@@ -1181,6 +1452,7 @@ function initDictBar(){
   if(synInput)synInput.onkeydown=function(e){if(e.key==="Enter")searchSynonym();};
 
   initLashjalp();
+  initAiChat();
 
   // Klick utanför sökresultatet (Sök/Ordråd) stänger ner rutan, som ett alternativ till x-knappen.
   document.addEventListener("mousedown",function(e){
