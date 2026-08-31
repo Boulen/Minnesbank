@@ -451,7 +451,8 @@ async function importFromDrive(){
   if(din&&din.actPresets)ACT_PRESETS=din.actPresets;
   if(din&&din.catPresets)CAT_PRESETS=din.catPresets;
   if(din&&din.fundCatPresets)FUND_CAT_PRESETS=din.fundCatPresets;
-  if(din&&din.tipsTricksCatPresets)TIPSTRICKS_CAT_PRESETS=din.tipsTricksCatPresets;
+  // tipsTricksCatPresets/anteckningCatPresets borttaget härifrån - Notering-fliken äger
+  // och sparar det numera själv (egen driveWriteJson-fil), se HANDOFF från Notering.
   if(din&&din.mediaCatPresets)MEDIA_CAT_PRESETS=din.mediaCatPresets;
   if(din&&din.amneCatPresets)AMNE_CAT_PRESETS=din.amneCatPresets;
   if(din&&din.objCatPresets)OBJ_CAT_PRESETS=din.objCatPresets;
@@ -1131,7 +1132,8 @@ function applyTabData(tabName,da){
       if(da.mediaGenreByCat)MEDIA_GENRE_BY_CAT=da.mediaGenreByCat;
       if(da.objMakerByCat)OBJ_MAKER_BY_CAT=da.objMakerByCat;
       if(da.platsKommunByCat)PLATS_KOMMUN_BY_CAT=da.platsKommunByCat;
-      if(da.tipsTricksSubcatByCat)TIPSTRICKS_SUBCAT_BY_CAT=da.tipsTricksSubcatByCat;
+      // tipsTricksSubcatByCat/anteckningSubcatByCat borttaget härifrån - Notering-fliken
+      // äger och sparar det numera själv, se HANDOFF från Notering.
       migrateCatPresetsOnce();
     }
   } else if(tabName==="installningar"){
@@ -1140,7 +1142,7 @@ function applyTabData(tabName,da){
       if(da.actPresets)ACT_PRESETS=da.actPresets;
       if(da.catPresets)CAT_PRESETS=da.catPresets;
       if(da.fundCatPresets)FUND_CAT_PRESETS=da.fundCatPresets;
-      if(da.tipsTricksCatPresets)TIPSTRICKS_CAT_PRESETS=da.tipsTricksCatPresets;
+      // tipsTricksCatPresets/anteckningCatPresets borttaget härifrån - se ovan.
       if(da.amneCatPresets)AMNE_CAT_PRESETS=da.amneCatPresets;
       migrateCatPresetsOnce();
       if(da.mediaCatPresets)MEDIA_CAT_PRESETS=da.mediaCatPresets;
@@ -1218,7 +1220,7 @@ async function ensureTabMergedBeforeSave(tabName){
     if(tabName==="aktiviteter"){
       var d=await driveRead("Aktivitet");
       if(d&&d.logs)logs=mergeArraysById(logs,d.logs);
-    }else if(tabName==="samtaltext"){
+    }else if(tabName==="inmatningar"){
       var d=await driveRead("Installningar/Inmatningar");
       if(d){
         aktivitetHistory=mergeStringArraysDedup(aktivitetHistory,d.aktivitetHistory);
@@ -1226,11 +1228,11 @@ async function ensureTabMergedBeforeSave(tabName){
         anteckningHistory=mergeStringArraysDedup(anteckningHistory,d.anteckningHistory);
         ANTECKNING_BY_CAT=mergeCatStringDict(ANTECKNING_BY_CAT,d.anteckningByCat);
         // actPresetsByCat/placePresetsByCat borttagna härifrån - se ovan.
+        // tipsTricksSubcatByCat/anteckningSubcatByCat borttaget härifrån - se ovan.
         MEDIA_CREATOR_BY_CAT=mergeCatStringDict(MEDIA_CREATOR_BY_CAT,d.mediaCreatorByCat);
         MEDIA_GENRE_BY_CAT=mergeCatStringDict(MEDIA_GENRE_BY_CAT,d.mediaGenreByCat);
         OBJ_MAKER_BY_CAT=mergeCatStringDict(OBJ_MAKER_BY_CAT,d.objMakerByCat);
         PLATS_KOMMUN_BY_CAT=mergeCatStringDict(PLATS_KOMMUN_BY_CAT,d.platsKommunByCat);
-        TIPSTRICKS_SUBCAT_BY_CAT=mergeCatStringDict(TIPSTRICKS_SUBCAT_BY_CAT,d.tipsTricksSubcatByCat);
       }
     }else if(tabName==="installningar"){
       var d=await driveRead("Installningar");
@@ -1239,7 +1241,7 @@ async function ensureTabMergedBeforeSave(tabName){
         if(d.actPresets)ACT_PRESETS=mergeStringArraysDedup(ACT_PRESETS,d.actPresets);
         if(d.catPresets)CAT_PRESETS=mergeStringArraysDedup(CAT_PRESETS,d.catPresets);
         if(d.fundCatPresets)FUND_CAT_PRESETS=mergeStringArraysDedup(FUND_CAT_PRESETS,d.fundCatPresets);
-        if(d.tipsTricksCatPresets)TIPSTRICKS_CAT_PRESETS=mergeStringArraysDedup(TIPSTRICKS_CAT_PRESETS,d.tipsTricksCatPresets);
+        // tipsTricksCatPresets/anteckningCatPresets borttaget härifrån - se ovan.
         if(d.mediaCatPresets)MEDIA_CAT_PRESETS=mergeStringArraysDedup(MEDIA_CAT_PRESETS,d.mediaCatPresets);
         if(d.amneCatPresets)AMNE_CAT_PRESETS=mergeStringArraysDedup(AMNE_CAT_PRESETS,d.amneCatPresets);
         if(d.objCatPresets)OBJ_CAT_PRESETS=mergeStringArraysDedup(OBJ_CAT_PRESETS,d.objCatPresets);
@@ -1255,7 +1257,7 @@ async function saveTab(tabName){
   if(!accessToken)return;
   await ensureTabMergedBeforeSave(tabName);
   if(tabName==="aktiviteter"){await driveWrite("Aktivitet",{logs:logs});}
-  else if(tabName==="inmatningar"){await driveWrite("Installningar/Inmatningar",{aktivitetHistory:aktivitetHistory,platsHistory:platsHistory,anteckningHistory:anteckningHistory,anteckningByCat:ANTECKNING_BY_CAT,mediaCreatorByCat:MEDIA_CREATOR_BY_CAT,mediaGenreByCat:MEDIA_GENRE_BY_CAT,objMakerByCat:OBJ_MAKER_BY_CAT,platsKommunByCat:PLATS_KOMMUN_BY_CAT,tipsTricksSubcatByCat:TIPSTRICKS_SUBCAT_BY_CAT});}
+  else if(tabName==="inmatningar"){await driveWrite("Installningar/Inmatningar",{aktivitetHistory:aktivitetHistory,platsHistory:platsHistory,anteckningHistory:anteckningHistory,anteckningByCat:ANTECKNING_BY_CAT,mediaCreatorByCat:MEDIA_CREATOR_BY_CAT,mediaGenreByCat:MEDIA_GENRE_BY_CAT,objMakerByCat:OBJ_MAKER_BY_CAT,platsKommunByCat:PLATS_KOMMUN_BY_CAT});}
   // "bilder" skriver ingen egen JSON-fil längre - bilderna sparas redan som riktiga
   // filer i Bilder-mappen under Aktivitet, ingen separat indexfil behövs.
   // "skamt" (Konversation) skriver inte längre via denna delade väg - se HANDOFF_generic_drive_api.md.
@@ -1265,7 +1267,6 @@ async function saveTab(tabName){
       actPresets:ACT_PRESETS,
       catPresets:CAT_PRESETS,
       fundCatPresets:FUND_CAT_PRESETS,
-      tipsTricksCatPresets:TIPSTRICKS_CAT_PRESETS,
       mediaCatPresets:MEDIA_CAT_PRESETS,
       amneCatPresets:AMNE_CAT_PRESETS,
       objCatPresets:OBJ_CAT_PRESETS,
@@ -1337,8 +1338,12 @@ function migrateCatPresetsOnce(){
 var CAT_PRESETS=[];
 var FUND_CAT_PRESETS=[];
 var AMNE_CAT_PRESETS=[];
-var TIPSTRICKS_CAT_PRESETS=[];
-var TIPSTRICKS_SUBCAT_BY_CAT={};
+// Namnbytta enligt Notering-flikens uppdaterade namngivning (tidigare TIPSTRICKS_*,
+// eftersom "Tips & Tricks" döptes om till "Anteckning" för länge sedan men variabel-
+// namnen aldrig hann bytas). notering.js refererar nu ANTECKNING_CAT_PRESETS/
+// ANTECKNING_SUBCAT_BY_CAT direkt - måste finnas deklarerade här under exakt dessa namn.
+var ANTECKNING_CAT_PRESETS=[];
+var ANTECKNING_SUBCAT_BY_CAT={};
 
 // Delad "Subkategorier"-väljare (samma mönster som Media-genrerna): kryssbar snabbvalslista +
 // chips + fält för att registrera en ny subkategori. Används av bade lägg-till-formuläret och
