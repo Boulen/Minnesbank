@@ -47,6 +47,29 @@
 // (samma tangentbords-mönster som Läshjälp, men INTE en syskon-panel till något -
 // stängs helt via klick utanför/Escape/✕), med egen bild-/filbifogning och kamera.
 // Se "---- AI-chat ----"-blocket och initAiChat() längre ner.
+//
+// NYTT (2026-08-31, sökraden på mobil gick ihop - se Blås skärmdump): (1) bild-/
+// filuppladdning (📁/📷) borttaget från sökraden helt - finns redan i AI-chatten, och
+// tog för mycket plats på smala skärmar. searchDictionaryImage/searchDictionaryTextFile
+// och all kamera-kod för dict-baren är borttagna i samma veva (använd AI-chattens
+// bifogning/kamera istället). (2) 👓 (genväg till sparade sökningar) och 📖 (Läshjälp)
+// är slagna ihop till EN knapp med en "dropup"-meny (samma idé som en dropdown, fast
+// öppnas uppåt eftersom knappen sitter längst ner på skärmen) - se
+// "---- Läshjälp/historik: dropup-meny ----"-blocket och initLashjalpDropup() nedan.
+// Själva knapparna (id lashjalpBtn/lashjalpHistoryShortcutBtn) och deras onclick-
+// bindning i initLashjalp() är oförändrade, de ligger bara inuti menyn nu istället för
+// direkt i raden.
+//
+// NYTT (2026-08-31, ännu mer): (1) Sparade sökningar-korten är kompaktare - redigera/
+// ta bort ligger nu på SAMMA rad som titeln (istället för en egen rad ovanför), och
+// titeln är ljusare/större (var(--text-bright), 14.5px) för att synas bättre - se
+// lashjalpHistoryItemHtml(). (2) AI-chatten har fått: ett textfält för att välja vilken
+// roll/personlighet AI:n ska anta (skickas med i systemprompten, se aiChatSend()); ✏️/✕
+// på varje meddelande i konversationen (aiChatEnterEditMessage()/aiChatDeleteMessage());
+// en 📌-knapp som sparar HELA konversationen (inkl. vald roll) till en ny fil, ai.json;
+// och en 📂-knapp som visar sparade konversationer - klick på en laddar in den igen
+// (meddelanden + roll) så man kan fortsätta där man slutade, se
+// toggleAiChatSavedPanel()/aiChatContinueSaved().
 
 var LASHJALP_CSS = ""
   +".lashjalp-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:300;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;}"
@@ -65,18 +88,39 @@ var LASHJALP_CSS = ""
   +".lashjalp-result:empty{display:none;}"
   +"#lashjalpCloseBtn:focus,#lashjalpBtn:focus,#lashjalpTransBtn:focus,#lashjalpOrdBtn:focus,"
   +"#lashjalpSettingsBtn:focus,#lashjalpSettingsCloseBtn:focus,#lashjalpSettingsCancelBtn:focus,#lashjalpSettingsSaveBtn:focus,"
-  +"#lashjalpHistoryBtn:focus,#lashjalpHistoryCloseBtn:focus,#lashjalpHistoryShortcutBtn:focus,"
-  +"#aiChatBtn:focus,#aiChatCloseBtn:focus,#aiChatSendBtn:focus,#aiChatCameraBtn:focus,#aiChatSnapBtn:focus,#aiChatCloseCameraBtn:focus"
+  +"#lashjalpHistoryBtn:focus,#lashjalpHistoryCloseBtn:focus,#lashjalpHistoryShortcutBtn:focus,#lashjalpDropupToggleBtn:focus,"
+  +"#aiChatBtn:focus,#aiChatCloseBtn:focus,#aiChatSendBtn:focus,#aiChatCameraBtn:focus,#aiChatSnapBtn:focus,#aiChatCloseCameraBtn:focus,"
+  +"#aiChatPinBtn:focus,#aiChatSavedBtn:focus,#aiChatPersonaInput:focus"
   +"{outline:2px solid var(--main);outline-offset:2px;}"
   +".ai-chat-messages{max-height:340px;overflow-y:auto;margin-bottom:10px;}"
   +".ai-chat-attach-preview{display:flex;align-items:center;margin-bottom:8px;}"
+  +".ai-chat-msg-row{display:flex;flex-direction:column;margin-bottom:8px;}"
+  +".ai-chat-msg-actions{display:flex;gap:4px;margin-top:2px;}"
+  +".ai-chat-msg-edit-btn,.ai-chat-msg-delete-btn{background:none;border:1px solid var(--border);border-radius:4px;color:var(--sub);cursor:pointer;font-family:inherit;font-size:10.5px;padding:1px 6px;line-height:1.6;}"
+  +".ai-chat-msg-edit-btn:hover,.ai-chat-msg-delete-btn:hover{color:var(--text);border-color:var(--main);}"
+  +".ai-chat-msg-edit-btn:focus,.ai-chat-msg-delete-btn:focus,.ai-chat-msg-save-btn:focus,.ai-chat-msg-cancel-btn:focus{outline:2px solid var(--main);outline-offset:2px;}"
+  +".ai-chat-msg-edit-area{width:100%;max-width:320px;box-sizing:border-box;padding:8px 10px;border-radius:5px;background:var(--bg-alt);border:1px solid var(--border);color:var(--text-bright);font-family:'JetBrains Mono',monospace;font-size:12.5px;resize:vertical;outline:none;}"
+  +".ai-chat-msg-edit-area:focus{border-color:var(--main);}"
+  +".ai-chat-msg-edit-actions{display:flex;gap:8px;margin-top:4px;}"
+  +".ai-chat-msg-edit-actions .action-btn,.ai-chat-msg-edit-actions .abtn{padding:6px 14px;font-size:12.5px;}"
+  +".ai-chat-saved-panel{background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:10px;max-height:220px;overflow-y:auto;}"
+  +".ai-chat-saved-item{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;box-sizing:border-box;background:none;border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-family:inherit;font-size:12.5px;padding:6px 10px;margin-bottom:6px;text-align:left;}"
+  +".ai-chat-saved-item:last-child{margin-bottom:0;}"
+  +".ai-chat-saved-item:hover,.ai-chat-saved-item:focus{border-color:var(--main);outline:none;}"
+  +".ai-chat-saved-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;}"
+  +".ai-chat-saved-time{color:var(--sub);font-size:10.5px;flex:0 0 auto;}"
   +".lashjalp-panel .abtn{padding:8px 18px;}"
-  +".lashjalp-history-item{background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:13px;color:var(--text);}"
-  +".lashjalp-history-item .lashjalp-history-q{color:var(--sub);font-size:12px;margin-bottom:4px;}"
+  +".lashjalp-dropup{position:relative;}"
+  +".lashjalp-dropup-menu{display:none;position:absolute;bottom:calc(100% + 6px);right:0;background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.45);min-width:190px;flex-direction:column;padding:4px;z-index:60;}"
+  +".lashjalp-dropup-item{background:none;border:none;color:var(--text);text-align:left;padding:8px 10px;border-radius:5px;font-family:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap;}"
+  +".lashjalp-dropup-item:hover,.lashjalp-dropup-item:focus{background:var(--bg-alt);outline:none;}"
+  +".lashjalp-history-item{background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:13px;color:var(--text);}"
+  +".lashjalp-history-header-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}"
+  +".lashjalp-history-title{color:var(--text-bright);font-size:14.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;}"
   +".lashjalp-history-item .lashjalp-history-a{color:var(--text);}"
   +".lashjalp-history-item .lashjalp-history-lang{color:var(--sub);font-size:11px;margin-top:4px;font-style:italic;}"
-  +".lashjalp-history-item .lashjalp-history-time{color:var(--sub);font-size:10.5px;margin-top:6px;font-family:'JetBrains Mono',monospace;}"
-  +".lashjalp-history-actions{display:flex;justify-content:flex-end;gap:6px;margin-bottom:6px;}"
+  +".lashjalp-history-item .lashjalp-history-time{color:var(--sub);font-size:10.5px;margin-top:4px;font-family:'JetBrains Mono',monospace;}"
+  +".lashjalp-history-actions{display:flex;gap:4px;flex:0 0 auto;}"
   +".lashjalp-history-edit-btn,.lashjalp-history-delete-btn{background:none;border:1px solid var(--border);border-radius:4px;color:var(--sub);cursor:pointer;font-family:inherit;font-size:11.5px;padding:2px 8px;line-height:1.6;}"
   +".lashjalp-history-edit-btn:hover,.lashjalp-history-delete-btn:hover{color:var(--text);border-color:var(--main);}"
   +".lashjalp-history-delete-btn[data-confirm=\"1\"]{color:var(--error);border-color:var(--error);}"
@@ -104,21 +148,9 @@ var LASHJALP_CSS = ""
     +'<div class="dict-bar">'
     +'<div class="dict-result" id="dictResult"></div>'
     +'<div class="dict-result" id="synResult"></div>'
-    +'<div id="dictCameraContainer" style="display:none;max-width:940px;margin:0 auto 10px;">'
-    +'<video id="dictCameraVideo" autoplay playsinline style="width:100%;border-radius:10px;max-height:220px;object-fit:cover;background:#000"></video>'
-    +'<div style="display:flex;gap:8px;margin-top:8px">'
-    +'<button id="dictSnapBtn" type="button" class="action-btn" style="flex:1">📸 Ta foto</button>'
-    +'<button id="dictCloseCameraBtn" type="button" class="action-btn" style="color:var(--error)">✕</button>'
-    +'</div>'
-    +'</div>'
-    +'<canvas id="dictSnapCanvas" style="display:none"></canvas>'
     +'<div class="dict-combined-row">'
     +'<div class="dict-input-row dict-row-ai" style="flex:0 0 auto;margin-right:10px">'
     +'<button class="action-btn" id="aiChatBtn" type="button" title="AI-chat: ha en konversation med AI, bifoga bild eller fil">🤖</button>'
-    +'</div>'
-    +'<div class="dict-input-row dict-row-uploads">'
-    +'<label class="action-btn" style="cursor:pointer" title="Ladda upp bild eller fil">📁<input type="file" id="dictImgUpload" accept="image/*,.txt,.md,.csv,.json,text/plain" style="display:none"></label>'
-    +'<button class="action-btn" id="dictCameraBtn" type="button" title="Ta bild">📷</button>'
     +'</div>'
     +'<div class="dict-input-row dict-row-main" style="flex:1 1 60px">'
     +'<input type="text" id="dictInput" placeholder="Sök">'
@@ -126,8 +158,13 @@ var LASHJALP_CSS = ""
     +'</div>'
     +'<div class="dict-input-row dict-row-small" style="flex:0 1 170px;min-width:130px">'
     +'<input type="text" id="synInput" placeholder="Ord">'
-    +'<button class="action-btn" id="lashjalpHistoryShortcutBtn" type="button" title="Gå direkt till sparade sökningar" style="padding:6px 12px;font-size:11.5px;flex:0 0 auto">👓</button>'
-    +'<button class="action-btn" id="lashjalpBtn" type="button" title="Läshjälp: översättning och ordbok i ett eget fönster" style="padding:6px 12px;font-size:11.5px;flex:0 0 auto">📖</button>'
+    +'<div class="lashjalp-dropup" id="lashjalpDropupWrap">'
+    +'<button class="action-btn" id="lashjalpDropupToggleBtn" type="button" title="Läshjälp / Sparade sökningar" aria-haspopup="true" aria-expanded="false" style="padding:6px 12px;font-size:11.5px;flex:0 0 auto">📖 ▾</button>'
+    +'<div class="lashjalp-dropup-menu" id="lashjalpDropupMenu" role="menu">'
+    +'<button type="button" class="lashjalp-dropup-item" id="lashjalpBtn" role="menuitem">📖 Läshjälp</button>'
+    +'<button type="button" class="lashjalp-dropup-item" id="lashjalpHistoryShortcutBtn" role="menuitem">👓 Sparade sökningar</button>'
+    +'</div>'
+    +'</div>'
     +'</div>'
     +'</div>'
     +'</div>'
@@ -180,6 +217,7 @@ var LASHJALP_CSS = ""
     +'<option value="sok">Sök (sok.json)</option>'
     +'<option value="ord">Ord (ord.json)</option>'
     +'<option value="oversattning">Översättning (oversattning.json)</option>'
+    +'<option value="ai">AI-chat (ai.json)</option>'
     +'</select>'
     +'</div>'
     +'<div class="lashjalp-hint" id="lashjalpSettingsStatus" style="margin:0 0 10px"></div>'
@@ -208,16 +246,27 @@ var LASHJALP_CSS = ""
     +'<option value="oversattning">Översättning (oversattning.json)</option>'
     +'</select>'
     +'</div>'
-    +'<div id="lashjalpHistoryList" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-top:4px"></div>'
+    +'<div id="lashjalpHistoryList" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-top:4px"></div>'
     +'</div>'
     +'</div>'
     +'<div class="lashjalp-overlay" id="aiChatOverlay" role="dialog" aria-modal="true" aria-labelledby="aiChatTitle">'
     +'<div class="lashjalp-panel">'
     +'<div class="lashjalp-header">'
     +'<span class="note-label" id="aiChatTitle">🤖 AI-chat</span>'
+    +'<div style="display:flex;gap:6px">'
+    +'<button type="button" id="aiChatPinBtn" class="action-btn" title="Spara konversationen (ai.json)">📌</button>'
+    +'<button type="button" id="aiChatSavedBtn" class="action-btn" title="Visa sparade konversationer" aria-haspopup="true" aria-expanded="false">📂</button>'
     +'<button type="button" id="aiChatCloseBtn" class="action-btn" title="Stäng (Esc)">✕ Stäng</button>'
     +'</div>'
+    +'</div>'
     +'<div class="lashjalp-hint">Tab/Skift+Tab för att flytta dig, Esc för att stänga.</div>'
+    +'<div class="lashjalp-row" style="margin-bottom:10px">'
+    +'<input type="text" id="aiChatPersonaInput" placeholder="Roll AI ska anta (t.ex. &quot;en historielärare&quot;) - valfritt">'
+    +'</div>'
+    +'<div id="aiChatSavedPanel" class="ai-chat-saved-panel" style="display:none">'
+    +'<div class="lashjalp-hint" style="margin:0 0 6px">Sparade konversationer — klicka för att fortsätta.</div>'
+    +'<div id="aiChatSavedList"></div>'
+    +'</div>'
     +'<div id="aiChatMessages" class="ai-chat-messages"></div>'
     +'<div id="aiChatCameraContainer" style="display:none;margin:0 0 10px;">'
     +'<video id="aiChatCameraVideo" autoplay playsinline style="width:100%;border-radius:10px;max-height:220px;object-fit:cover;background:#000"></video>'
@@ -290,7 +339,7 @@ function sokbarParseJsonReply(rawText){
 // behövs för själva pin-flödet (däremot finns filstatus synlig i inställningspanelen,
 // se lashjalpCheckFiles()).
 var LASHJALP_FOLDER=["Sokruta"];
-var LASHJALP_FILES={sok:"sok.json",ord:"ord.json",oversattning:"oversattning.json"};
+var LASHJALP_FILES={sok:"sok.json",ord:"ord.json",oversattning:"oversattning.json",ai:"ai.json"};
 
 // Delad pin-funktion: lägger till en post FÖRST i listan i angiven fil och sparar hela
 // listan tillbaka. btnEl (valfri) får en tydlig text-bekräftelse ("✓ Sparat"/"⚠ Fel")
@@ -440,71 +489,10 @@ async function checkSpelling(){
   document.getElementById("dictCloseBtn").onclick=function(){dictResult.classList.remove("visible");};
 }
 
-// Bildbaserad sökning (ladda upp eller ta bild) - samma resultatruta som textsökningen.
-async function searchDictionaryImage(file){
-  var dictResult=document.getElementById("dictResult");
-  if(!dictResult)return;
-  dictResult.classList.add("visible");
-  dictResult.innerHTML="<span class='spnr' style='width:14px;height:14px;border-width:2px;display:inline-block;margin:0 6px 0 0;vertical-align:middle'></span>analyserar bild …";
-  try{
-    var dataUrl=await new Promise(function(res,rej){
-      var r=new FileReader();
-      r.onload=function(){res(r.result);};
-      r.onerror=function(){rej(new Error("Filfel"));};
-      r.readAsDataURL(file);
-    });
-    var res=await fetch(PROXY,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
-      model:"anthropic/claude-sonnet-4.6",max_tokens:400,
-      messages:[
-        {role:"user",content:[
-          {type:"image_url",image_url:{url:dataUrl}},
-          {type:"text",text:"Du ar en pedagog. Ge en kort, enkel och lattforstaelig forklaring pa svenska av vad du ser pa bilden. Max 3-4 meningar."}
-        ]}
-      ]
-    })});
-    var data=await res.json();
-    var text=aiText(data)||"Kunde inte analysera bilden.";
-    if(data.error)text="Fel: "+JSON.stringify(data.error);
-    dictChat=[{role:"user",content:[{type:"image_url",image_url:{url:dataUrl}},{type:"text",text:"Vad ser du på bilden?"}]},{role:"assistant",content:text}];
-    dictHeaderHtml="<span class='note-label'>Bild</span>"
-      +"<div style='margin:6px 0 10px;color:var(--text);font-size:13.5px'>"+esc(text)+"</div>";
-    dictAiSystemPrompt="Du ar en pedagog. Fortsätt svara på frågor om bilden och det ni pratat om, svara med vanlig text.";
-    renderDictResultBox();
-  }catch(err){
-    dictResult.innerHTML="<button class='dict-close' id='dictCloseBtn'>×</button>kunde inte analysera bilden: "+esc(err.message);
-    document.getElementById("dictCloseBtn").onclick=function(){dictResult.classList.remove("visible");};
-  }
-}
-
-// Textbaserad fil (t.ex. .txt, .md, .csv, .json) - läser innehållet och förklarar det.
-async function searchDictionaryTextFile(file){
-  var dictResult=document.getElementById("dictResult");
-  if(!dictResult)return;
-  dictResult.classList.add("visible");
-  dictResult.innerHTML="<span class='spnr' style='width:14px;height:14px;border-width:2px;display:inline-block;margin:0 6px 0 0;vertical-align:middle'></span>analyserar fil …";
-  try{
-    var text=await new Promise(function(res,rej){
-      var r=new FileReader();
-      r.onload=function(){res(r.result);};
-      r.onerror=function(){rej(new Error("Filfel"));};
-      r.readAsText(file);
-    });
-    var sys='Du ar en pedagog. Ge en kort, tydlig sammanfattning/forklaring pa svenska av innehallet i filen som skickas, max 4-5 meningar.';
-    var res=await aiCall(sys,"Filens innehåll (\""+file.name+"\"):\n\n"+text.slice(0,6000),700);
-    var data=await res.json();
-    var answer=aiText(data)||"Kunde inte analysera filen.";
-    dictChat=[{role:"user",content:"Filens innehåll (\""+file.name+"\"):\n\n"+text.slice(0,6000)},{role:"assistant",content:answer}];
-    dictHeaderHtml="<span class='note-label'>"+esc(file.name)+"</span>"
-      +"<div style='margin:6px 0 10px;color:var(--text);font-size:13.5px'>"+esc(answer)+"</div>";
-    dictAiSystemPrompt="Du ar en pedagog. Fortsätt svara på frågor om filen och det ni pratat om, svara med vanlig text.";
-    renderDictResultBox();
-  }catch(err){
-    dictResult.innerHTML="<button class='dict-close' id='dictCloseBtn'>×</button>kunde inte analysera filen: "+esc(err.message);
-    document.getElementById("dictCloseBtn").onclick=function(){dictResult.classList.remove("visible");};
-  }
-}
-
-// Delad rendering för sökresultat-rutan (text-, bild- eller filsökning) + "fortsätt konversationen".
+// Delad rendering för sökresultat-rutan (text- eller filsökning) + "fortsätt konversationen".
+// (Bild-/filuppladdning togs bort från sökraden 2026-08-31 - se AI-chatten istället, som
+// redan har sin egen bifogning/kamera. searchDictionaryImage/searchDictionaryTextFile
+// som tidigare låg här är borttagna i samma veva.)
 var dictChat=null, dictHeaderHtml="", dictAiSystemPrompt="";
 function renderDictResultBox(){
   var dictResult=document.getElementById("dictResult");
@@ -610,10 +598,70 @@ async function searchSynonym(){
 // lämnar tillbaka fokus dit den kom ifrån. Se initLashjalp() för bindningarna.
 var lashjalpLastFocus=null;
 
+// ---- Läshjälp/historik: dropup-meny (📖 ▾) ----
+// (2026-08-31) 👓 och 📖 var tidigare två separata knappar i sökradens smala rad, vilket
+// på smala skärmar fick dem att flyta ihop (se Blås skärmdump). Nu är de EN knapp som
+// öppnar en liten meny UPPÅT ("dropup" - samma idé som en dropdown, fast öppnas uppåt
+// eftersom knappen sitter längst ner på skärmen, i sökraden). Menyknapparna har kvar
+// sina gamla id:n (lashjalpBtn/lashjalpHistoryShortcutBtn) och onclick-bindning
+// (openLashjalp/openLashjalpHistoryDirect, se initLashjalp() längre ner) - bara
+// omslutningen runt dem är ny, se initLashjalpDropup().
+function closeLashjalpDropup(){
+  var menu=document.getElementById("lashjalpDropupMenu");
+  var toggleBtn=document.getElementById("lashjalpDropupToggleBtn");
+  if(menu)menu.style.display="none";
+  if(toggleBtn)toggleBtn.setAttribute("aria-expanded","false");
+}
+function openLashjalpDropup(){
+  var menu=document.getElementById("lashjalpDropupMenu");
+  var toggleBtn=document.getElementById("lashjalpDropupToggleBtn");
+  if(!menu)return;
+  menu.style.display="flex";
+  if(toggleBtn)toggleBtn.setAttribute("aria-expanded","true");
+  var firstItem=menu.querySelector(".lashjalp-dropup-item");
+  if(firstItem)firstItem.focus();
+}
+// Klickar man på 📖/👓 inuti dropup-menyn döljs menyn (display:none) direkt efteråt -
+// att då spara document.activeElement rakt av (den dolda menyknappen) skulle göra att
+// fokus INTE kan återställas dit när Läshjälp/historiken stängs (att fokusera ett dolt
+// element fungerar inte tillförlitligt). Denna hjälpfunktion pekar om till den synliga
+// dropup-knappen i så fall, annars beter den sig som document.activeElement som förut
+// (t.ex. vid Tab-navigering rakt till knappen, utan att öppna menyn).
+function lashjalpCaptureReturnFocus(){
+  var active=document.activeElement;
+  var dropupMenu=document.getElementById("lashjalpDropupMenu");
+  if(dropupMenu&&dropupMenu.contains(active)){
+    var toggleBtn=document.getElementById("lashjalpDropupToggleBtn");
+    if(toggleBtn)return toggleBtn;
+  }
+  return active;
+}
+function initLashjalpDropup(){
+  var toggleBtn=document.getElementById("lashjalpDropupToggleBtn");
+  var menu=document.getElementById("lashjalpDropupMenu");
+  var wrap=document.getElementById("lashjalpDropupWrap");
+  if(!toggleBtn||!menu||!wrap)return;
+  toggleBtn.onclick=function(){
+    if(menu.style.display==="flex")closeLashjalpDropup();
+    else openLashjalpDropup();
+  };
+  document.addEventListener("mousedown",function(e){
+    if(menu.style.display==="flex"&&!wrap.contains(e.target))closeLashjalpDropup();
+  });
+  menu.addEventListener("keydown",function(e){
+    if(e.key==="Escape"){
+      e.preventDefault();
+      closeLashjalpDropup();
+      toggleBtn.focus();
+    }
+  });
+}
+
 function openLashjalp(){
   var overlay=document.getElementById("lashjalpOverlay");
   if(!overlay)return;
-  lashjalpLastFocus=document.activeElement;
+  lashjalpLastFocus=lashjalpCaptureReturnFocus();
+  closeLashjalpDropup();
   overlay.style.display="flex";
   document.body.style.overflow="hidden";
   var firstField=document.getElementById("lashjalpTransInput");
@@ -792,12 +840,20 @@ function renderLashjalpHistoryList(){
   });
 }
 
+// NYTT (2026-08-31): redigera/ta bort ligger nu på SAMMA rad som titeln (istället för
+// en egen rad ovanför) för att göra korten mer kompakta, och titeln (frågan/sökordet)
+// är ljusare och lite större (.lashjalp-history-title, var(--text-bright)) för att synas
+// tydligare - se lashjalp_v2 osv. i tidigare skärmdumpar där den annars var svår att se.
 function lashjalpHistoryItemHtml(item,key,idx){
   var timeStr="";
   try{if(item.timestamp)timeStr=new Date(item.timestamp).toLocaleString("sv-SE");}catch(e){/* strunta i tidsstämpeln om den inte går att tolka */}
-  var actions="<div class='lashjalp-history-actions'>"
-    +"<button type='button' class='lashjalp-history-edit-btn' data-idx='"+idx+"' title='Redigera'>✏️ Redigera</button>"
+  var titleText=key==="oversattning"?(item.kalla||""):(item.fraga||"");
+  var headerRow="<div class='lashjalp-history-header-row'>"
+    +"<span class='lashjalp-history-title' title=\""+esc(titleText)+"\">"+esc(titleText)+"</span>"
+    +"<div class='lashjalp-history-actions'>"
+    +"<button type='button' class='lashjalp-history-edit-btn' data-idx='"+idx+"' title='Redigera'>✏️</button>"
     +"<button type='button' class='lashjalp-history-delete-btn' data-idx='"+idx+"' title='Ta bort'>✕</button>"
+    +"</div>"
     +"</div>";
   if(key==="oversattning"){
     var langLine="";
@@ -805,16 +861,14 @@ function lashjalpHistoryItemHtml(item,key,idx){
       langLine="<div class='lashjalp-history-lang'>"+esc(item.kallaSprak||"okänt språk")+" → "+esc(item.tillSprak||"svenska")+"</div>";
     }
     return "<div class='lashjalp-history-item' data-idx='"+idx+"'>"
-      +actions
-      +"<div class='lashjalp-history-q'>"+esc(item.kalla||"")+"</div>"
+      +headerRow
       +langLine
       +"<div class='lashjalp-history-a'>"+esc(item.oversattning||"")+"</div>"
       +(timeStr?"<div class='lashjalp-history-time'>"+esc(timeStr)+"</div>":"")
       +"</div>";
   }
   return "<div class='lashjalp-history-item' data-idx='"+idx+"'>"
-    +actions
-    +"<div class='lashjalp-history-q'>"+esc(item.fraga||"")+"</div>"
+    +headerRow
     +"<div class='lashjalp-history-a'>"+esc(item.svar||"")+"</div>"
     +(timeStr?"<div class='lashjalp-history-time'>"+esc(timeStr)+"</div>":"")
     +"</div>";
@@ -929,7 +983,8 @@ async function lashjalpHistoryDeleteConfirmed(idx){
 function openLashjalpHistoryDirect(){
   var overlay=document.getElementById("lashjalpOverlay");
   if(!overlay)return;
-  lashjalpLastFocus=document.activeElement;
+  lashjalpLastFocus=lashjalpCaptureReturnFocus();
+  closeLashjalpDropup();
   document.body.style.overflow="hidden";
   overlay.style.display="none";
   openLashjalpHistory();
@@ -1093,6 +1148,11 @@ var aiChatPendingAttachment=null; // {type:"image",dataUrl} eller {type:"text",n
 var aiChatLastFocus=null;
 var aiChatCamStream=null;
 
+// NYTT (2026-08-31): varje meddelande i konversationen har nu ✏️ Redigera/✕ Ta bort
+// (aiChatEnterEditMessage()/aiChatDeleteMessage() nedan) - till skillnad från Läshjälps
+// historik (som skriver till Drive och därför har ett två-klicks-skydd) är detta bara
+// den PÅGÅENDE, oslarade konversationen i minnet, så ett enda klick räcker för att ta
+// bort ett meddelande.
 function renderAiChatMessages(){
   var box=document.getElementById("aiChatMessages");
   if(!box)return;
@@ -1100,13 +1160,67 @@ function renderAiChatMessages(){
     box.innerHTML="<div class='lashjalp-hint' style='margin:0'>Ställ en fråga, eller bifoga en bild/fil nedan.</div>";
     return;
   }
-  box.innerHTML=aiChatMessages.map(function(m){
+  box.innerHTML=aiChatMessages.map(function(m,idx){
     var txt=chatContentToText(m.content);
-    var justify=m.role==="user"?"flex-end":"flex-start";
+    var align=m.role==="user"?"flex-end":"flex-start";
     var bubbleClass=m.role==="user"?"bubble-me":"bubble-them";
-    return "<div style='display:flex;justify-content:"+justify+";margin-bottom:8px'><div class='"+bubbleClass+"'>"+esc(txt)+"</div></div>";
+    return "<div class='ai-chat-msg-row' data-idx='"+idx+"' style='align-items:"+align+"'>"
+      +"<div class='"+bubbleClass+"'>"+esc(txt)+"</div>"
+      +"<div class='ai-chat-msg-actions'>"
+      +"<button type='button' class='ai-chat-msg-edit-btn' data-idx='"+idx+"' title='Redigera'>✏️</button>"
+      +"<button type='button' class='ai-chat-msg-delete-btn' data-idx='"+idx+"' title='Ta bort'>✕</button>"
+      +"</div>"
+      +"</div>";
   }).join("");
   box.scrollTop=box.scrollHeight;
+  box.querySelectorAll(".ai-chat-msg-edit-btn").forEach(function(btn){
+    btn.onclick=function(){aiChatEnterEditMessage(parseInt(btn.dataset.idx,10));};
+  });
+  box.querySelectorAll(".ai-chat-msg-delete-btn").forEach(function(btn){
+    btn.onclick=function(){aiChatDeleteMessage(parseInt(btn.dataset.idx,10));};
+  });
+}
+// Byter ut TEXTEN i ett meddelande utan att tappa en ev. bifogad bild (content kan
+// antingen vara en ren sträng eller en array med {type:"image_url"/"text"}-delar, samma
+// form som aiChatSend() bygger och som core.js:s chatContentToText() läser).
+function aiChatSetMessageText(idx,newText){
+  var m=aiChatMessages[idx];
+  if(!m)return;
+  if(Array.isArray(m.content)){
+    var hasText=false;
+    m.content=m.content.map(function(part){
+      if(part&&part.type==="text"){hasText=true;return {type:"text",text:newText};}
+      return part;
+    });
+    if(!hasText)m.content.push({type:"text",text:newText});
+  } else {
+    m.content=newText;
+  }
+}
+function aiChatEnterEditMessage(idx){
+  var box=document.getElementById("aiChatMessages");
+  var row=box?box.querySelector('.ai-chat-msg-row[data-idx="'+idx+'"]'):null;
+  var m=aiChatMessages[idx];
+  if(!row||!m)return;
+  var currentText=chatContentToText(m.content);
+  row.innerHTML="<textarea class='ai-chat-msg-edit-area' rows='2'>"+esc(currentText)+"</textarea>"
+    +"<div class='ai-chat-msg-edit-actions'>"
+    +"<button type='button' class='action-btn ai-chat-msg-cancel-btn'>Avbryt</button>"
+    +"<button type='button' class='abtn ai-chat-msg-save-btn'>Spara</button>"
+    +"</div>";
+  var ta=row.querySelector(".ai-chat-msg-edit-area");
+  if(ta){ta.focus();ta.selectionStart=ta.selectionEnd=ta.value.length;}
+  var cancelBtn=row.querySelector(".ai-chat-msg-cancel-btn");
+  if(cancelBtn)cancelBtn.onclick=function(){renderAiChatMessages();};
+  var saveBtn=row.querySelector(".ai-chat-msg-save-btn");
+  if(saveBtn)saveBtn.onclick=function(){
+    aiChatSetMessageText(idx,ta?ta.value.trim():currentText);
+    renderAiChatMessages();
+  };
+}
+function aiChatDeleteMessage(idx){
+  aiChatMessages.splice(idx,1);
+  renderAiChatMessages();
 }
 function aiChatRenderAttachmentPreview(){
   var el=document.getElementById("aiChatAttachPreview");
@@ -1153,7 +1267,10 @@ async function aiChatSend(){
   loadingLine.textContent="Skriver …";
   if(box){box.appendChild(loadingLine);box.scrollTop=box.scrollHeight;}
   try{
-    var sys="Du ar en hjalpsam AI-assistent i en chatt. Svara pa svenska om inte annat begars, kortfattat och tydligt.";
+    var personaInput=document.getElementById("aiChatPersonaInput");
+    var persona=(personaInput&&personaInput.value.trim())||"";
+    var sys="Du ar en hjalpsam AI-assistent i en chatt. Svara pa svenska om inte annat begars, kortfattat och tydligt."
+      +(persona?" Anta foljande roll/personlighet i din kommunikationsstil: "+persona+".":"");
     var res=await aiChat(sys,aiChatMessages,900);
     var data=await res.json();
     if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
@@ -1170,6 +1287,81 @@ function aiChatStopCamera(){
   var cameraContainer=document.getElementById("aiChatCameraContainer");
   if(cameraContainer)cameraContainer.style.display="none";
 }
+
+// ---- AI-chat: pinna/spara HELA konversationen, och bläddra bland sparade konversationer ----
+// Egen fil (ai.json) i samma Sokruta-mapp som övriga pinnade sökningar, byggd på samma
+// generiska lashjalpPinEntry() som Sök/Ord/Översättning redan använder (samma text-
+// bekräftelse "✓ Sparat"/"⚠ Kunde inte spara" på knappen). Posten sparar hela
+// meddelande-arrayen (aiChatMessages) plus vald roll (aiChatPersonaInput), så att
+// aiChatContinueSaved() kan återställa exakt samma konversation och man kan fortsätta
+// skriva vidare på den.
+async function aiChatPinConversation(btnEl){
+  if(!aiChatMessages.length)return;
+  var personaInput=document.getElementById("aiChatPersonaInput");
+  var persona=(personaInput&&personaInput.value.trim())||"";
+  var titleText=chatContentToText(aiChatMessages[0].content).trim().slice(0,60)||"Konversation";
+  await lashjalpPinEntry(LASHJALP_FILES.ai,{
+    id:Date.now(),titel:titleText,roll:persona,
+    meddelanden:aiChatMessages,
+    timestamp:new Date().toISOString()
+  },btnEl);
+}
+async function toggleAiChatSavedPanel(){
+  var panel=document.getElementById("aiChatSavedPanel");
+  var toggleBtn=document.getElementById("aiChatSavedBtn");
+  if(!panel)return;
+  if(panel.style.display==="block"){
+    panel.style.display="none";
+    if(toggleBtn)toggleBtn.setAttribute("aria-expanded","false");
+    return;
+  }
+  panel.style.display="block";
+  if(toggleBtn)toggleBtn.setAttribute("aria-expanded","true");
+  await loadAiChatSavedList();
+}
+async function loadAiChatSavedList(){
+  var listEl=document.getElementById("aiChatSavedList");
+  if(!listEl)return;
+  if(typeof accessToken==="undefined"||!accessToken){
+    listEl.innerHTML="<div class='lashjalp-hint' style='margin:0'>Inte inloggad - kan inte visa sparade konversationer just nu.</div>";
+    return;
+  }
+  listEl.innerHTML="<div class='lashjalp-hint' style='margin:0'>Laddar …</div>";
+  var data=await driveReadJson(LASHJALP_FOLDER,LASHJALP_FILES.ai);
+  var items=(data&&Array.isArray(data.items))?data.items:[];
+  if(!items.length){
+    listEl.innerHTML="<div class='lashjalp-hint' style='margin:0'>Inga sparade konversationer än - tryck på 📌 för att spara den här.</div>";
+    return;
+  }
+  listEl.innerHTML=items.map(function(item,idx){
+    var timeStr="";
+    try{if(item.timestamp)timeStr=new Date(item.timestamp).toLocaleString("sv-SE");}catch(e){/* strunta i tidsstämpeln om den inte går att tolka */}
+    return "<button type='button' class='ai-chat-saved-item' data-idx='"+idx+"'>"
+      +"<span class='ai-chat-saved-title'>"+esc(item.titel||"Konversation")+"</span>"
+      +(timeStr?"<span class='ai-chat-saved-time'>"+esc(timeStr)+"</span>":"")
+      +"</button>";
+  }).join("");
+  listEl.querySelectorAll(".ai-chat-saved-item").forEach(function(btn){
+    btn.onclick=function(){aiChatContinueSaved(items,parseInt(btn.dataset.idx,10));};
+  });
+}
+// Klick på en sparad konversation läser in den (meddelanden + roll) i det pågående
+// AI-chat-fönstret igen, så man kan fortsätta skriva på den precis där man slutade.
+function aiChatContinueSaved(items,idx){
+  var item=items[idx];
+  if(!item)return;
+  aiChatMessages=Array.isArray(item.meddelanden)?item.meddelanden.slice():[];
+  var personaInput=document.getElementById("aiChatPersonaInput");
+  if(personaInput)personaInput.value=item.roll||"";
+  var panel=document.getElementById("aiChatSavedPanel");
+  var toggleBtn=document.getElementById("aiChatSavedBtn");
+  if(panel)panel.style.display="none";
+  if(toggleBtn)toggleBtn.setAttribute("aria-expanded","false");
+  renderAiChatMessages();
+  var input=document.getElementById("aiChatInput");
+  if(input)input.focus();
+}
+
 function openAiChat(){
   var overlay=document.getElementById("aiChatOverlay");
   if(!overlay)return;
@@ -1186,6 +1378,10 @@ function closeAiChat(){
   aiChatStopCamera();
   overlay.style.display="none";
   document.body.style.overflow="";
+  var panel=document.getElementById("aiChatSavedPanel");
+  var toggleBtn=document.getElementById("aiChatSavedBtn");
+  if(panel)panel.style.display="none";
+  if(toggleBtn)toggleBtn.setAttribute("aria-expanded","false");
   if(aiChatLastFocus&&typeof aiChatLastFocus.focus==="function")aiChatLastFocus.focus();
   aiChatLastFocus=null;
 }
@@ -1198,6 +1394,11 @@ function initAiChat(){
 
   var closeBtn=document.getElementById("aiChatCloseBtn");
   if(closeBtn)closeBtn.onclick=closeAiChat;
+
+  var pinBtn=document.getElementById("aiChatPinBtn");
+  if(pinBtn)pinBtn.onclick=function(){aiChatPinConversation(pinBtn);};
+  var savedBtn=document.getElementById("aiChatSavedBtn");
+  if(savedBtn)savedBtn.onclick=toggleAiChatSavedPanel;
 
   // Fristående overlay (inte en syskon-panel till något annat) - klick utanför,
   // Escape och ✕ stänger alla helt, till skillnad från Läshjälps under-paneler.
@@ -1298,11 +1499,13 @@ function initAiChat(){
 }
 
 function initLashjalp(){
+  initLashjalpDropup();
+
   var lashjalpBtn=document.getElementById("lashjalpBtn");
   if(lashjalpBtn)lashjalpBtn.onclick=openLashjalp;
 
-  // Genvägsknapp (👓) till vänster om 📖 - går rakt till historikvyn, se
-  // openLashjalpHistoryDirect() ovan.
+  // Genvägsknapp (👓) - nu inuti dropup-menyn tillsammans med 📖, se
+  // openLashjalpHistoryDirect() ovan och initLashjalpDropup() för själva menyn.
   var historyShortcutBtn=document.getElementById("lashjalpHistoryShortcutBtn");
   if(historyShortcutBtn)historyShortcutBtn.onclick=openLashjalpHistoryDirect;
 
@@ -1504,53 +1707,6 @@ function initDictBar(){
     }
   });
 
-  var dictImgUpload=document.getElementById("dictImgUpload");
-  if(dictImgUpload)dictImgUpload.onchange=function(){
-    var file=dictImgUpload.files&&dictImgUpload.files[0];
-    if(file){
-      if(file.type.indexOf("image/")===0)searchDictionaryImage(file);
-      else searchDictionaryTextFile(file);
-    }
-    dictImgUpload.value="";
-  };
-
-  // Kamera för bildsökning
-  var dictCamStream=null;
-  var dictCameraBtn=document.getElementById("dictCameraBtn");
-  var dictCloseCameraBtn=document.getElementById("dictCloseCameraBtn");
-  var dictSnapBtn=document.getElementById("dictSnapBtn");
-  var dictCameraContainer=document.getElementById("dictCameraContainer");
-  var dictCameraVideo=document.getElementById("dictCameraVideo");
-  var dictSnapCanvas=document.getElementById("dictSnapCanvas");
-
-  function dictStopCamera(){
-    if(dictCamStream){dictCamStream.getTracks().forEach(function(t){t.stop();});dictCamStream=null;}
-    if(dictCameraContainer)dictCameraContainer.style.display="none";
-  }
-
-  if(dictCameraBtn){
-    dictCameraBtn.onclick=function(){
-      if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){alert("Kameran stöds inte.");return;}
-      navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false})
-        .then(function(s){dictCamStream=s;if(dictCameraVideo)dictCameraVideo.srcObject=s;if(dictCameraContainer)dictCameraContainer.style.display="block";})
-        .catch(function(){
-          navigator.mediaDevices.getUserMedia({video:true,audio:false})
-            .then(function(s){dictCamStream=s;if(dictCameraVideo)dictCameraVideo.srcObject=s;if(dictCameraContainer)dictCameraContainer.style.display="block";})
-            .catch(function(e){alert("Kunde inte starta kameran: "+e.message);});
-        });
-    };
-  }
-  if(dictCloseCameraBtn)dictCloseCameraBtn.onclick=dictStopCamera;
-  if(dictSnapBtn){
-    dictSnapBtn.onclick=function(){
-      if(!dictCameraVideo||!dictSnapCanvas)return;
-      dictSnapCanvas.width=dictCameraVideo.videoWidth;dictSnapCanvas.height=dictCameraVideo.videoHeight;
-      dictSnapCanvas.getContext("2d").drawImage(dictCameraVideo,0,0);
-      dictSnapCanvas.toBlob(function(blob){
-        dictStopCamera();
-        var file=new File([blob],"kamera-foto.jpg",{type:"image/jpeg"});
-        searchDictionaryImage(file);
-      },"image/jpeg",0.92);
-    };
-  }
+  // (Bild-/filuppladdning + kamera för sökraden borttagna 2026-08-31 - se AI-chatten,
+  // som redan har egen bifogning/kamera. Ingen egen wiring behövs här längre.)
 }

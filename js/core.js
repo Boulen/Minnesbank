@@ -333,12 +333,6 @@ async function showApp(){
         setView("history");
         loadTabsProgressively(["aktiviteter","samtaltext","samtalmuntligt","funderingar"],function(){openToday();renderHistory();});
       } else if(v==="installningar"){setView("installningar");loadTabsProgressively(["installningar"],render);}
-      else if(v==="ai"){
-        setView("ai");
-        var tabMap={forklara:"sok",komm:"text",tips:"tips",terapi:"terapi"};
-        var tab=tabMap[aiSubview]||"sok";
-        loadTabsProgressively([tab],renderAI);
-      }
       else if(v==="aktivitet"){
         setView("aktivitet");
         loadTabsProgressively(["aktiviteter","samtaltext","samtalmuntligt","funderingar","inmatningar"],function(){
@@ -1830,7 +1824,6 @@ function render(){
   else if(view==="samtal")renderSamtalTop();
   else if(view==="utvarderingar")renderUtvarderingarTop();
   else if(view==="history")renderHistory();
-  else if(view==="ai")renderAI();
   else if(view==="installningar")renderInstallningar();
 }
 // Auto-växande textarea: startar på en rad och växer i höjd efter innehållet.

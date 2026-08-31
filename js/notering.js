@@ -1,3 +1,9 @@
+// NOTERING-fliken (Fundering + Anteckning/Tips&Tricks). Lärdom är borttaget helt, ska
+// aldrig användas igen.
+//   Del av Minnesbanken (GitHub/produktion). Extraherad ur dev_index.html, sedan vidareutvecklad.
+//   Beroenden: core.js (inkl. driveReadJson/driveWriteJson/driveMkdir, se HANDOFF_own_your_data.md)
+//   Laddas via <script src="js/notering.js"> i rätt ordning (core.js alltid först).
+
 function ttSubPickerHtml(idPrefix){
   return "<div id='"+idPrefix+"-chips' style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px'></div>"
     +"<div class='ac-wrap' style='width:100%'><button class='chip' id='"+idPrefix+"-toggle' type='button' style='width:100%;text-align:left;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;padding:11px 12px;cursor:pointer;font-family:inherit;line-height:1'>Subkategorier ▾</button><div class='ac-dropdown' id='"+idPrefix+"-dd' style='min-width:200px'></div></div>"
@@ -87,16 +93,514 @@ function bindTtSubPicker(container,idPrefix,getCat,selected){
 }
 // Nya kategori-specifika snabbval för Media (Kreatör/Genre)
 
+// ---- ⚙️ Inställningar — Notering (en gemensam panel för hela fliken, mönster från Aktivitet) ----
+// OBS: kategorierna här är enkla strängar (inte id/label/emoji-objekt som i Aktivitet) - det
+// matchar hur FUND_CAT_PRESETS/TIPSTRICKS_CAT_PRESETS redan lagras. Ingen emoji-väljare.
+function showNoteringSettings(){
+  var wFund=FUND_CAT_PRESETS.slice();
+  var wTt=TIPSTRICKS_CAT_PRESETS.slice();
+  var wSub={};
+  Object.keys(TIPSTRICKS_SUBCAT_BY_CAT).forEach(function(k){wSub[k]=TIPSTRICKS_SUBCAT_BY_CAT[k].slice();});
+  var editFundIdx=null;
+  var editTtIdx=null;
+  var ttSubCat=wTt.length?wTt[0]:null; // vilken TT-kategoris subkategorier som visas just nu
+  var editSubIdx=null;
+
+  var ov=document.createElement("div");
+  ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto";
+
+  function simpleChipsHtml(arr,editIdx,prefix,emptyMsg){
+    if(!arr.length)return "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>"+emptyMsg+"</div>";
+    return "<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px'>"
+      +arr.map(function(label,i){
+        if(i===editIdx){
+          return "<span style='display:inline-flex;align-items:center;gap:4px;background:#1c3c5a;border:1px solid #4fa8ff;border-radius:8px;padding:4px 4px 4px 6px'>"
+            +"<input id='"+prefix+"-edit-label' value='"+esc(label)+"' style='width:110px;background:none;border:none;color:#f2f2f2;font-size:13px;padding:2px 0'/>"
+            +"<button id='"+prefix+"-edit-confirm' title='Klar' style='background:none;border:none;color:#4fa8ff;cursor:pointer;font-size:14px;padding:2px'>✓</button>"
+            +"</span>";
+        }
+        return "<span draggable='true' data-"+prefix+"-chip-idx='"+i+"' style='display:inline-flex;align-items:center;gap:6px;background:#131313;border:1px solid #2a2a2a;border-radius:8px;padding:6px 6px 6px 10px;cursor:grab;font-size:13px;color:#f2f2f2'>"
+          +"<span style='color:#5c5c5c;font-size:11px'>⠿</span>"
+          +esc(label)
+          +"<button data-"+prefix+"-remove-idx='"+i+"' title='Ta bort' style='background:none;border:none;color:#d97a83;cursor:pointer;font-size:13px;padding:0 2px;line-height:1'>×</button>"
+          +"</span>";
+      }).join("")
+      +"</div>";
+  }
+
+  function panelHtml(){
+    return "<div style='background:#161616;border-radius:20px;width:100%;max-width:420px;overflow:hidden'>"
+      +"<div style='padding:16px 20px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between'>"
+      +"<div style='font-size:16px;font-weight:600;color:#f2f2f2'>⚙️ Inställningar — Notering</div>"
+      +"<button id='ns-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1'>✕</button>"
+      +"</div>"
+      +"<div style='padding:20px;max-height:70vh;overflow-y:auto'>"
+
+      +"<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:4px'>"
+      +"<div class='lbl' style='margin-bottom:0'>Fundering-kategorier</div>"
+      +"<button id='ns-fund-sort' class='sec ghost' style='width:auto;margin:0;padding:4px 10px;font-size:11px'>Sortera A-Ö</button>"
+      +"</div>"
+      +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:8px'>Tryck för att ändra namn, × för att ta bort, dra ⠿ för att ändra ordning.</div>"
+      +simpleChipsHtml(wFund,editFundIdx,"fund","Inga kategorier kvar - lägg till minst en nedan.")
+      +"<div style='display:flex;gap:6px;margin-bottom:4px'>"
+      +"<input class='inp' id='ns-newfund-label' placeholder='Ny kategori...' style='flex:1;padding:7px 10px;font-size:13px'/>"
+      +"<button class='chip' id='ns-newfund-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
+      +"</div>"
+
+      +"<div style='display:flex;align-items:center;justify-content:space-between;margin-top:18px;margin-bottom:4px'>"
+      +"<div class='lbl' style='margin-bottom:0'>Tips & Tricks-kategorier</div>"
+      +"<button id='ns-tt-sort' class='sec ghost' style='width:auto;margin:0;padding:4px 10px;font-size:11px'>Sortera A-Ö</button>"
+      +"</div>"
+      +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:8px'>Tryck för att ändra namn, × för att ta bort, dra ⠿ för att ändra ordning.</div>"
+      +simpleChipsHtml(wTt,editTtIdx,"tt","Inga kategorier kvar - lägg till minst en nedan.")
+      +"<div style='display:flex;gap:6px;margin-bottom:4px'>"
+      +"<input class='inp' id='ns-newtt-label' placeholder='Ny kategori...' style='flex:1;padding:7px 10px;font-size:13px'/>"
+      +"<button class='chip' id='ns-newtt-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
+      +"</div>"
+
+      +"<div class='lbl' style='margin-top:18px;margin-bottom:4px'>Tips & Tricks-subkategorier</div>"
+      +(wTt.length
+        ? "<select id='ns-sub-cat-select' style='width:100%;background:#131313;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;padding:9px 10px;margin-bottom:8px'>"
+          +wTt.map(function(c){return "<option value='"+esc(c)+"'"+(c===ttSubCat?" selected":"")+">"+esc(c)+"</option>";}).join("")
+          +"</select>"
+          +simpleChipsHtml(wSub[ttSubCat]||[],editSubIdx,"sub","Inga subkategorier ännu för denna kategori.")
+          +"<div style='display:flex;gap:6px;margin-bottom:4px'>"
+          +"<input class='inp' id='ns-newsub-label' placeholder='Ny subkategori...' style='flex:1;padding:7px 10px;font-size:13px'/>"
+          +"<button class='chip' id='ns-newsub-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
+          +"</div>"
+        : "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Lägg till minst en Tips & Tricks-kategori ovan först.</div>")
+
+      +"<div class='lbl' style='margin-top:18px'>Data & backup</div>"
+      // OBS: "Data & backup" ska alltid ligga SIST i panelen, precis som i Aktivitets mönster.
+      +"<button id='ns-json-editor' class='sec ghost' style='width:100%'>📝 Öppna/redigera JSON-filer</button>"
+
+      +"</div>"
+      +"<div style='padding:16px 20px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
+      +"<button id='ns-cancel' class='sec ghost' style='flex:1'>Avbryt</button>"
+      +"<button id='ns-save' class='cta-log' style='flex:1'>Spara</button>"
+      +"</div>"
+      +"</div>";
+  }
+
+  function commit(getEditIdx,setEditIdx,arr,inputSel){
+    var idx=getEditIdx();
+    if(idx===null)return;
+    var lEl=ov.querySelector(inputSel);
+    if(lEl&&arr[idx]!==undefined)arr[idx]=lEl.value.trim()||arr[idx];
+    setEditIdx(null);
+  }
+
+  function bindChipDragReorder(selector,arr,idxAttr){
+    var dragIdx=null;
+    ov.querySelectorAll(selector).forEach(function(chip){
+      chip.addEventListener("dragstart",function(e){
+        dragIdx=Number(chip.dataset[idxAttr]);
+        e.dataTransfer.effectAllowed="move";
+        chip.style.opacity="0.4";
+      });
+      chip.addEventListener("dragend",function(){chip.style.opacity="1";});
+      chip.addEventListener("dragover",function(e){e.preventDefault();});
+      chip.addEventListener("drop",function(e){
+        e.preventDefault();
+        var dropIdx=Number(chip.dataset[idxAttr]);
+        if(dragIdx===null||dragIdx===dropIdx)return;
+        var moved=arr.splice(dragIdx,1)[0];
+        arr.splice(dropIdx,0,moved);
+        dragIdx=null;
+        rerender();
+      });
+    });
+  }
+
+  function bindSimpleChipGroup(prefix,arr,getEditIdx,setEditIdx,onRename){
+    bindChipDragReorder("[data-"+prefix+"-chip-idx]",arr,prefix+"ChipIdx");
+    ov.querySelectorAll("[data-"+prefix+"-chip-idx]").forEach(function(chip){
+      chip.onclick=function(e){
+        if(e.target.closest("[data-"+prefix+"-remove-idx]"))return;
+        commit(getEditIdx,setEditIdx,arr,"#"+prefix+"-edit-label");
+        setEditIdx(Number(chip.dataset[prefix+"ChipIdx"]));
+        rerender();
+        var lEl=ov.querySelector("#"+prefix+"-edit-label");
+        if(lEl){lEl.focus();lEl.select();}
+      };
+    });
+    ov.querySelectorAll("[data-"+prefix+"-remove-idx]").forEach(function(btn){
+      btn.onclick=function(e){
+        e.stopPropagation();
+        var i=Number(btn.dataset[prefix+"RemoveIdx"]);
+        if(arr[i]===undefined)return;
+        var removedLabel=arr[i];
+        arr.splice(i,1);
+        var idx=getEditIdx();
+        if(idx===i)setEditIdx(null);else if(idx!==null&&idx>i)setEditIdx(idx-1);
+        if(onRename)onRename(removedLabel,null); // null = borttagen
+        rerender();
+      };
+    });
+    var confirmBtn=ov.querySelector("#"+prefix+"-edit-confirm");
+    if(confirmBtn)confirmBtn.onclick=function(){
+      var idx=getEditIdx();
+      var before=idx!==null?arr[idx]:null;
+      commit(getEditIdx,setEditIdx,arr,"#"+prefix+"-edit-label");
+      if(onRename&&before!==null)onRename(before,arr[idx]);
+      rerender();
+    };
+    var editLabelEl=ov.querySelector("#"+prefix+"-edit-label");
+    if(editLabelEl)editLabelEl.onkeydown=function(e){
+      if(e.key==="Enter"){
+        var idx=getEditIdx();
+        var before=idx!==null?arr[idx]:null;
+        commit(getEditIdx,setEditIdx,arr,"#"+prefix+"-edit-label");
+        if(onRename&&before!==null)onRename(before,arr[idx]);
+        rerender();
+      }
+    };
+  }
+
+  function bindPanel(){
+    ov.querySelector("#ns-close").onclick=function(){ov.remove();};
+    ov.querySelector("#ns-cancel").onclick=function(){ov.remove();};
+
+    ov.querySelector("#ns-fund-sort").onclick=function(){
+      wFund.sort(function(a,b){return a.localeCompare(b,"sv");});
+      rerender();
+    };
+    ov.querySelector("#ns-tt-sort").onclick=function(){
+      wTt.sort(function(a,b){return a.localeCompare(b,"sv");});
+      rerender();
+    };
+
+    bindSimpleChipGroup("fund",wFund,function(){return editFundIdx;},function(v){editFundIdx=v;});
+    bindSimpleChipGroup("tt",wTt,function(){return editTtIdx;},function(v){editTtIdx=v;},function(oldLabel,newLabel){
+      // Kategorin döptes om eller togs bort - flytta/ta bort motsvarande subkategori-lista.
+      if(!(oldLabel in wSub))return;
+      var subs=wSub[oldLabel];
+      delete wSub[oldLabel];
+      if(newLabel!==null)wSub[newLabel]=subs;
+      if(ttSubCat===oldLabel)ttSubCat=newLabel;
+    });
+
+    ov.querySelector("#ns-newfund-label").onkeydown=function(e){if(e.key==="Enter")ov.querySelector("#ns-newfund-add").click();};
+    ov.querySelector("#ns-newfund-add").onclick=function(){
+      var labelInp=ov.querySelector("#ns-newfund-label");
+      var label=labelInp.value.trim();
+      if(!label||wFund.indexOf(label)>-1)return;
+      wFund.push(label);
+      rerender();
+    };
+    ov.querySelector("#ns-newtt-label").onkeydown=function(e){if(e.key==="Enter")ov.querySelector("#ns-newtt-add").click();};
+    ov.querySelector("#ns-newtt-add").onclick=function(){
+      var labelInp=ov.querySelector("#ns-newtt-label");
+      var label=labelInp.value.trim();
+      if(!label||wTt.indexOf(label)>-1)return;
+      wTt.push(label);
+      if(!ttSubCat)ttSubCat=label;
+      rerender();
+    };
+
+    var subCatSelect=ov.querySelector("#ns-sub-cat-select");
+    if(subCatSelect)subCatSelect.onchange=function(){ttSubCat=subCatSelect.value;editSubIdx=null;rerender();};
+
+    if(wTt.length){
+      if(!wSub[ttSubCat])wSub[ttSubCat]=[];
+      bindSimpleChipGroup("sub",wSub[ttSubCat],function(){return editSubIdx;},function(v){editSubIdx=v;});
+      var newSubLabelEl=ov.querySelector("#ns-newsub-label");
+      if(newSubLabelEl)newSubLabelEl.onkeydown=function(e){if(e.key==="Enter")ov.querySelector("#ns-newsub-add").click();};
+      var newSubAddEl=ov.querySelector("#ns-newsub-add");
+      if(newSubAddEl)newSubAddEl.onclick=function(){
+        var labelInp=ov.querySelector("#ns-newsub-label");
+        var label=labelInp.value.trim();
+        if(!label)return;
+        if(!wSub[ttSubCat])wSub[ttSubCat]=[];
+        if(wSub[ttSubCat].indexOf(label)>-1)return;
+        wSub[ttSubCat].push(label);
+        rerender();
+      };
+    }
+
+    ov.querySelector("#ns-json-editor").onclick=function(){openNoteringJsonEditor();};
+
+    ov.querySelector("#ns-save").onclick=function(){
+      if(!wFund.length){alert("Du måste ha minst en Fundering-kategori kvar.");return;}
+      if(!wTt.length){alert("Du måste ha minst en Tips & Tricks-kategori kvar.");return;}
+      FUND_CAT_PRESETS=wFund;
+      TIPSTRICKS_CAT_PRESETS=wTt;
+      TIPSTRICKS_SUBCAT_BY_CAT=wSub;
+      saveNoteringSettings();
+      ov.remove();
+      renderLogFunderingar();
+    };
+  }
+
+  function rerender(){
+    ov.innerHTML=panelHtml();
+    bindPanel();
+  }
+
+  rerender();
+  document.body.appendChild(ov);
+}
+
+// ---- Data & backup: JSON-redigerare för Notering (samma säkerhetsmönster som Aktivitet) ----
+function openNoteringJsonEditor(){
+  var current="fundering";
+  var ov2=document.createElement("div");
+  ov2.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px";
+
+  function dataFor(key){
+    if(key==="fundering")return {fundHist:fundHist};
+    if(key==="anteckning")return {tipsTricksHist:tipsTricksHist};
+    return {fundCatPresets:FUND_CAT_PRESETS,tipsTricksCatPresets:TIPSTRICKS_CAT_PRESETS,tipsTricksSubcatByCat:TIPSTRICKS_SUBCAT_BY_CAT};
+  }
+  var NOTERING_JSON_TARGETS=[
+    {key:"fundering",label:"Fundering (fundering.json)",folder:"Notering",filename:"fundering.json"},
+    {key:"anteckning",label:"Anteckning (anteckning.json)",folder:"Notering",filename:"anteckning.json"},
+    {key:"kategorier",label:"Kategorier (settings.json)",folder:"Notering",filename:"settings.json"}
+  ];
+  function driveTargetFor(key){return NOTERING_JSON_TARGETS.find(function(t){return t.key===key;});}
+
+  async function findDriveFileIdReadOnly(folderName,filename){
+    var q="name='"+folderName+"' and '"+FOLDER_ID+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
+    var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    var d=await r.json();
+    if(!(d.files&&d.files.length))return null;
+    var folderId=d.files[0].id;
+    var q2="name='"+filename+"' and '"+folderId+"' in parents and trashed=false";
+    var r2=await fetch(DRIVE_API+"?q="+encodeURIComponent(q2)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r2.ok)throw new Error("HTTP "+r2.status);
+    var d2=await r2.json();
+    return (d2.files&&d2.files.length)?d2.files[0].id:null;
+  }
+
+  var missingChecked=false,missingList=null;
+  function renderMissingList(statusEl,missing){
+    statusEl.innerHTML="";
+    if(!missing.length)return;
+    statusEl.style.color="#d97a83";
+    var msg=document.createElement("div");
+    msg.textContent="⚠️ Dessa filer finns inte i Drive ännu:";
+    statusEl.appendChild(msg);
+    missing.forEach(function(target){
+      var row=document.createElement("div");
+      row.style.cssText="display:flex;align-items:center;gap:6px;margin-top:4px";
+      var label=document.createElement("span");
+      label.textContent=target.label;
+      label.style.flex="1";
+      var createBtn=document.createElement("button");
+      createBtn.textContent="Skapa";
+      createBtn.className="sec ghost";
+      createBtn.style.cssText="padding:3px 10px;font-size:11px;flex-shrink:0";
+      createBtn.onclick=function(){
+        createMissingFile(target,row,createBtn).then(function(){
+          missingList=missingList.filter(function(t){return t.key!==target.key;});
+        });
+      };
+      row.appendChild(label);
+      row.appendChild(createBtn);
+      statusEl.appendChild(row);
+    });
+  }
+  function checkFileExists(){
+    var statusEl=ov2.querySelector("#nje-status");
+    if(!statusEl)return;
+    if(!accessToken){statusEl.innerHTML="";return;}
+    if(missingChecked){renderMissingList(statusEl,missingList);return;}
+    statusEl.style.color="#5c5c5c";
+    statusEl.textContent="Kontrollerar vilka filer som finns i Drive...";
+    Promise.all(NOTERING_JSON_TARGETS.map(function(t){
+      return findDriveFileIdReadOnly(t.folder,t.filename).then(function(id){return {target:t,found:!!id};});
+    })).then(function(results){
+      if(!statusEl.isConnected)return;
+      missingChecked=true;
+      missingList=results.filter(function(r){return !r.found;}).map(function(r){return r.target;});
+      renderMissingList(statusEl,missingList);
+    }).catch(function(e){
+      if(!statusEl.isConnected)return;
+      statusEl.style.color="#d97a83";
+      statusEl.textContent="Kunde inte kontrollera Drive: "+e.message;
+    });
+  }
+  // Skapar ALDRIG en PATCH/overwrite - bara POST av en helt ny fil, och kollar en sista gång
+  // precis innan att filen fortfarande saknas (skyddar mot dubbletter, se HANDOFF_own_your_data.md).
+  async function createMissingFile(target,rowEl,createBtn){
+    createBtn.disabled=true;createBtn.textContent="Skapar...";
+    try{
+      var stillMissing=!(await findDriveFileIdReadOnly(target.folder,target.filename));
+      if(!stillMissing){
+        rowEl.textContent=target.label+": fanns redan (skapades av något annat under tiden) - inget skrevs över.";
+        rowEl.style.color="#5c5c5c";
+        return;
+      }
+      var folderId=await driveMkdir(target.folder,FOLDER_ID);
+      if(!folderId)throw new Error("Kunde inte skapa/hitta mappen "+target.folder);
+      var form=new FormData();
+      form.append("metadata",new Blob([JSON.stringify({name:target.filename,parents:[folderId],mimeType:"application/json"})],{type:"application/json"}));
+      form.append("file",new Blob([JSON.stringify(dataFor(target.key),null,2)],{type:"application/json"}));
+      var cr=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
+      if(!cr.ok)throw new Error("HTTP "+cr.status);
+      var cd=await cr.json();
+      if(!cd.id)throw new Error("Drive returnerade inget fil-id");
+      rowEl.textContent="✓ "+target.label+" skapad.";
+      rowEl.style.color="#4fa8ff";
+    }catch(e){
+      rowEl.style.color="#d97a83";
+      rowEl.textContent=target.label+": kunde inte skapas - "+e.message;
+      createBtn.disabled=false;createBtn.textContent="Skapa";
+      rowEl.appendChild(createBtn);
+    }
+  }
+
+  function render(){
+    ov2.innerHTML="<div style='background:#161616;border-radius:16px;width:100%;max-width:520px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden'>"
+      +"<div style='padding:14px 18px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap'>"
+      +"<select id='nje-select' style='background:#131313;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:6px 8px;flex:1;min-width:110px'>"
+      +"<option value='fundering'"+(current==="fundering"?" selected":"")+">Fundering</option>"
+      +"<option value='anteckning'"+(current==="anteckning"?" selected":"")+">Anteckning</option>"
+      +"<option value='kategorier'"+(current==="kategorier"?" selected":"")+">Kategorier</option>"
+      +"</select>"
+      +"<button id='nje-open-drive' title='Öppna filen i Google Drive' style='background:none;border:1px solid #2a2a2a;border-radius:8px;color:#4fa8ff;font-size:12px;padding:6px 10px;cursor:pointer;white-space:nowrap;flex-shrink:0'>🔗 Öppna i Drive</button>"
+      +"<button id='nje-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1;flex-shrink:0'>✕</button>"
+      +"</div>"
+      +"<div id='nje-status' style='padding:8px 18px 0;font-size:11px'></div>"
+      +"<textarea id='nje-text' spellcheck='false' style='flex:1;background:#0a0a0a;color:#f2f2f2;border:none;padding:14px;font-family:monospace;font-size:12px;min-height:300px;resize:vertical'>"+esc(JSON.stringify(dataFor(current),null,2))+"</textarea>"
+      +"<div id='nje-warning' style='padding:0 18px 8px;font-size:11px;color:#d97a83'></div>"
+      +"<div style='padding:14px 18px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
+      +"<button id='nje-cancel' class='sec ghost' style='flex:1'>Avbryt</button>"
+      +"<button id='nje-save' class='cta-log' style='flex:1'>Spara ändringar</button>"
+      +"</div>"
+      +"</div>";
+    ov2.querySelector("#nje-close").onclick=function(){ov2.remove();};
+    ov2.querySelector("#nje-cancel").onclick=function(){ov2.remove();};
+    ov2.querySelector("#nje-select").onchange=function(){current=ov2.querySelector("#nje-select").value;render();};
+    checkFileExists();
+    ov2.querySelector("#nje-open-drive").onclick=function(){
+      var warn=ov2.querySelector("#nje-warning");
+      if(!accessToken){warn.style.color="#d97a83";warn.textContent="Logga in för att öppna filen i Drive.";return;}
+      warn.style.color="#5c5c5c";warn.textContent="Söker filen i Drive...";
+      var target=driveTargetFor(current);
+      findDriveFileIdReadOnly(target.folder,target.filename).then(function(fileId){
+        if(!fileId){warn.style.color="#d97a83";warn.textContent="Filen finns inte i Drive ännu (har inte sparats dit).";return;}
+        warn.textContent="";
+        window.open("https://drive.google.com/file/d/"+fileId+"/view","_blank");
+      }).catch(function(e){
+        warn.style.color="#d97a83";warn.textContent="Kunde inte hitta filen: "+e.message;
+      });
+    };
+    ov2.querySelector("#nje-save").onclick=function(){
+      var txt=ov2.querySelector("#nje-text").value;
+      var warn=ov2.querySelector("#nje-warning");
+      var parsed;
+      try{parsed=JSON.parse(txt);}catch(e){warn.textContent="Ogiltig JSON: "+e.message;return;}
+      if(current==="fundering"){
+        if(!Array.isArray(parsed.fundHist)){warn.textContent="Förväntade ett 'fundHist'-fält med en lista.";return;}
+        fundHist=parsed.fundHist;
+        saveNoteringFundering();
+      }else if(current==="anteckning"){
+        if(!Array.isArray(parsed.tipsTricksHist)){warn.textContent="Förväntade ett 'tipsTricksHist'-fält med en lista.";return;}
+        tipsTricksHist=parsed.tipsTricksHist;
+        saveNoteringAnteckning();
+      }else{
+        if(!Array.isArray(parsed.fundCatPresets)||!parsed.fundCatPresets.length){warn.textContent="Förväntade ett 'fundCatPresets'-fält med minst en kategori.";return;}
+        if(!Array.isArray(parsed.tipsTricksCatPresets)||!parsed.tipsTricksCatPresets.length){warn.textContent="Förväntade ett 'tipsTricksCatPresets'-fält med minst en kategori.";return;}
+        FUND_CAT_PRESETS=parsed.fundCatPresets;
+        TIPSTRICKS_CAT_PRESETS=parsed.tipsTricksCatPresets;
+        TIPSTRICKS_SUBCAT_BY_CAT=parsed.tipsTricksSubcatByCat||{};
+        saveNoteringSettings();
+      }
+      ov2.remove();
+      renderLogFunderingar();
+    };
+  }
+  render();
+  document.body.appendChild(ov2);
+}
+
 var fundDraft="", editingFundId=null;
 var fundCatSelect="", fundReadCat="", fundReadActive=false, editingFundKeyLog=null;
 var funderingarSubview="tipstricks";
-var lardomSubview="vokabular";
-// Enkla text+tidsstämpel-listor för Lärdom-flikens tre underflikar. Ingen kategori/dropdown ännu
-// (byggs ut senare, olika för var och en, enligt Blås plan).
-var vokabularHist=[], vokabularDraft="", editingVokabularId=null;
-var kunskapHist=[], kunskapDraft="", editingKunskapId=null, activeKunskapId=null;
+// Lärdom (Vokabulär/Kunskap) är borttaget helt ur appen - ska aldrig användas igen.
 var tipsTricksHist=[], tipsTricksDraft="", tipsTricksRubrikDraft="", tipsTricksReadRubrikSearch="";
 var tipsTricksCatSelect="", tipsTricksReadCat="", tipsTricksReadSubcat="", tipsTricksReadExcludeSubcat="", tipsTricksReadActive=false, editingTipsTricksKeyLog=null;
+
+// ---- Notering äger sin egen Drive-JSON/inställningar (se HANDOFF_own_your_data.md) ----
+// fundering.json = fundHist, anteckning.json = tipsTricksHist, settings.json = kategorierna.
+// Alla tre ligger i Drive-mappen "Notering". Inga referenser till Installningar - core.js's
+// gamla delade DRIVE_STRUCTURE/saveTab/loadTab-system hanterar inte denna flik längre.
+var noteringDataLoaded=false;
+var noteringSettingsLoaded=false;
+
+function showNoteringDriveError(context,e){
+  console.error(context,e);
+  var el=document.createElement("div");
+  el.style.cssText="position:fixed;bottom:16px;left:16px;right:16px;max-width:420px;margin:0 auto;background:#2e1518;border:1px solid #d97a83;color:#d97a83;padding:10px 14px;border-radius:10px;font-size:12px;z-index:10001";
+  el.textContent="⚠️ "+context+": "+(e&&e.message?e.message:String(e));
+  document.body.appendChild(el);
+  setTimeout(function(){el.remove();},6000);
+}
+
+async function ensureNoteringDataLoaded(){
+  if(noteringDataLoaded||!accessToken)return;
+  noteringDataLoaded=true;
+  try{
+    var fundData=await driveReadJson(["Notering"],"fundering.json");
+    if(fundData&&fundData.fundHist)fundHist=fundData.fundHist;
+    var antData=await driveReadJson(["Notering"],"anteckning.json");
+    if(antData&&antData.tipsTricksHist)tipsTricksHist=antData.tipsTricksHist;
+    if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
+  }catch(e){
+    noteringDataLoaded=false; // tillåt nytt försök nästa gång fliken öppnas
+    showNoteringDriveError("Kunde inte läsa Notering-data",e);
+  }
+}
+
+async function saveNoteringFundering(){
+  if(!accessToken)return;
+  try{
+    await driveWriteJson(["Notering"],"fundering.json",{fundHist:fundHist});
+  }catch(e){
+    showNoteringDriveError("Kunde inte spara Fundering",e);
+  }
+}
+
+async function saveNoteringAnteckning(){
+  if(!accessToken)return;
+  try{
+    await driveWriteJson(["Notering"],"anteckning.json",{tipsTricksHist:tipsTricksHist});
+  }catch(e){
+    showNoteringDriveError("Kunde inte spara Anteckning (Tips & Tricks)",e);
+  }
+}
+
+async function ensureNoteringSettingsLoaded(){
+  if(noteringSettingsLoaded||!accessToken)return;
+  noteringSettingsLoaded=true;
+  try{
+    var data=await driveReadJson(["Notering"],"settings.json");
+    if(data){
+      if(data.fundCatPresets&&data.fundCatPresets.length)FUND_CAT_PRESETS=data.fundCatPresets;
+      if(data.tipsTricksCatPresets&&data.tipsTricksCatPresets.length)TIPSTRICKS_CAT_PRESETS=data.tipsTricksCatPresets;
+      if(data.tipsTricksSubcatByCat)TIPSTRICKS_SUBCAT_BY_CAT=data.tipsTricksSubcatByCat;
+    }
+    if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
+  }catch(e){
+    noteringSettingsLoaded=false; // tillåt nytt försök nästa gång fliken öppnas
+    showNoteringDriveError("Kunde inte läsa Notering-inställningar",e);
+  }
+}
+
+async function saveNoteringSettings(){
+  if(!accessToken){showNoteringDriveError("Kunde inte spara","Inte inloggad");return;}
+  try{
+    await driveWriteJson(["Notering"],"settings.json",{
+      fundCatPresets:FUND_CAT_PRESETS,
+      tipsTricksCatPresets:TIPSTRICKS_CAT_PRESETS,
+      tipsTricksSubcatByCat:TIPSTRICKS_SUBCAT_BY_CAT
+    });
+  }catch(e){
+    showNoteringDriveError("Kunde inte spara Notering-inställningar",e);
+  }
+}
 
 function fundRow(f,prefix){
   return "<div class='entry'>"
@@ -152,27 +656,22 @@ function ttEditRow(f,prefix){
 
 function renderLogFunderingar(){
   var c=document.getElementById("body");
-  var subTabs="<div style='display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px'>"
+  ensureNoteringSettingsLoaded();
+  ensureNoteringDataLoaded();
+  var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:6px'>"
+    +"<div style='flex:1;display:grid;grid-template-columns:1fr 1fr;gap:6px'>"
     +"<button class='mode-btn"+(funderingarSubview==="tipstricks"?" on":"")+"' data-fundsub='tipstricks' style='font-size:12px'>Anteckning</button>"
     +"<button class='mode-btn"+(funderingarSubview==="fundering"?" on":"")+"' data-fundsub='fundering' style='font-size:12px'>Fundering</button>"
     +"</div>"
-    +"<div style='margin-bottom:18px'>"
-    +"<button class='mode-btn"+(funderingarSubview==="lardom"?" on":"")+"' data-fundsub='lardom' style='font-size:12px;width:100%'>Lärdom</button>"
+    +"<button id='notering-settings-btn' type='button' title='Inställningar' style='background:none;border:none;color:#6b6880;font-size:20px;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0'>⚙️</button>"
     +"</div>";
   c.innerHTML=subTabs+"<div id='fundering-content'></div>";
   c.querySelectorAll("[data-fundsub]").forEach(function(btn){
     btn.onclick=function(){funderingarSubview=btn.dataset.fundsub;renderLogFunderingar();};
   });
-  if(funderingarSubview==="lardom")renderLardom();
-  else if(funderingarSubview==="tipstricks"){
-    var fc=document.getElementById("fundering-content");
-    if(!tabLoaded.tipstricks){
-      if(fc)fc.innerHTML="<div style='padding:30px;text-align:center;color:#5c5c5c;font-size:13px'>⏳ Laddar...</div>";
-      loadTab("tipstricks").then(function(){renderTipsTricks();});
-    } else {
-      renderTipsTricks();
-    }
-  }
+  var settingsBtn=c.querySelector("#notering-settings-btn");
+  if(settingsBtn)settingsBtn.onclick=function(){showNoteringSettings();};
+  if(funderingarSubview==="tipstricks")renderTipsTricks();
   else renderFunderingHome();
 }
 
@@ -227,7 +726,7 @@ function renderFunderingHome(){
     var entry={id:Date.now(),text:txt,timestamp:new Date().toISOString()};
     if(fundCatSelect)entry.category=fundCatSelect;
     fundHist.unshift(entry);
-    fundDraft="";saveAndSync("funderingar");renderLogFunderingar();
+    fundDraft="";saveNoteringFundering();renderLogFunderingar();
   };
 
   var readSel=c.querySelector("#fundread-select");
@@ -241,7 +740,7 @@ function renderFunderingHome(){
   c.querySelectorAll("[data-delfundlog]").forEach(function(btn){
     btn.onclick=function(){
       fundHist=fundHist.filter(function(f){return f.id!==Number(btn.dataset.delfundlog);});
-      editingFundKeyLog=null;saveAndSync("funderingar");renderLogFunderingar();
+      editingFundKeyLog=null;saveNoteringFundering();renderLogFunderingar();
     };
   });
   c.querySelectorAll("[data-editfundlog]").forEach(function(btn){
@@ -256,190 +755,11 @@ function renderFunderingHome(){
       var catSel=c.querySelector("#editfundcatlog-"+prefix+"-"+fid);
       if(f&&inp&&inp.value.trim())f.text=inp.value.trim();
       if(f&&catSel)f.category=catSel.value||undefined;
-      editingFundKeyLog=null;saveAndSync("funderingar");renderLogFunderingar();
+      editingFundKeyLog=null;saveNoteringFundering();renderLogFunderingar();
     };
   });
   c.querySelectorAll("[data-cancelfundlog]").forEach(function(btn){
     btn.onclick=function(){editingFundKeyLog=null;renderLogFunderingar();};
-  });
-}
-
-// ---- LÄRDOM (underflikar: Vokabulär, Kunskap, Tips & Tricks) ----
-function renderLardom(){
-  var c=document.getElementById("fundering-content");
-  if(!c)return;
-  var subTabs="<div style='display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:16px'>"
-    +"<button class='mode-btn"+(lardomSubview==="vokabular"?" on":"")+"' data-lardomsub='vokabular' style='font-size:11px'>Vokabulär</button>"
-    +"<button class='mode-btn"+(lardomSubview==="kunskap"?" on":"")+"' data-lardomsub='kunskap' style='font-size:11px'>Kunskap</button>"
-    +"</div>";
-  c.innerHTML=subTabs+"<div id='lardom-content'></div>";
-  c.querySelectorAll("[data-lardomsub]").forEach(function(btn){
-    btn.onclick=function(){lardomSubview=btn.dataset.lardomsub;renderLardom();};
-  });
-  var tab=lardomSubview;
-  var lc=document.getElementById("lardom-content");
-  if(!tabLoaded[tab]){
-    if(lc)lc.innerHTML="<div style='padding:30px;text-align:center;color:#5c5c5c;font-size:13px'>⏳ Laddar...</div>";
-    loadTab(tab).then(function(){renderLardomContent();});
-  } else {
-    renderLardomContent();
-  }
-}
-function renderLardomContent(){
-  if(lardomSubview==="vokabular")renderVokabular();
-  else renderKunskap();
-}
-
-// Delad enkel lista (text + tidsstämpel) som Vokabulär/Kunskap/Tips & Tricks alla använder
-// tills vidare - byggs ut olika för var och en senare.
-function lardomEntryRow(entry,delAttr,editAttr,editingId){
-  if(editAttr&&editingId===entry.id){
-    return "<div class='khist'>"
-      +"<textarea class='ta' data-"+editAttr+"inp='"+entry.id+"' style='min-height:60px;margin-bottom:6px'>"+esc(entry.text)+"</textarea>"
-      +"<div style='display:flex;gap:8px'>"
-      +"<button class='sec' data-"+editAttr+"save='"+entry.id+"' style='flex:1'>Spara</button>"
-      +"<button class='sec ghost' data-"+editAttr+"cancel='"+entry.id+"' style='flex:1'>Avbryt</button>"
-      +"</div></div>";
-  }
-  return "<div class='khist' style='display:flex;align-items:flex-start;gap:8px'>"
-    +"<div style='flex:1;min-width:0'><div class='kmsg' style='white-space:normal'>"+esc(entry.text)+"</div>"
-    +"<div class='kmeta'>"+fd(entry.timestamp)+"</div></div>"
-    +(editAttr?"<button class='delbtn' data-"+editAttr+"edit='"+entry.id+"' style='font-size:15px'>✏️</button>":"")
-    +"<button class='delbtn' data-"+delAttr+"='"+entry.id+"' style='font-size:18px'>x</button>"
-    +"</div>";
-}
-
-function renderVokabular(){
-  var c=document.getElementById("lardom-content");
-  if(!c)return;
-  var list=vokabularHist.length?vokabularHist.map(function(e){return lardomEntryRow(e,"delvokabular","vokabular",editingVokabularId);}).join(""):"<div class='empty' style='padding:20px 0'><div class='eico'>🔤</div>Inget sparat än. Använd 📌-knappen i AI → Översättning eller Ordråd för att spara hit.</div>";
-  c.innerHTML="<div class='lbl'>Sparat</div>"+list;
-  c.querySelectorAll("[data-delvokabular]").forEach(function(btn){
-    btn.onclick=function(){
-      confirmDelete("Vill du ta bort det här?",function(){
-        vokabularHist=vokabularHist.filter(function(x){return x.id!==Number(btn.dataset.delvokabular);});
-        saveAndSync("vokabular");renderVokabular();
-      });
-    };
-  });
-  c.querySelectorAll("[data-vokabularedit]").forEach(function(btn){
-    btn.onclick=function(){editingVokabularId=Number(btn.dataset.vokabularedit);renderVokabular();};
-  });
-  c.querySelectorAll("[data-vokabularcancel]").forEach(function(btn){
-    btn.onclick=function(){editingVokabularId=null;renderVokabular();};
-  });
-  c.querySelectorAll("[data-vokabularsave]").forEach(function(btn){
-    btn.onclick=function(){
-      var eid=Number(btn.dataset.vokabularsave);
-      var entry=vokabularHist.find(function(x){return x.id===eid;});
-      var inp=c.querySelector("[data-vokabularinp='"+eid+"']");
-      if(entry&&inp&&inp.value.trim())entry.text=inp.value.trim();
-      editingVokabularId=null;
-      saveAndSync("vokabular");renderVokabular();
-    };
-  });
-}
-
-function renderKunskap(){
-  var c=document.getElementById("lardom-content");
-  if(!c)return;
-  if(activeKunskapId)renderKunskapOpen(c);
-  else renderKunskapList(c);
-}
-
-function kunskapPreviewText(chat){
-  chat=chat||[];
-  var q=chat[0]?chatContentToText(chat[0].content):"";
-  var a=chat[1]?chatContentToText(chat[1].content):"";
-  return q+(a?" — "+a:"");
-}
-function renderKunskapList(c){
-  var sorted=kunskapHist.slice().sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
-  var list=sorted.length?sorted.map(function(e){
-    if(editingKunskapId===e.id){
-      var q=e.chat&&e.chat[0]?chatContentToText(e.chat[0].content):"";
-      var a=e.chat&&e.chat[1]?chatContentToText(e.chat[1].content):"";
-      return "<div class='khist'>"
-        +"<div class='lbl' style='margin-bottom:4px'>Fråga</div>"
-        +"<textarea class='ta' data-kunskapqinp='"+e.id+"' style='min-height:50px;margin-bottom:6px'>"+esc(q)+"</textarea>"
-        +"<div class='lbl' style='margin-bottom:4px'>Svar</div>"
-        +"<textarea class='ta' data-kunskapainp='"+e.id+"' style='min-height:80px;margin-bottom:6px'>"+esc(a)+"</textarea>"
-        +"<div style='display:flex;gap:8px'>"
-        +"<button class='sec' data-kunskapsave='"+e.id+"' style='flex:1'>Spara</button>"
-        +"<button class='sec ghost' data-kunskapcancel='"+e.id+"' style='flex:1'>Avbryt</button>"
-        +"</div></div>";
-    }
-    var previewFull=kunskapPreviewText(e.chat);
-    var preview=previewFull.length>120?previewFull.slice(0,120)+"…":previewFull;
-    return "<div class='khist' data-openkunskap='"+e.id+"' style='display:flex;align-items:flex-start;gap:8px;cursor:pointer'>"
-      +"<div style='flex:1;min-width:0'><div class='kmsg' style='white-space:normal'>"+esc(preview)+"</div>"
-      +"<div class='kmeta'>"+fd(e.timestamp)+(e.chat&&e.chat.length>2?" · "+e.chat.length+" meddelanden":"")+"</div></div>"
-      +"<button class='delbtn' data-kunskapedit='"+e.id+"' style='font-size:15px'>✏️</button>"
-      +"<button class='delbtn' data-delkunskap='"+e.id+"' style='font-size:18px'>x</button>"
-      +"</div>";
-  }).join(""):"<div class='empty' style='padding:20px 0'><div class='eico'>📚</div>Inget sparat än. Använd 📌-knappen i AI → Tips/Terapi/Översättning eller sökrutorna längst ner för att spara hit.</div>";
-
-  c.innerHTML="<div class='lbl'>Sparat</div>"+list;
-
-  c.querySelectorAll("[data-openkunskap]").forEach(function(el){
-    el.onclick=function(e){
-      if(e.target.closest("[data-kunskapedit]")||e.target.closest("[data-delkunskap]"))return;
-      activeKunskapId=el.dataset.openkunskap;
-      renderKunskap();
-    };
-  });
-  c.querySelectorAll("[data-kunskapedit]").forEach(function(btn){
-    btn.onclick=function(e){e.stopPropagation();editingKunskapId=Number(btn.dataset.kunskapedit);renderKunskapList(c);};
-  });
-  c.querySelectorAll("[data-kunskapcancel]").forEach(function(btn){
-    btn.onclick=function(e){e.stopPropagation();editingKunskapId=null;renderKunskapList(c);};
-  });
-  c.querySelectorAll("[data-kunskapsave]").forEach(function(btn){
-    btn.onclick=function(e){
-      e.stopPropagation();
-      var eid=Number(btn.dataset.kunskapsave);
-      var entry=kunskapHist.find(function(x){return x.id===eid;});
-      var qInp=c.querySelector("[data-kunskapqinp='"+eid+"']");
-      var aInp=c.querySelector("[data-kunskapainp='"+eid+"']");
-      if(entry){
-        if(!entry.chat)entry.chat=[];
-        if(!entry.chat[0])entry.chat[0]={role:"user",content:""};
-        if(!entry.chat[1])entry.chat[1]={role:"assistant",content:""};
-        if(qInp)entry.chat[0].content=qInp.value.trim();
-        if(aInp)entry.chat[1].content=aInp.value.trim();
-      }
-      editingKunskapId=null;
-      saveAndSync("kunskap");renderKunskapList(c);
-    };
-  });
-  c.querySelectorAll("[data-delkunskap]").forEach(function(btn){
-    btn.onclick=function(e){
-      e.stopPropagation();
-      confirmDelete("Vill du ta bort det här?",function(){
-        kunskapHist=kunskapHist.filter(function(x){return x.id!==Number(btn.dataset.delkunskap);});
-        saveAndSync("kunskap");renderKunskapList(c);
-      });
-    };
-  });
-}
-
-function renderKunskapOpen(c){
-  var entry=kunskapHist.find(function(x){return x.id===Number(activeKunskapId)||x.id===activeKunskapId;});
-  if(!entry){activeKunskapId=null;renderKunskapList(c);return;}
-  var thread=(entry.chat||[]).map(function(m){
-    if(m.role==="user"){
-      return "<div style='display:flex;justify-content:flex-end;margin-bottom:8px'><div class='bubble-me'>"+esc(m.content)+"</div></div>";
-    }
-    return "<div style='display:flex;justify-content:flex-start;margin-bottom:8px'><div class='bubble-them'>"+esc(m.content)+"</div></div>";
-  }).join("");
-  c.innerHTML="<button class='sec ghost' id='kunskap-back-btn' style='margin-bottom:12px'>&#8592; Alla sparade</button>"
-    +"<div class='chat-area'>"+thread+"</div>"
-    +"<div class='row'><input class='inp' id='kunskapai-followup-inp' placeholder='Ställ en följdfråga...'/><button class='abtn' id='kunskapai-followup-btn'>&#8594;</button></div>"
-    +"<div id='kunskapai-followup-loading' style='display:none;text-align:center;color:var(--sub);font-size:12px;margin-top:6px'>Skriver...</div>";
-  c.querySelector("#kunskap-back-btn").onclick=function(){activeKunskapId=null;renderKunskap();};
-  bindChatContinuation(c,"kunskapai","Du ar en pedagog. Fortsätt hjälpa personen bygga vidare på det ni sparat här, svara med vanlig text.",function(){return entry.chat;},function(){
-    saveAndSync("kunskap");
-    renderKunskapOpen(c);
   });
 }
 
@@ -521,7 +841,7 @@ function renderTipsTricks(){
     var rubrikVal=c.querySelector("#ttrubrik").value.trim();
     if(rubrikVal)entry.rubrik=rubrikVal;
     tipsTricksHist.push(entry);
-    tipsTricksDraft="";tipsTricksRubrikDraft="";ttsubSelected.length=0;saveAndSync("tipstricks");renderLogFunderingar();
+    tipsTricksDraft="";tipsTricksRubrikDraft="";ttsubSelected.length=0;saveNoteringAnteckning();renderLogFunderingar();
   };
 
   var readSel=c.querySelector("#ttread-select");
@@ -573,7 +893,7 @@ function renderTipsTricks(){
       btn.onclick=function(){
         confirmDelete("Vill du ta bort anteckningen?",function(){
           tipsTricksHist=tipsTricksHist.filter(function(f){return f.id!==Number(btn.dataset.deltslog);});
-          editingTipsTricksKeyLog=null;saveAndSync("tipstricks");renderLogFunderingar();
+          editingTipsTricksKeyLog=null;saveNoteringAnteckning();renderLogFunderingar();
         });
       };
     });
@@ -599,7 +919,7 @@ function renderTipsTricks(){
           f.subcategories=subVals2.length?subVals2:undefined;
           delete f.subcategory;
         }
-        editingTipsTricksKeyLog=null;saveAndSync("tipstricks");renderLogFunderingar();
+        editingTipsTricksKeyLog=null;saveNoteringAnteckning();renderLogFunderingar();
       };
     });
     if(editingTipsTricksKeyLog&&editingTipsTricksKeyLog.indexOf(prefix+":")===0){
@@ -636,7 +956,7 @@ function renderTipsTricks(){
     btn.onclick=function(){
       confirmDelete("Vill du ta bort anteckningen?",function(){
         tipsTricksHist=tipsTricksHist.filter(function(f){return f.id!==Number(btn.dataset.deltslog);});
-        editingTipsTricksKeyLog=null;saveAndSync("tipstricks");renderLogFunderingar();
+        editingTipsTricksKeyLog=null;saveNoteringAnteckning();renderLogFunderingar();
       });
     };
   });
@@ -659,7 +979,7 @@ function renderTipsTricks(){
         f.subcategories=subVals2.length?subVals2:undefined;
         delete f.subcategory;
       }
-      editingTipsTricksKeyLog=null;saveAndSync("tipstricks");renderLogFunderingar();
+      editingTipsTricksKeyLog=null;saveNoteringAnteckning();renderLogFunderingar();
     };
   });
   c.querySelectorAll("[data-canceltslog]").forEach(function(btn){
