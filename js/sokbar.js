@@ -28,6 +28,15 @@
 // nu fria textfält för Från/Till istället för en fast dropdown (tomt Från = AI:n
 // identifierar själv, tomt Till = svenska), och sparar/visar källspråket i
 // oversattning.json (se lashjalpTranslate()/loadLashjalpHistory()).
+//
+// NYTT (2026-08-30, ännu senare): historikvyn (📋/👓) har nu ✏️ Redigera och ✕ Ta
+// bort på varje sparad post. Redigering byter kortet till ett formulär inline (samma
+// post, samma plats i listan) och skriver hela listan tillbaka med driveWriteJson.
+// Borttagning kräver två klick (första klicket byter ✕ till "Ta bort?" i tre
+// sekunder, andra klicket inom den tiden bekräftar) istället för webbläsarens
+// window.confirm(), som skulle blockera sidan och inte passar en tangentbords-först-
+// design. Se lashjalpHistoryItems/lashjalpHistoryKey + renderLashjalpHistoryList()
+// och grannfunktionerna längre ner.
 
 var LASHJALP_CSS = ""
   +".lashjalp-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:300;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;}"
@@ -53,7 +62,19 @@ var LASHJALP_CSS = ""
   +".lashjalp-history-item .lashjalp-history-q{color:var(--sub);font-size:12px;margin-bottom:4px;}"
   +".lashjalp-history-item .lashjalp-history-a{color:var(--text);}"
   +".lashjalp-history-item .lashjalp-history-lang{color:var(--sub);font-size:11px;margin-top:4px;font-style:italic;}"
-  +".lashjalp-history-item .lashjalp-history-time{color:var(--sub);font-size:10.5px;margin-top:6px;font-family:'JetBrains Mono',monospace;}";
+  +".lashjalp-history-item .lashjalp-history-time{color:var(--sub);font-size:10.5px;margin-top:6px;font-family:'JetBrains Mono',monospace;}"
+  +".lashjalp-history-actions{display:flex;justify-content:flex-end;gap:6px;margin-bottom:6px;}"
+  +".lashjalp-history-edit-btn,.lashjalp-history-delete-btn{background:none;border:1px solid var(--border);border-radius:4px;color:var(--sub);cursor:pointer;font-family:inherit;font-size:11.5px;padding:2px 8px;line-height:1.6;}"
+  +".lashjalp-history-edit-btn:hover,.lashjalp-history-delete-btn:hover{color:var(--text);border-color:var(--main);}"
+  +".lashjalp-history-delete-btn[data-confirm=\"1\"]{color:var(--error);border-color:var(--error);}"
+  +".lashjalp-history-edit-btn:focus,.lashjalp-history-delete-btn:focus,.lashjalp-history-save-btn:focus,.lashjalp-history-cancel-btn:focus{outline:2px solid var(--main);outline-offset:2px;}"
+  +".lashjalp-history-edit-row{margin-bottom:6px;}"
+  +".lashjalp-history-edit-row textarea{width:100%;box-sizing:border-box;padding:8px 10px;border-radius:5px;background:var(--bg-panel);border:1px solid var(--border);color:var(--text-bright);font-family:'JetBrains Mono',monospace;font-size:12.5px;resize:vertical;outline:none;}"
+  +".lashjalp-history-edit-row-inline{display:flex;gap:8px;}"
+  +".lashjalp-history-edit-row-inline input{flex:1;min-width:0;box-sizing:border-box;padding:8px 10px;border-radius:5px;background:var(--bg-panel);border:1px solid var(--border);color:var(--text-bright);font-family:'JetBrains Mono',monospace;font-size:12.5px;outline:none;}"
+  +".lashjalp-history-edit-row textarea:focus,.lashjalp-history-edit-row-inline input:focus{border-color:var(--main);}"
+  +".lashjalp-history-edit-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px;}"
+  +".lashjalp-history-edit-actions .action-btn,.lashjalp-history-edit-actions .abtn{padding:6px 14px;font-size:12.5px;}";
 
 (function injectSokbarMarkup(){
   // Skydd mot dubblett-injektion om index.html av misstag ändå har kvar markupen.
@@ -678,44 +699,173 @@ function closeLashjalpHistory(){
   var historyBtn=document.getElementById("lashjalpHistoryBtn");
   if(historyBtn)historyBtn.focus();
 }
+// lashjalpHistoryItems/lashjalpHistoryKey håller den just nu inlästa listan/filen så att
+// redigera/ta bort kan jobba mot den (och skriva tillbaka HELA listan) utan att läsa om
+// från Drive för varje knapptryckning. Index i arrayen (inte item.id) används för att
+// koppla ihop varje kort med sin post - enklare än att hantera citattecken/specialtecken
+// i CSS-selektorer, och ordningen ändras aldrig mellan en omritning och nästa klick.
+var lashjalpHistoryItems=[], lashjalpHistoryKey="";
+
 async function loadLashjalpHistory(){
   var sel=document.getElementById("lashjalpHistoryFileSelect");
   var list=document.getElementById("lashjalpHistoryList");
   if(!sel||!list)return;
+  lashjalpHistoryKey=sel.value;
   if(typeof accessToken==="undefined"||!accessToken){
+    lashjalpHistoryItems=[];
     list.innerHTML="<div class='lashjalp-hint' style='margin:0'>Inte inloggad - kan inte visa sparade sökningar just nu.</div>";
     return;
   }
-  var key=sel.value;
-  var fileName=LASHJALP_FILES[key];
+  var fileName=LASHJALP_FILES[lashjalpHistoryKey];
   list.innerHTML="<div class='lashjalp-hint' style='margin:0'>Laddar …</div>";
   var data=await driveReadJson(LASHJALP_FOLDER,fileName);
-  var items=(data&&Array.isArray(data.items))?data.items:[];
+  lashjalpHistoryItems=(data&&Array.isArray(data.items))?data.items:[];
+  renderLashjalpHistoryList();
+}
+
+function renderLashjalpHistoryList(){
+  var list=document.getElementById("lashjalpHistoryList");
+  if(!list)return;
+  var items=lashjalpHistoryItems, key=lashjalpHistoryKey;
   if(!items.length){
     list.innerHTML="<div class='lashjalp-hint' style='margin:0'>Inga sparade sökningar än - tryck på 📌 vid ett resultat för att spara det hit.</div>";
     return;
   }
-  list.innerHTML=items.map(function(item){
-    var timeStr="";
-    try{if(item.timestamp)timeStr=new Date(item.timestamp).toLocaleString("sv-SE");}catch(e){/* strunta i tidsstämpeln om den inte går att tolka */}
-    if(key==="oversattning"){
-      var langLine="";
-      if(item.kallaSprak||item.tillSprak){
-        langLine="<div class='lashjalp-history-lang'>"+esc(item.kallaSprak||"okänt språk")+" → "+esc(item.tillSprak||"svenska")+"</div>";
-      }
-      return "<div class='lashjalp-history-item'>"
-        +"<div class='lashjalp-history-q'>"+esc(item.kalla||"")+"</div>"
-        +langLine
-        +"<div class='lashjalp-history-a'>"+esc(item.oversattning||"")+"</div>"
-        +(timeStr?"<div class='lashjalp-history-time'>"+esc(timeStr)+"</div>":"")
-        +"</div>";
+  list.innerHTML=items.map(function(item,idx){return lashjalpHistoryItemHtml(item,key,idx);}).join("");
+  list.querySelectorAll(".lashjalp-history-edit-btn").forEach(function(btn){
+    btn.onclick=function(){lashjalpHistoryEnterEdit(parseInt(btn.dataset.idx,10));};
+  });
+  list.querySelectorAll(".lashjalp-history-delete-btn").forEach(function(btn){
+    btn.onclick=function(){lashjalpHistoryDeleteClick(btn);};
+  });
+}
+
+function lashjalpHistoryItemHtml(item,key,idx){
+  var timeStr="";
+  try{if(item.timestamp)timeStr=new Date(item.timestamp).toLocaleString("sv-SE");}catch(e){/* strunta i tidsstämpeln om den inte går att tolka */}
+  var actions="<div class='lashjalp-history-actions'>"
+    +"<button type='button' class='lashjalp-history-edit-btn' data-idx='"+idx+"' title='Redigera'>✏️ Redigera</button>"
+    +"<button type='button' class='lashjalp-history-delete-btn' data-idx='"+idx+"' title='Ta bort'>✕</button>"
+    +"</div>";
+  if(key==="oversattning"){
+    var langLine="";
+    if(item.kallaSprak||item.tillSprak){
+      langLine="<div class='lashjalp-history-lang'>"+esc(item.kallaSprak||"okänt språk")+" → "+esc(item.tillSprak||"svenska")+"</div>";
     }
-    return "<div class='lashjalp-history-item'>"
-      +"<div class='lashjalp-history-q'>"+esc(item.fraga||"")+"</div>"
-      +"<div class='lashjalp-history-a'>"+esc(item.svar||"")+"</div>"
+    return "<div class='lashjalp-history-item' data-idx='"+idx+"'>"
+      +actions
+      +"<div class='lashjalp-history-q'>"+esc(item.kalla||"")+"</div>"
+      +langLine
+      +"<div class='lashjalp-history-a'>"+esc(item.oversattning||"")+"</div>"
       +(timeStr?"<div class='lashjalp-history-time'>"+esc(timeStr)+"</div>":"")
       +"</div>";
-  }).join("");
+  }
+  return "<div class='lashjalp-history-item' data-idx='"+idx+"'>"
+    +actions
+    +"<div class='lashjalp-history-q'>"+esc(item.fraga||"")+"</div>"
+    +"<div class='lashjalp-history-a'>"+esc(item.svar||"")+"</div>"
+    +(timeStr?"<div class='lashjalp-history-time'>"+esc(timeStr)+"</div>":"")
+    +"</div>";
+}
+
+// ✏️ Redigera byter ETT korts innehåll mot ett formulär inline (posten flyttas inte,
+// resten av listan ritas inte om) - fälten skiljer sig åt beroende på vilken fil det
+// gäller, precis som visningsläget ovan.
+function lashjalpHistoryEditFormHtml(item,key){
+  var actionsRow="<div class='lashjalp-history-edit-actions'>"
+    +"<button type='button' class='action-btn lashjalp-history-cancel-btn'>Avbryt</button>"
+    +"<button type='button' class='abtn lashjalp-history-save-btn'>Spara</button>"
+    +"</div>";
+  if(key==="oversattning"){
+    return "<div class='lashjalp-history-edit-row'><textarea class='lje-kalla' rows='2' placeholder='Källtext'>"+esc(item.kalla||"")+"</textarea></div>"
+      +"<div class='lashjalp-history-edit-row lashjalp-history-edit-row-inline'>"
+      +"<input type='text' class='lje-kallasprak' placeholder='Källspråk' value=\""+esc(item.kallaSprak||"")+"\">"
+      +"<input type='text' class='lje-tillsprak' placeholder='Målspråk' value=\""+esc(item.tillSprak||"svenska")+"\">"
+      +"</div>"
+      +"<div class='lashjalp-history-edit-row'><textarea class='lje-svar' rows='2' placeholder='Översättning'>"+esc(item.oversattning||"")+"</textarea></div>"
+      +actionsRow;
+  }
+  return "<div class='lashjalp-history-edit-row'><textarea class='lje-fraga' rows='2' placeholder='Fråga/ord'>"+esc(item.fraga||"")+"</textarea></div>"
+    +"<div class='lashjalp-history-edit-row'><textarea class='lje-svar' rows='3' placeholder='Svar'>"+esc(item.svar||"")+"</textarea></div>"
+    +actionsRow;
+}
+function lashjalpHistoryEnterEdit(idx){
+  var item=lashjalpHistoryItems[idx];
+  var card=document.querySelector('.lashjalp-history-item[data-idx="'+idx+'"]');
+  if(!item||!card)return;
+  card.innerHTML=lashjalpHistoryEditFormHtml(item,lashjalpHistoryKey);
+  var firstField=card.querySelector("textarea, input");
+  if(firstField)firstField.focus();
+  var saveBtn=card.querySelector(".lashjalp-history-save-btn");
+  if(saveBtn)saveBtn.onclick=function(){lashjalpHistorySaveEdit(idx,card,saveBtn);};
+  var cancelBtn=card.querySelector(".lashjalp-history-cancel-btn");
+  if(cancelBtn)cancelBtn.onclick=function(){
+    renderLashjalpHistoryList();
+    var sel=document.getElementById("lashjalpHistoryFileSelect");
+    if(sel)sel.focus();
+  };
+}
+async function lashjalpHistorySaveEdit(idx,card,saveBtn){
+  var item=lashjalpHistoryItems[idx];
+  if(!item)return;
+  if(saveBtn){saveBtn.disabled=true;saveBtn.textContent="Sparar …";}
+  if(lashjalpHistoryKey==="oversattning"){
+    item.kalla=((card.querySelector(".lje-kalla")||{}).value||"").trim();
+    item.kallaSprak=((card.querySelector(".lje-kallasprak")||{}).value||"").trim();
+    item.tillSprak=((card.querySelector(".lje-tillsprak")||{}).value||"").trim()||"svenska";
+    item.oversattning=((card.querySelector(".lje-svar")||{}).value||"").trim();
+  } else {
+    item.fraga=((card.querySelector(".lje-fraga")||{}).value||"").trim();
+    item.svar=((card.querySelector(".lje-svar")||{}).value||"").trim();
+  }
+  var fileName=LASHJALP_FILES[lashjalpHistoryKey];
+  var ok=await driveWriteJson(LASHJALP_FOLDER,fileName,{items:lashjalpHistoryItems});
+  if(!ok){
+    console.error("sokbar: kunde inte spara ändringen av historikposten i "+fileName);
+    if(saveBtn){saveBtn.disabled=false;saveBtn.textContent="Kunde inte spara, försök igen";}
+    return;
+  }
+  renderLashjalpHistoryList();
+  var sel=document.getElementById("lashjalpHistoryFileSelect");
+  if(sel)sel.focus();
+}
+
+// ✕ Ta bort kräver två klick istället för webbläsarens window.confirm() (som skulle
+// blockera sidan och bryta tangentbords-navigeringen): första klicket byter texten
+// till "Ta bort?" i tre sekunder, andra klicket inom den tiden bekräftar borttagningen.
+function lashjalpHistoryDeleteClick(btn){
+  if(btn.dataset.confirm==="1"){
+    lashjalpHistoryDeleteConfirmed(parseInt(btn.dataset.idx,10));
+    return;
+  }
+  btn.dataset.confirm="1";
+  btn.dataset.origText=btn.textContent;
+  btn.textContent="Ta bort?";
+  btn.title="Klicka igen för att bekräfta borttagning";
+  clearTimeout(btn._lashjalpConfirmTimer);
+  btn._lashjalpConfirmTimer=setTimeout(function(){
+    btn.dataset.confirm="0";
+    btn.textContent=btn.dataset.origText||"✕";
+    btn.title="Ta bort";
+  },3000);
+}
+async function lashjalpHistoryDeleteConfirmed(idx){
+  var item=lashjalpHistoryItems[idx];
+  if(!item)return;
+  var card=document.querySelector('.lashjalp-history-item[data-idx="'+idx+'"]');
+  var deleteBtn=card?card.querySelector(".lashjalp-history-delete-btn"):null;
+  if(deleteBtn){deleteBtn.disabled=true;deleteBtn.textContent="Tar bort …";}
+  var backup=lashjalpHistoryItems;
+  lashjalpHistoryItems=lashjalpHistoryItems.filter(function(it){return it!==item;});
+  var fileName=LASHJALP_FILES[lashjalpHistoryKey];
+  var ok=await driveWriteJson(LASHJALP_FOLDER,fileName,{items:lashjalpHistoryItems});
+  if(!ok){
+    console.error("sokbar: kunde inte ta bort historikposten i "+fileName+", försök igen");
+    lashjalpHistoryItems=backup;
+  }
+  renderLashjalpHistoryList();
+  var sel=document.getElementById("lashjalpHistoryFileSelect");
+  if(sel)sel.focus();
 }
 
 // Genväg (👓-knappen till vänster om 📖-knappen i huvudraden): går rakt in i
@@ -771,9 +921,12 @@ async function lashjalpTranslate(){
       console.error("sokbar: läshjälp-översättning kunde inte tolka JSON-svaret, visar råtext istället",lastErr,lastRawText);
       var rawTranslated=lastRawText.trim();
       result.innerHTML="<button id='lashjalpTransPinBtn' title='Spara översättningen (oversattning.json)' style='float:right;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:0 0 6px 8px'>📌</button>"
+        +"<button id='lashjalpTransOrdBtn' title='Slå upp den översatta texten i Ordbok/synonymer' style='float:right;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:0 0 6px 8px'>📚</button>"
         +"<div>"+esc(rawTranslated)+"</div>";
       var rawPinBtn=document.getElementById("lashjalpTransPinBtn");
       if(rawPinBtn)rawPinBtn.onclick=function(){pinOversattningResult(text,rawTranslated,sourceLang,targetLang,rawPinBtn);};
+      var rawOrdBtn=document.getElementById("lashjalpTransOrdBtn");
+      if(rawOrdBtn)rawOrdBtn.onclick=function(){lashjalpLookupTranslatedInOrdbok(rawTranslated);};
       return;
     }
     console.error("sokbar: läshjälp-översättning fick inget svar alls från AI",lastErr);
@@ -784,13 +937,28 @@ async function lashjalpTranslate(){
   var detectedSprak=sourceLang||String(parsed.kallaSprak||"").trim();
   if(translated){
     result.innerHTML="<button id='lashjalpTransPinBtn' title='Spara översättningen (oversattning.json)' style='float:right;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:0 0 6px 8px'>📌</button>"
+      +"<button id='lashjalpTransOrdBtn' title='Slå upp den översatta texten i Ordbok/synonymer' style='float:right;background:none;border:none;color:var(--sub);cursor:pointer;font-family:inherit;font-size:13px;padding:0 0 6px 8px'>📚</button>"
       +(detectedSprak?"<div style='color:var(--sub);font-size:11px;margin-bottom:4px'>"+esc(detectedSprak)+" → "+esc(targetLang)+"</div>":"")
       +"<div>"+esc(translated)+"</div>";
     var pinBtn=document.getElementById("lashjalpTransPinBtn");
     if(pinBtn)pinBtn.onclick=function(){pinOversattningResult(text,translated,detectedSprak,targetLang,pinBtn);};
+    var ordBtn=document.getElementById("lashjalpTransOrdBtn");
+    if(ordBtn)ordBtn.onclick=function(){lashjalpLookupTranslatedInOrdbok(translated);};
   } else {
     result.textContent="Kunde inte hämta en översättning, försök igen.";
   }
+}
+
+// 📚-knappen bredvid 📌 på ett översättningsresultat: tar den översatta texten,
+// lägger in den i Läshjälps eget Ordbok/synonymer-fält och kör sökningen direkt -
+// snabbväg för att t.ex. slå upp synonymer på ett ord man just fått översatt.
+function lashjalpLookupTranslatedInOrdbok(translatedText){
+  var ordInput=document.getElementById("lashjalpOrdInput");
+  if(!ordInput||!translatedText)return;
+  ordInput.value=translatedText;
+  ordInput.focus();
+  if(ordInput.scrollIntoView)ordInput.scrollIntoView({block:"nearest"});
+  lashjalpSearchWord();
 }
 
 // Eget ordboks-uppslag för läshjälpen - egen chat-tråd (lashjalpOrdChat) så den inte
