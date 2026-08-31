@@ -148,7 +148,7 @@ function showNoteringSettings(){
       +"</div>"
 
       +"<div style='display:flex;align-items:center;justify-content:space-between;margin-top:18px;margin-bottom:4px'>"
-      +"<div class='lbl' style='margin-bottom:0'>Tips & Tricks-kategorier</div>"
+      +"<div class='lbl' style='margin-bottom:0'>Anteckning-kategorier</div>"
       +"<button id='ns-tt-sort' class='sec ghost' style='width:auto;margin:0;padding:4px 10px;font-size:11px'>Sortera A-Ö</button>"
       +"</div>"
       +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:8px'>Tryck för att ändra namn, × för att ta bort, dra ⠿ för att ändra ordning.</div>"
@@ -158,7 +158,7 @@ function showNoteringSettings(){
       +"<button class='chip' id='ns-newtt-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
       +"</div>"
 
-      +"<div class='lbl' style='margin-top:18px;margin-bottom:4px'>Tips & Tricks-subkategorier</div>"
+      +"<div class='lbl' style='margin-top:18px;margin-bottom:4px'>Anteckning-subkategorier</div>"
       +(wTt.length
         ? "<select id='ns-sub-cat-select' style='width:100%;background:#131313;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;padding:9px 10px;margin-bottom:8px'>"
           +wTt.map(function(c){return "<option value='"+esc(c)+"'"+(c===ttSubCat?" selected":"")+">"+esc(c)+"</option>";}).join("")
@@ -168,7 +168,7 @@ function showNoteringSettings(){
           +"<input class='inp' id='ns-newsub-label' placeholder='Ny subkategori...' style='flex:1;padding:7px 10px;font-size:13px'/>"
           +"<button class='chip' id='ns-newsub-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
           +"</div>"
-        : "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Lägg till minst en Tips & Tricks-kategori ovan först.</div>")
+        : "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Lägg till minst en Anteckning-kategori ovan först.</div>")
 
       +"<div class='lbl' style='margin-top:18px'>Data & backup</div>"
       // OBS: "Data & backup" ska alltid ligga SIST i panelen, precis som i Aktivitets mönster.
@@ -322,7 +322,7 @@ function showNoteringSettings(){
 
     ov.querySelector("#ns-save").onclick=function(){
       if(!wFund.length){alert("Du måste ha minst en Fundering-kategori kvar.");return;}
-      if(!wTt.length){alert("Du måste ha minst en Tips & Tricks-kategori kvar.");return;}
+      if(!wTt.length){alert("Du måste ha minst en Anteckning-kategori kvar.");return;}
       FUND_CAT_PRESETS=wFund;
       TIPSTRICKS_CAT_PRESETS=wTt;
       TIPSTRICKS_SUBCAT_BY_CAT=wSub;
@@ -568,7 +568,7 @@ async function saveNoteringAnteckning(){
   try{
     await driveWriteJson(["Notering"],"anteckning.json",{tipsTricksHist:tipsTricksHist});
   }catch(e){
-    showNoteringDriveError("Kunde inte spara Anteckning (Tips & Tricks)",e);
+    showNoteringDriveError("Kunde inte spara Anteckning",e);
   }
 }
 
