@@ -134,14 +134,17 @@ var konvNoteDraft="", konvNoteDropdown={open:false};
 
 function renderSamtalTop(){
   var b=document.getElementById("body");
-  var subTabs="<div style='display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:20px'>"
-    +"<button class='mode-btn"+(samtalSubview==="text"?" on":"")+"' data-samtalsub='text'>Text</button>"
-    +"<button class='mode-btn"+(samtalSubview==="muntligt"?" on":"")+"' data-samtalsub='muntligt'>Muntligt</button>"
+  var subTabs="<div style='display:flex;gap:6px;margin-bottom:20px;align-items:center'>"
+    +"<button class='mode-btn"+(samtalSubview==="text"?" on":"")+"' style='flex:1' data-samtalsub='text'>Text</button>"
+    +"<button class='mode-btn"+(samtalSubview==="muntligt"?" on":"")+"' style='flex:1' data-samtalsub='muntligt'>Muntligt</button>"
+    +"<button id='samtal-settings-btn' type='button' title='Inställningar' style='background:none;border:none;color:#6b6880;font-size:20px;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0'>⚙️</button>"
     +"</div>";
   b.innerHTML=subTabs+"<div id='samtal-content'><div style='padding:30px;text-align:center;color:#5c5c5c;font-size:13px'>⏳ Laddar...</div></div>";
   b.querySelectorAll("[data-samtalsub]").forEach(function(btn){
     btn.onclick=function(){switchSamtalSubview(btn.dataset.samtalsub);};
   });
+  var settingsBtn=b.querySelector("#samtal-settings-btn");
+  if(settingsBtn)settingsBtn.onclick=function(){showSamtalSettings();};
   ensureSamtalDataLoaded().then(function(){renderSamtalContent();});
 }
 function switchSamtalSubview(sub){
@@ -832,6 +835,136 @@ async function doMuntVill(k,goal){
     muntAiResult={type:"vill",advice:"Kunde inte generera. Forsok igen.",steps:[],chat:[{role:"user",content:"Vad jag vill: "+goal},{role:"assistant",content:"Kunde inte generera. Forsok igen."}]};
   }
   muntAiLoading=false;renderMuntKonvOpen(document.getElementById("samtal-content"));
+}
+
+// ---- Inställningar (Samtal) ----
+function showSamtalSettings(){
+  var ov=document.createElement("div");
+  ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto";
+
+  ov.innerHTML="<div style='background:#161616;border-radius:20px;width:100%;max-width:420px;overflow:hidden'>"
+    +"<div style='padding:16px 20px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between'>"
+    +"<div style='font-size:16px;font-weight:600;color:#f2f2f2'>⚙️ Inställningar — Samtal</div>"
+    +"<button id='ss-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1'>✕</button>"
+    +"</div>"
+    +"<div style='padding:20px;max-height:70vh;overflow-y:auto'>"
+    +"<div class='lbl'>Data & backup</div>"
+    +"<button id='ss-json-editor' class='sec ghost' style='width:100%'>📝 Öppna/redigera JSON-filer</button>"
+    +"</div>"
+    +"<div style='padding:16px 20px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
+    +"<button id='ss-close2' class='sec ghost' style='flex:1'>Stäng</button>"
+    +"</div>"
+    +"</div>";
+
+  document.body.appendChild(ov);
+  ov.onclick=function(e){if(e.target===ov)ov.remove();};
+  var closeBtn=ov.querySelector("#ss-close");
+  if(closeBtn)closeBtn.onclick=function(){ov.remove();};
+  var closeBtn2=ov.querySelector("#ss-close2");
+  if(closeBtn2)closeBtn2.onclick=function(){ov.remove();};
+  var jsonBtn=ov.querySelector("#ss-json-editor");
+  if(jsonBtn)jsonBtn.onclick=function(){openSamtalJsonEditor();};
+}
+
+// ---- JSON-redigerare (Samtal) — samma mönster som Aktivitets openJsonEditor(), men
+// enklare: driveWriteJson skapar filen automatiskt om den saknas (se HANDOFF_own_your_data.md),
+// så ingen separat "fil saknas"-koll/skapande-flöde behövs som hos Aktivitet.
+async function findSamtalDriveFileId(filename){
+  var folderId=await driveResolveFolderPath(["Samtal"]);
+  var q="name='"+filename+"' and '"+folderId+"' in parents and trashed=false";
+  var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+  if(!r.ok)throw new Error("HTTP "+r.status);
+  var d=await r.json();
+  return (d.files&&d.files.length)?d.files[0].id:null;
+}
+function openSamtalJsonEditor(){
+  var current="text"; // text | muntligt
+  var ov2=document.createElement("div");
+  ov2.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px";
+
+  function fileFor(key){return key==="text"?"text.json":"muntlig.json";}
+  function dataFor(key){
+    if(key==="text")return {konversationer:konversationer};
+    return {muntKonversationer:muntKonversationer};
+  }
+
+  function render(){
+    ov2.innerHTML="<div style='background:#161616;border-radius:16px;width:100%;max-width:520px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden'>"
+      +"<div style='padding:14px 18px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap'>"
+      +"<select id='sje-select' style='background:#131313;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:6px 8px;flex:1;min-width:110px'>"
+      +"<option value='text'"+(current==="text"?" selected":"")+">Text (text.json)</option>"
+      +"<option value='muntligt'"+(current==="muntligt"?" selected":"")+">Muntligt (muntlig.json)</option>"
+      +"</select>"
+      +"<button id='sje-open-drive' title='Öppna filen i Google Drive' style='background:none;border:1px solid #2a2a2a;border-radius:8px;color:#4fa8ff;font-size:12px;padding:6px 10px;cursor:pointer;white-space:nowrap;flex-shrink:0'>🔗 Öppna i Drive</button>"
+      +"<button id='sje-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1;flex-shrink:0'>✕</button>"
+      +"</div>"
+      +"<div id='sje-status' style='padding:8px 18px 0;font-size:11px;color:#5c5c5c'>Hämtar aktuellt innehåll från Drive...</div>"
+      +"<textarea id='sje-text' spellcheck='false' disabled style='flex:1;background:#0a0a0a;color:#f2f2f2;border:none;padding:14px;font-family:monospace;font-size:12px;min-height:300px;resize:vertical'></textarea>"
+      +"<div id='sje-warning' style='padding:0 18px 8px;font-size:11px;color:#d97a83'></div>"
+      +"<div style='padding:14px 18px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
+      +"<button id='sje-cancel' class='sec ghost' style='flex:1'>Avbryt</button>"
+      +"<button id='sje-save' class='cta-log' style='flex:1' disabled>Spara ändringar</button>"
+      +"</div>"
+      +"</div>";
+    ov2.querySelector("#sje-close").onclick=function(){ov2.remove();};
+    ov2.querySelector("#sje-cancel").onclick=function(){ov2.remove();};
+    ov2.querySelector("#sje-select").onchange=function(){current=ov2.querySelector("#sje-select").value;render();};
+
+    var ta=ov2.querySelector("#sje-text");
+    var saveBtn=ov2.querySelector("#sje-save");
+    var statusEl=ov2.querySelector("#sje-status");
+    (async function(){
+      try{
+        var fresh=await driveReadJson(["Samtal"],fileFor(current));
+        ta.value=JSON.stringify(fresh||dataFor(current),null,2);
+        ta.disabled=false;saveBtn.disabled=false;
+        statusEl.textContent=fresh?"":"Filen finns inte i Drive ännu — skapas automatiskt första gången du sparar.";
+      }catch(e){
+        ta.value=JSON.stringify(dataFor(current),null,2);
+        ta.disabled=false;saveBtn.disabled=false;
+        statusEl.style.color="#d97a83";
+        statusEl.textContent="Kunde inte hämta senaste från Drive, visar det som redan finns inläst: "+e.message;
+      }
+    })();
+
+    ov2.querySelector("#sje-open-drive").onclick=function(){
+      var warn=ov2.querySelector("#sje-warning");
+      if(!accessToken){warn.textContent="Logga in för att öppna filen i Drive.";return;}
+      warn.style.color="#5c5c5c";warn.textContent="Söker filen i Drive...";
+      findSamtalDriveFileId(fileFor(current)).then(function(fileId){
+        if(!fileId){warn.style.color="#d97a83";warn.textContent="Filen finns inte i Drive ännu (har inte sparats dit).";return;}
+        warn.textContent="";
+        window.open("https://drive.google.com/file/d/"+fileId+"/view","_blank");
+      }).catch(function(e){
+        warn.style.color="#d97a83";warn.textContent="Kunde inte hitta filen: "+e.message;
+      });
+    };
+
+    saveBtn.onclick=async function(){
+      var txt=ta.value;
+      var warn=ov2.querySelector("#sje-warning");
+      var parsed;
+      try{parsed=JSON.parse(txt);}catch(e){warn.textContent="Ogiltig JSON: "+e.message;return;}
+      if(current==="text"){
+        if(!Array.isArray(parsed.konversationer)){warn.textContent="Förväntade ett 'konversationer'-fält med en lista.";return;}
+        konversationer=parsed.konversationer;
+      }else{
+        if(!Array.isArray(parsed.muntKonversationer)){warn.textContent="Förväntade ett 'muntKonversationer'-fält med en lista.";return;}
+        muntKonversationer=parsed.muntKonversationer;
+      }
+      saveBtn.disabled=true;saveBtn.textContent="Sparar...";
+      try{
+        await (current==="text"?saveSamtalText():saveSamtalMuntligt());
+        ov2.remove();
+        renderSamtalContent();
+      }catch(e){
+        warn.textContent="Kunde inte spara: "+e.message;
+        saveBtn.disabled=false;saveBtn.textContent="Spara ändringar";
+      }
+    };
+  }
+  render();
+  document.body.appendChild(ov2);
 }
 
 // ---- FUNDERINGAR ----
