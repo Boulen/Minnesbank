@@ -45,7 +45,7 @@ function bindNotesBox(b,k,idPrefix,dropdownState,onChange,saveTabName){
     if(!txt)return;
     migrateNotes(k);
     k.notes.push({id:String(Date.now()),text:txt,timestamp:new Date().toISOString()});
-    saveAndSync(saveTabName);
+    (saveTabName==="samtalmuntligt"?saveSamtalMuntligt():saveSamtalText());
     onChange();
   };
   var toggleBtn=b.querySelector("#"+idPrefix+"-note-toggle-btn");
@@ -58,7 +58,7 @@ function bindNotesBox(b,k,idPrefix,dropdownState,onChange,saveTabName){
       var nid=btn.dataset.notedel;
       confirmDelete("Vill du ta bort anteckningen?",function(){
         k.notes=k.notes.filter(function(n){return n.id!==nid;});
-        saveAndSync(saveTabName);
+        (saveTabName==="samtalmuntligt"?saveSamtalMuntligt():saveSamtalText());
         onChange();
       });
     };
@@ -82,13 +82,44 @@ function bindNotesBox(b,k,idPrefix,dropdownState,onChange,saveTabName){
       var nid=btn.dataset.notesave;
       var n=k.notes.find(function(x){return x.id===nid;});
       var ta=b.querySelector("[data-noteeditinp='"+nid+"']");
-      if(n&&ta){n.text=ta.value.trim();n.editing=false;saveAndSync(saveTabName);}
+      if(n&&ta){n.text=ta.value.trim();n.editing=false;(saveTabName==="samtalmuntligt"?saveSamtalMuntligt():saveSamtalText());}
       onChange();
     };
   });
 }
 
 // Huvudrutan: förklara en fras, fråga, bild eller fil (text-baserad).
+
+// ---- Egen Drive-lagring, enligt HANDOFF_own_your_data.md ----
+// Två separata filer i Samtal/-mappen (under appens rotmapp, FOLDER_ID i core.js):
+// Samtal/text.json      -> {konversationer}
+// Samtal/muntlig.json   -> {muntKonversationer}
+// Ersätter de gamla saveAndSync("samtaltext")/("samtalmuntligt")/loadTab(...)-anropen,
+// som numera är tysta no-ops i core.js och inte sparar/läser något.
+var samtalDataLoaded=false;
+var samtalDataLoadPromise=null;
+async function ensureSamtalDataLoaded(){
+  if(samtalDataLoaded)return;
+  if(samtalDataLoadPromise)return samtalDataLoadPromise;
+  samtalDataLoadPromise=(async function(){
+    try{
+      var textData=await driveReadJson(["Samtal"],"text.json");
+      if(textData&&textData.konversationer)konversationer=textData.konversationer;
+      var muntligData=await driveReadJson(["Samtal"],"muntlig.json");
+      if(muntligData&&muntligData.muntKonversationer)muntKonversationer=muntligData.muntKonversationer;
+    }catch(e){
+      console.warn("Kunde inte läsa Samtal-filerna:",e);
+    }
+    samtalDataLoaded=true;
+  })();
+  return samtalDataLoadPromise;
+}
+async function saveSamtalText(){
+  return driveWriteJson(["Samtal"],"text.json",{konversationer:konversationer});
+}
+async function saveSamtalMuntligt(){
+  return driveWriteJson(["Samtal"],"muntlig.json",{muntKonversationer:muntKonversationer});
+}
 
 var samtalSubview="text"; // text | muntligt
 
@@ -107,11 +138,11 @@ function renderSamtalTop(){
     +"<button class='mode-btn"+(samtalSubview==="text"?" on":"")+"' data-samtalsub='text'>Text</button>"
     +"<button class='mode-btn"+(samtalSubview==="muntligt"?" on":"")+"' data-samtalsub='muntligt'>Muntligt</button>"
     +"</div>";
-  b.innerHTML=subTabs+"<div id='samtal-content'></div>";
+  b.innerHTML=subTabs+"<div id='samtal-content'><div style='padding:30px;text-align:center;color:#5c5c5c;font-size:13px'>⏳ Laddar...</div></div>";
   b.querySelectorAll("[data-samtalsub]").forEach(function(btn){
     btn.onclick=function(){switchSamtalSubview(btn.dataset.samtalsub);};
   });
-  renderSamtalContent();
+  ensureSamtalDataLoaded().then(function(){renderSamtalContent();});
 }
 function switchSamtalSubview(sub){
   samtalSubview=sub;
@@ -120,7 +151,7 @@ function switchSamtalSubview(sub){
   var st=samtalTabMap[sub]||"samtaltext";
   var sc=document.getElementById("samtal-content");
   if(sc)sc.innerHTML="<div style='padding:30px;text-align:center;color:#5c5c5c;font-size:13px'>⏳ Laddar...</div>";
-  loadTab(st).then(function(){renderSamtalContent();});
+  ensureSamtalDataLoaded().then(function(){renderSamtalContent();});
 }
 function renderSamtalContent(){
   if(samtalSubview==="muntligt")renderMuntligt();
@@ -166,7 +197,7 @@ function renderKonvList(b){
     konversationer.unshift(k);
     konvNewName="";
     activeKonvId=k.id;
-    saveAndSync("samtaltext");
+    saveSamtalText();
     renderSamtalText();
   };
   if(createBtn)createBtn.onclick=createFn;
@@ -193,7 +224,7 @@ function renderKonvList(b){
     var k=konversationer.find(function(x){return x.id===kid;});
     if(k&&v)k.name=v;
     konvListRenamingId=null;
-    saveAndSync("samtaltext");
+    saveSamtalText();
     renderKonvList(b);
   };
   b.querySelectorAll("[data-renamesave]").forEach(function(btn){
@@ -212,7 +243,7 @@ function renderKonvList(b){
       var k=konversationer.find(function(x){return x.id===kid;});
       confirmDelete("Vill du ta bort konversationen \'"+esc(k?k.name:"")+"\'?",function(){
         konversationer=konversationer.filter(function(x){return x.id!==kid;});
-        saveAndSync("samtaltext");renderSamtalText();
+        saveSamtalText();renderSamtalText();
       });
     };
   });
@@ -299,7 +330,7 @@ function renderKonvChat(b){
     var v=(nameInp?nameInp.value:"").trim();
     if(v)k.name=v;
     konvNameEditing=false;
-    saveAndSync("samtaltext");
+    saveSamtalText();
     renderKonvChat(b);
   };
   var nameEditBtn=b.querySelector("#konv-name-edit-btn");
@@ -323,7 +354,7 @@ function renderKonvChat(b){
     k.messages.push({sender:konvSender,text:txt,timestamp:new Date().toISOString()});
     k.timestamp=new Date().toISOString();
     konvMsgDraft="";konvAiResult=null;konvAiDraft="";
-    saveAndSync("samtaltext");
+    saveSamtalText();
     renderKonvChat(b);
   };
   if(msgInp)msgInp.onkeydown=function(e){
@@ -340,7 +371,7 @@ function renderKonvChat(b){
       var idx=Number(btn.dataset.msgdel);
       confirmDelete("Vill du ta bort meddelandet?",function(){
         k.messages.splice(idx,1);
-        saveAndSync("samtaltext");
+        saveSamtalText();
         renderKonvChat(b);
       });
     };
@@ -354,7 +385,7 @@ function renderKonvChat(b){
       var txt=msgEditInp.value.trim();
       if(txt)k.messages[editingKonvMsgIdx].text=txt;
       editingKonvMsgIdx=null;
-      saveAndSync("samtaltext");
+      saveSamtalText();
       renderKonvChat(b);
     };
     if(msgEditCancel)msgEditCancel.onclick=function(){editingKonvMsgIdx=null;renderKonvChat(b);};
@@ -518,7 +549,7 @@ function renderMuntKonvList(b){
     muntKonversationer.unshift(k);
     muntNewName="";
     activeMuntKonvId=k.id;
-    saveAndSync("samtalmuntligt");
+    saveSamtalMuntligt();
     renderMuntligt();
   };
   if(createBtn)createBtn.onclick=createFn;
@@ -545,7 +576,7 @@ function renderMuntKonvList(b){
     var k=muntKonversationer.find(function(x){return x.id===kid;});
     if(k&&v)k.name=v;
     muntKonvListRenamingId=null;
-    saveAndSync("samtalmuntligt");
+    saveSamtalMuntligt();
     renderMuntKonvList(b);
   };
   b.querySelectorAll("[data-renamemuntsave]").forEach(function(btn){
@@ -564,7 +595,7 @@ function renderMuntKonvList(b){
       var k=muntKonversationer.find(function(x){return x.id===kid;});
       confirmDelete("Vill du ta bort konversationen \'"+esc(k?k.name:"")+"\'?",function(){
         muntKonversationer=muntKonversationer.filter(function(x){return x.id!==kid;});
-        saveAndSync("samtalmuntligt");renderMuntligt();
+        saveSamtalMuntligt();renderMuntligt();
       });
     };
   });
@@ -660,7 +691,7 @@ function renderMuntKonvOpen(b){
     var v=(nameInp?nameInp.value:"").trim();
     if(v)k.name=v;
     muntNameEditing=false;
-    saveAndSync("samtalmuntligt");
+    saveSamtalMuntligt();
     renderMuntKonvOpen(b);
   };
   var muntNameEditBtn=b.querySelector("#muntkonv-name-edit-btn");
@@ -683,7 +714,7 @@ function renderMuntKonvOpen(b){
     k.entries.push({id:String(Date.now()),summary:summary,feeling:feeling,timestamp:new Date().toISOString()});
     k.timestamp=new Date().toISOString();
     muntSummaryDraft="";muntFeelingDraft="";
-    saveAndSync("samtalmuntligt");
+    saveSamtalMuntligt();
     renderMuntKonvOpen(b);
   };
   var entryShiftEnter=function(e){if(e.key==="Enter"&&e.shiftKey){e.preventDefault();submitEntry();}};
@@ -705,7 +736,7 @@ function renderMuntKonvOpen(b){
       var fTa=b.querySelector("[data-entryeditfeeling=\'"+eid+"\']");
       if(e){e.summary=sTa?sTa.value.trim():e.summary;e.feeling=fTa?fTa.value.trim():e.feeling;}
       editingMuntEntryId=null;
-      saveAndSync("samtalmuntligt");
+      saveSamtalMuntligt();
       renderMuntKonvOpen(b);
     };
   });
@@ -714,7 +745,7 @@ function renderMuntKonvOpen(b){
       var eid=btn.dataset.entrydel;
       confirmDelete("Vill du ta bort posten?",function(){
         k.entries=k.entries.filter(function(x){return x.id!==eid;});
-        saveAndSync("samtalmuntligt");
+        saveSamtalMuntligt();
         renderMuntKonvOpen(b);
       });
     };
