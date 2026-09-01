@@ -65,11 +65,17 @@
 // titeln är ljusare/större (var(--text-bright), 14.5px) för att synas bättre - se
 // lashjalpHistoryItemHtml(). (2) AI-chatten har fått: ett textfält för att välja vilken
 // roll/personlighet AI:n ska anta (skickas med i systemprompten, se aiChatSend()); ✏️/✕
-// på varje meddelande i konversationen (aiChatEnterEditMessage()/aiChatDeleteMessage());
-// en 📌-knapp som sparar HELA konversationen (inkl. vald roll) till en ny fil, ai.json;
-// och en 📂-knapp som visar sparade konversationer - klick på en laddar in den igen
-// (meddelanden + roll) så man kan fortsätta där man slutade, se
-// toggleAiChatSavedPanel()/aiChatContinueSaved().
+// på varje meddelande i konversationen (aiChatEnterEditMessage()/aiChatDeleteMessage()).
+// (Den var 2026-08-31 kort tid utrustad med en 📌/📂-funktion för att pinna/bläddra bland
+// HELA sparade AI-chatt-konversationer i ai.json - den är borttagen igen, se nästa post.)
+//
+// NYTT (2026-09-01): AI-chatten läser nu automatiskt bakgrundsinformation ur sok.json/
+// ord.json/oversattning.json (AI-genererade korta sammanfattningar, cachas i ai.json)
+// och skickar med det i systemprompten på varje meddelande - svaren kan då bli mer
+// personligt anpassade utan att man behöver berätta allt själv. Se "AI-chat:
+// bakgrundskontext"-blocket (aiChatRefreshBackgroundContext()/aiChatSummarizeFile())
+// längre ner. Detta ersatte 📌/📂-funktionen ovan, som togs bort på Blås begäran eftersom
+// ai.json-namnet behövdes till den här cachen istället.
 
 var LASHJALP_CSS = ""
   +".lashjalp-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:300;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;}"
@@ -90,7 +96,7 @@ var LASHJALP_CSS = ""
   +"#lashjalpSettingsBtn:focus,#lashjalpSettingsCloseBtn:focus,#lashjalpSettingsCancelBtn:focus,#lashjalpSettingsSaveBtn:focus,"
   +"#lashjalpHistoryBtn:focus,#lashjalpHistoryCloseBtn:focus,#lashjalpHistoryShortcutBtn:focus,#lashjalpDropupToggleBtn:focus,"
   +"#aiChatBtn:focus,#aiChatCloseBtn:focus,#aiChatSendBtn:focus,#aiChatCameraBtn:focus,#aiChatSnapBtn:focus,#aiChatCloseCameraBtn:focus,"
-  +"#aiChatPinBtn:focus,#aiChatSavedBtn:focus,#aiChatPersonaInput:focus"
+  +"#aiChatPersonaInput:focus,#aiChatSettingsBtn:focus,#lashjalpSettingsAiCommentAddBtn:focus"
   +"{outline:2px solid var(--main);outline-offset:2px;}"
   +".ai-chat-messages{max-height:340px;overflow-y:auto;margin-bottom:10px;}"
   +".ai-chat-attach-preview{display:flex;align-items:center;margin-bottom:8px;}"
@@ -103,12 +109,6 @@ var LASHJALP_CSS = ""
   +".ai-chat-msg-edit-area:focus{border-color:var(--main);}"
   +".ai-chat-msg-edit-actions{display:flex;gap:8px;margin-top:4px;}"
   +".ai-chat-msg-edit-actions .action-btn,.ai-chat-msg-edit-actions .abtn{padding:6px 14px;font-size:12.5px;}"
-  +".ai-chat-saved-panel{background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:10px;max-height:220px;overflow-y:auto;}"
-  +".ai-chat-saved-item{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;box-sizing:border-box;background:none;border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-family:inherit;font-size:12.5px;padding:6px 10px;margin-bottom:6px;text-align:left;}"
-  +".ai-chat-saved-item:last-child{margin-bottom:0;}"
-  +".ai-chat-saved-item:hover,.ai-chat-saved-item:focus{border-color:var(--main);outline:none;}"
-  +".ai-chat-saved-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;}"
-  +".ai-chat-saved-time{color:var(--sub);font-size:10.5px;flex:0 0 auto;}"
   +".lashjalp-panel .abtn{padding:8px 18px;}"
   +".lashjalp-dropup{position:relative;}"
   +".lashjalp-dropup-menu{display:none;position:absolute;bottom:calc(100% + 6px);right:0;background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.45);min-width:190px;flex-direction:column;padding:4px;z-index:60;}"
@@ -217,10 +217,14 @@ var LASHJALP_CSS = ""
     +'<option value="sok">Sök (sok.json)</option>'
     +'<option value="ord">Ord (ord.json)</option>'
     +'<option value="oversattning">Översättning (oversattning.json)</option>'
-    +'<option value="ai">AI-chat (ai.json)</option>'
+    +'<option value="ai">AI-chattens bakgrundskontext (ai.json)</option>'
     +'</select>'
     +'</div>'
     +'<div class="lashjalp-hint" id="lashjalpSettingsStatus" style="margin:0 0 10px"></div>'
+    +'<div class="lashjalp-row" id="lashjalpSettingsAiCommentRow" style="display:none">'
+    +'<input type="text" id="lashjalpSettingsAiCommentInput" placeholder="Lägg till en kommentar (hamnar högst upp i ai.json - redigera/ta bort direkt i JSON-texten nedan)">'
+    +'<button type="button" id="lashjalpSettingsAiCommentAddBtn" class="action-btn">Lägg till</button>'
+    +'</div>'
     +'<div class="lashjalp-row">'
     +'<textarea id="lashjalpSettingsJsonArea" rows="12" style="min-height:260px" placeholder="Laddar …"></textarea>'
     +'</div>'
@@ -254,18 +258,13 @@ var LASHJALP_CSS = ""
     +'<div class="lashjalp-header">'
     +'<span class="note-label" id="aiChatTitle">🤖 AI-chat</span>'
     +'<div style="display:flex;gap:6px">'
-    +'<button type="button" id="aiChatPinBtn" class="action-btn" title="Spara konversationen (ai.json)">📌</button>'
-    +'<button type="button" id="aiChatSavedBtn" class="action-btn" title="Visa sparade konversationer" aria-haspopup="true" aria-expanded="false">📂</button>'
+    +'<button type="button" id="aiChatSettingsBtn" class="action-btn" title="Inställningar: läs/redigera sparad data (sok.json/ord.json/oversattning.json/ai.json)">⚙️</button>'
     +'<button type="button" id="aiChatCloseBtn" class="action-btn" title="Stäng (Esc)">✕ Stäng</button>'
     +'</div>'
     +'</div>'
-    +'<div class="lashjalp-hint">Tab/Skift+Tab för att flytta dig, Esc för att stänga.</div>'
+    +'<div class="lashjalp-hint">Tab/Skift+Tab för att flytta dig, Esc för att stänga. Använder automatiskt dina sparade sökningar/ord/översättningar som bakgrundsinformation.</div>'
     +'<div class="lashjalp-row" style="margin-bottom:10px">'
     +'<input type="text" id="aiChatPersonaInput" placeholder="Roll AI ska anta (t.ex. &quot;en historielärare&quot;) - valfritt">'
-    +'</div>'
-    +'<div id="aiChatSavedPanel" class="ai-chat-saved-panel" style="display:none">'
-    +'<div class="lashjalp-hint" style="margin:0 0 6px">Sparade konversationer — klicka för att fortsätta.</div>'
-    +'<div id="aiChatSavedList"></div>'
     +'</div>'
     +'<div id="aiChatMessages" class="ai-chat-messages"></div>'
     +'<div id="aiChatCameraContainer" style="display:none;margin:0 0 10px;">'
@@ -339,6 +338,10 @@ function sokbarParseJsonReply(rawText){
 // behövs för själva pin-flödet (däremot finns filstatus synlig i inställningspanelen,
 // se lashjalpCheckFiles()).
 var LASHJALP_FOLDER=["Sokruta"];
+// ai.json bytte syfte 2026-09-01: låg tidigare kvar oanvänt i produktion (aldrig faktiskt
+// skapat i Drive - filnamnet var ledigt) för en pinna-hela-AI-konversationen-funktion som
+// togs bort igen på Blås begäran. Används nu istället som cache för AI-chattens
+// bakgrundskontext - se "AI-chat: bakgrundskontext"-blocket längre ner.
 var LASHJALP_FILES={sok:"sok.json",ord:"ord.json",oversattning:"oversattning.json",ai:"ai.json"};
 
 // Delad pin-funktion: lägger till en post FÖRST i listan i angiven fil och sparar hela
@@ -685,13 +688,22 @@ function closeLashjalp(){
 // man trycker Spara, vilket är säkert eftersom det är samma vetterade, delade funktion
 // alla andra flikar redan litar på. Säg till om du hellre vill ha exakt samma
 // knapp-per-fil-flöde som Aktivitet har, går att bygga om.
-// Egen overlay (döljer/visar lashjalpOverlay istället för att ligga kapslad i den) så att
-// fokus-fällorna aldrig krockar - se openLashjalpSettings/closeLashjalpSettings.
-function openLashjalpSettings(){
-  var lashjalpOv=document.getElementById("lashjalpOverlay");
+// Egen overlay (döljer/visar den overlay som öppnade den istället för att ligga kapslad
+// i den) så att fokus-fällorna aldrig krockar - se openLashjalpSettings/
+// closeLashjalpSettings. NYTT (2026-09-01): ⚙️ finns nu på TVÅ ställen (Läshjälp OCH
+// AI-chatten, se aiChatSettingsBtn), så inställningspanelen måste komma ihåg vilken av
+// de två den ska visa igen när den stängs - lashjalpSettingsReturnOverlayId/
+// lashjalpSettingsReturnFocusId håller reda på det (skickas in av respektive ⚙️-knapps
+// onclick, se initLashjalp()/initAiChat()).
+var lashjalpSettingsReturnOverlayId="lashjalpOverlay";
+var lashjalpSettingsReturnFocusId="lashjalpSettingsBtn";
+function openLashjalpSettings(returnOverlayId,returnFocusId){
   var settingsOv=document.getElementById("lashjalpSettingsOverlay");
   if(!settingsOv)return;
-  if(lashjalpOv)lashjalpOv.style.display="none";
+  lashjalpSettingsReturnOverlayId=returnOverlayId||"lashjalpOverlay";
+  lashjalpSettingsReturnFocusId=returnFocusId||"lashjalpSettingsBtn";
+  var returnOv=document.getElementById(lashjalpSettingsReturnOverlayId);
+  if(returnOv)returnOv.style.display="none";
   settingsOv.style.display="flex";
   var sel=document.getElementById("lashjalpSettingsFileSelect");
   if(sel)sel.focus();
@@ -699,12 +711,20 @@ function openLashjalpSettings(){
   loadLashjalpSettingsFile();
 }
 function closeLashjalpSettings(){
-  var lashjalpOv=document.getElementById("lashjalpOverlay");
   var settingsOv=document.getElementById("lashjalpSettingsOverlay");
   if(settingsOv)settingsOv.style.display="none";
-  if(lashjalpOv)lashjalpOv.style.display="flex";
-  var settingsBtn=document.getElementById("lashjalpSettingsBtn");
-  if(settingsBtn)settingsBtn.focus();
+  var returnOv=document.getElementById(lashjalpSettingsReturnOverlayId||"lashjalpOverlay");
+  if(returnOv)returnOv.style.display="flex";
+  var returnBtn=document.getElementById(lashjalpSettingsReturnFocusId||"lashjalpSettingsBtn");
+  if(returnBtn)returnBtn.focus();
+}
+// Visar/döljer kommentar-fältet (bara relevant för ai.json, se
+// lashjalpSettingsAddAiComment() längre ner) beroende på vilken fil som är vald.
+function updateLashjalpSettingsAiCommentRow(){
+  var sel=document.getElementById("lashjalpSettingsFileSelect");
+  var row=document.getElementById("lashjalpSettingsAiCommentRow");
+  if(!sel||!row)return;
+  row.style.display=sel.value==="ai"?"flex":"none";
 }
 async function loadLashjalpSettingsFile(){
   var sel=document.getElementById("lashjalpSettingsFileSelect");
@@ -712,6 +732,7 @@ async function loadLashjalpSettingsFile(){
   var msg=document.getElementById("lashjalpSettingsMsg");
   if(!sel||!area)return;
   if(msg)msg.textContent="";
+  updateLashjalpSettingsAiCommentRow();
   if(typeof accessToken==="undefined"||!accessToken){
     area.value="{}";
     if(msg)msg.textContent="Inte inloggad - kan varken läsa eller spara just nu.";
@@ -721,8 +742,49 @@ async function loadLashjalpSettingsFile(){
   area.disabled=true;
   area.value="Laddar …";
   var data=await driveReadJson(LASHJALP_FOLDER,fileName);
-  area.value=JSON.stringify(data||{items:[]},null,2);
+  // ai.json ar inte en items-lista som de tre andra filerna, utan ett objekt (se
+  // "AI-chat: bakgrundskontext"-blocket langre ner) - tomt fallback ar darfor {} for den,
+  // {items:[]} for ovriga.
+  var fallback=sel.value==="ai"?{}:{items:[]};
+  area.value=JSON.stringify(data||fallback,null,2);
   area.disabled=false;
+}
+// Lägger till en kommentar ÖVERST i ai.json (via ett litet eget textfält, inte den stora
+// JSON-textan) - en enkel, ångerfri väg att lägga till en anteckning utan att behöva
+// skriva korrekt JSON-syntax för hand. AI:n rör ALDRIG detta fält (se
+// aiChatRefreshBackgroundContext(), som bara skriver till cache.sok/ord/oversattning) -
+// för att ändra eller ta bort en kommentar redigerar Blå ai.json direkt i den stora
+// JSON-textan ovan, precis som hon bad om.
+async function lashjalpSettingsAddAiComment(){
+  var input=document.getElementById("lashjalpSettingsAiCommentInput");
+  var msg=document.getElementById("lashjalpSettingsMsg");
+  if(!input)return;
+  var text=input.value.trim();
+  if(!text)return;
+  if(typeof accessToken==="undefined"||!accessToken){
+    if(msg)msg.textContent="Inte inloggad - kan inte spara.";
+    return;
+  }
+  if(msg)msg.textContent="Sparar kommentar …";
+  var data=(await driveReadJson(LASHJALP_FOLDER,LASHJALP_FILES.ai))||{};
+  var kommentarer=Array.isArray(data.kommentarer)?data.kommentarer:[];
+  kommentarer.unshift({text:text,timestamp:new Date().toISOString()});
+  // Bygg om objektet med "kommentarer" satt FÖRST, sen resten av de befintliga
+  // fälten oförändrade - så kommentarerna hamnar högst upp när JSON:en skrivs ut.
+  var rebuilt={kommentarer:kommentarer};
+  for(var k in data){if(k!=="kommentarer")rebuilt[k]=data[k];}
+  var ok=await driveWriteJson(LASHJALP_FOLDER,LASHJALP_FILES.ai,rebuilt);
+  if(ok){
+    input.value="";
+    // loadLashjalpSettingsFile() nollställer lashjalpSettingsMsg direkt när den körs
+    // (för att visa "Laddar …" korrekt i vanliga fallet) - vänta därför in den FÖRST,
+    // annars hinner bekräftelsetexten aldrig synas.
+    if(document.getElementById("lashjalpSettingsFileSelect").value==="ai")await loadLashjalpSettingsFile();
+    if(msg)msg.textContent="✓ Kommentar tillagd.";
+  } else {
+    console.error("sokbar: kunde inte spara kommentar till ai.json");
+    if(msg)msg.textContent="Kunde inte spara kommentaren, försök igen.";
+  }
 }
 async function saveLashjalpSettingsFile(){
   var sel=document.getElementById("lashjalpSettingsFileSelect");
@@ -1267,10 +1329,15 @@ async function aiChatSend(){
   loadingLine.textContent="Skriver …";
   if(box){box.appendChild(loadingLine);box.scrollTop=box.scrollHeight;}
   try{
+    // Invänta ev. pågående hämtning av bakgrundskontexten (startad av openAiChat()) så
+    // att den hinner vara med redan på FÖRSTA meddelandet i konversationen, utan att
+    // fördröja själva öppnandet av AI-chatten.
+    if(aiChatBackgroundContextPromise)await aiChatBackgroundContextPromise;
     var personaInput=document.getElementById("aiChatPersonaInput");
     var persona=(personaInput&&personaInput.value.trim())||"";
     var sys="Du ar en hjalpsam AI-assistent i en chatt. Svara pa svenska om inte annat begars, kortfattat och tydligt."
-      +(persona?" Anta foljande roll/personlighet i din kommunikationsstil: "+persona+".":"");
+      +(persona?" Anta foljande roll/personlighet i din kommunikationsstil: "+persona+".":"")
+      +(aiChatBackgroundContext?" Bakgrundsinformation om personen du pratar med, baserat pa hennes sparade sokningar/ord/oversattningar - anvand det for att gora svaren mer personligt anpassade nar det ar relevant, men lagg inte pa dig sjalv att namna att du har den har informationen om inte hon fragar:\n"+aiChatBackgroundContext:"");
     var res=await aiChat(sys,aiChatMessages,900);
     var data=await res.json();
     if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
@@ -1288,78 +1355,105 @@ function aiChatStopCamera(){
   if(cameraContainer)cameraContainer.style.display="none";
 }
 
-// ---- AI-chat: pinna/spara HELA konversationen, och bläddra bland sparade konversationer ----
-// Egen fil (ai.json) i samma Sokruta-mapp som övriga pinnade sökningar, byggd på samma
-// generiska lashjalpPinEntry() som Sök/Ord/Översättning redan använder (samma text-
-// bekräftelse "✓ Sparat"/"⚠ Kunde inte spara" på knappen). Posten sparar hela
-// meddelande-arrayen (aiChatMessages) plus vald roll (aiChatPersonaInput), så att
-// aiChatContinueSaved() kan återställa exakt samma konversation och man kan fortsätta
-// skriva vidare på den.
-async function aiChatPinConversation(btnEl){
-  if(!aiChatMessages.length)return;
-  var personaInput=document.getElementById("aiChatPersonaInput");
-  var persona=(personaInput&&personaInput.value.trim())||"";
-  var titleText=chatContentToText(aiChatMessages[0].content).trim().slice(0,60)||"Konversation";
-  await lashjalpPinEntry(LASHJALP_FILES.ai,{
-    id:Date.now(),titel:titleText,roll:persona,
-    meddelanden:aiChatMessages,
-    timestamp:new Date().toISOString()
-  },btnEl);
-}
-async function toggleAiChatSavedPanel(){
-  var panel=document.getElementById("aiChatSavedPanel");
-  var toggleBtn=document.getElementById("aiChatSavedBtn");
-  if(!panel)return;
-  if(panel.style.display==="block"){
-    panel.style.display="none";
-    if(toggleBtn)toggleBtn.setAttribute("aria-expanded","false");
-    return;
+// ---- AI-chat: bakgrundskontext från sparad data (ai.json) ----
+// NYTT (2026-09-01, ersätter förra veckans pinna-hela-konversationen-funktion, som togs
+// bort på Blås begäran - ai.json var upptaget och hon ville hellre ha det här). Varje
+// gång AI-chatten öppnas hämtas en KORT AI-genererad sammanfattning av vad som finns i
+// sok.json/ord.json/oversattning.json ("vilka ämnen personen brukar söka på", "vilka
+// språk hon översätter mellan" osv) och skickas med som bakgrundsinformation i
+// systemprompten på varje meddelande - så AI-chattens svar kan bli mer personligt
+// anpassade, utan att man behöver berätta allt själv varje gång.
+//
+// Sammanfattningarna cachas i ai.json (en post per källfil: {summary, itemCount,
+// updatedAt}) istället för att skickas till AI:n för sammanfattning på nytt vid VARJE
+// meddelande - det vore både långsamt och kostsamt. En cachad sammanfattning återanvänds
+// så länge källfilen har lika många poster som senast (itemCount) - så fort något nytt
+// sparas (📌 på en sökning/ord/översättning) räknas den filen om nästa gång AI-chatten
+// öppnas. Se aiChatRefreshBackgroundContext()/aiChatSummarizeFile() nedan.
+//
+// STORLEK (2026-09-01, på Blås begäran): ai.json ska hållas litet och lätt för AI:n att
+// tolka. Den växer INTE med tiden som sok/ord/oversattning.json gör - den har alltid
+// högst tre sammanfattnings-poster (en per källfil, skrivs över vid omsummering, läggs
+// aldrig till i en lista) plus ev. kommentarer Blå själv lagt in (se
+// lashjalpSettingsAddAiComment()). AI_CHAT_SUMMARY_MAX_CHARS är ett hårt tak på varje
+// sammanfattning som skydd ifall AI:n mot förmodan skulle strunta i "max 2-3 meningar" i
+// systemprompten - klipper texten snarare än att låta den växa okontrollerat.
+var AI_CHAT_SUMMARY_MAX_CHARS=400;
+var aiChatBackgroundContext="";
+var aiChatBackgroundContextPromise=null;
+var AI_CHAT_SUMMARY_LABELS={sok:"sökningar (frågor personen bett om en förklaring av)",ord:"ord/synonymer personen slagit upp",oversattning:"översättningar personen gjort"};
+var AI_CHAT_SUMMARY_SYS='Du ar en assistent som skriver en KORT bakgrundsprofil av en anvandares sparade data, max 2-3 meningar, pa svenska. Fokusera pa monster/teman (t.ex. vilka amnen personen ofta soker pa, vilka sprak hon oversatter mellan, vilken typ av ord hon slar upp) - INTE en lista av varje enskild post. Svara ENDAST med sjalva sammanfattningen, ingen inledning som "Har ar en sammanfattning".';
+async function aiChatSummarizeFile(key,items){
+  if(!items.length)return "";
+  var listText=items.slice(0,40).map(function(it){
+    if(key==="oversattning")return "- "+(it.kalla||"")+" -> "+(it.oversattning||"");
+    return "- "+(it.fraga||"")+(it.svar?": "+it.svar:"");
+  }).join("\n");
+  try{
+    var res=await aiCall(AI_CHAT_SUMMARY_SYS,"Sammanfatta dessa sparade "+(AI_CHAT_SUMMARY_LABELS[key]||key)+":\n\n"+listText,300);
+    var data=await res.json();
+    if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+    var summary=(aiText(data)||"").trim();
+    return summary.slice(0,AI_CHAT_SUMMARY_MAX_CHARS);
+  }catch(err){
+    console.error("sokbar: kunde inte sammanfatta "+key+" till AI-chattens bakgrundskontext",err);
+    return "";
   }
-  panel.style.display="block";
-  if(toggleBtn)toggleBtn.setAttribute("aria-expanded","true");
-  await loadAiChatSavedList();
 }
-async function loadAiChatSavedList(){
-  var listEl=document.getElementById("aiChatSavedList");
-  if(!listEl)return;
-  if(typeof accessToken==="undefined"||!accessToken){
-    listEl.innerHTML="<div class='lashjalp-hint' style='margin:0'>Inte inloggad - kan inte visa sparade konversationer just nu.</div>";
-    return;
-  }
-  listEl.innerHTML="<div class='lashjalp-hint' style='margin:0'>Laddar …</div>";
-  var data=await driveReadJson(LASHJALP_FOLDER,LASHJALP_FILES.ai);
-  var items=(data&&Array.isArray(data.items))?data.items:[];
-  if(!items.length){
-    listEl.innerHTML="<div class='lashjalp-hint' style='margin:0'>Inga sparade konversationer än - tryck på 📌 för att spara den här.</div>";
-    return;
-  }
-  listEl.innerHTML=items.map(function(item,idx){
-    var timeStr="";
-    try{if(item.timestamp)timeStr=new Date(item.timestamp).toLocaleString("sv-SE");}catch(e){/* strunta i tidsstämpeln om den inte går att tolka */}
-    return "<button type='button' class='ai-chat-saved-item' data-idx='"+idx+"'>"
-      +"<span class='ai-chat-saved-title'>"+esc(item.titel||"Konversation")+"</span>"
-      +(timeStr?"<span class='ai-chat-saved-time'>"+esc(timeStr)+"</span>":"")
-      +"</button>";
-  }).join("");
-  listEl.querySelectorAll(".ai-chat-saved-item").forEach(function(btn){
-    btn.onclick=function(){aiChatContinueSaved(items,parseInt(btn.dataset.idx,10));};
-  });
-}
-// Klick på en sparad konversation läser in den (meddelanden + roll) i det pågående
-// AI-chat-fönstret igen, så man kan fortsätta skriva på den precis där man slutade.
-function aiChatContinueSaved(items,idx){
-  var item=items[idx];
-  if(!item)return;
-  aiChatMessages=Array.isArray(item.meddelanden)?item.meddelanden.slice():[];
-  var personaInput=document.getElementById("aiChatPersonaInput");
-  if(personaInput)personaInput.value=item.roll||"";
-  var panel=document.getElementById("aiChatSavedPanel");
-  var toggleBtn=document.getElementById("aiChatSavedBtn");
-  if(panel)panel.style.display="none";
-  if(toggleBtn)toggleBtn.setAttribute("aria-expanded","false");
-  renderAiChatMessages();
-  var input=document.getElementById("aiChatInput");
-  if(input)input.focus();
+// Hämtar/uppdaterar bakgrundskontexten. Sparar resultatet i modulvariabeln
+// aiChatBackgroundContext (och löftet i aiChatBackgroundContextPromise så att
+// aiChatSend() kan invänta det innan den bygger systemprompten) - körs i bakgrunden när
+// AI-chatten öppnas, inte varje gång man trycker Enter.
+//
+// VIKTIGT: cache-objektet läses in HELT (driveReadJson) och bara cache.sok/cache.ord/
+// cache.oversattning skrivs över nedan - cache.kommentarer (Blås egna anteckningar, se
+// lashjalpSettingsAddAiComment()) rörs aldrig här, oavsett vad den innehåller, och skrivs
+// tillbaka oförändrat tillsammans med resten av objektet om något annat behövde sparas.
+function aiChatRefreshBackgroundContext(){
+  aiChatBackgroundContextPromise=(async function(){
+    if(typeof accessToken==="undefined"||!accessToken){aiChatBackgroundContext="";return;}
+    try{
+      var cache=(await driveReadJson(LASHJALP_FOLDER,LASHJALP_FILES.ai))||{};
+      var cacheChanged=false;
+      var parts=[];
+      var keys=["sok","ord","oversattning"];
+      for(var i=0;i<keys.length;i++){
+        var key=keys[i];
+        var data=await driveReadJson(LASHJALP_FOLDER,LASHJALP_FILES[key]);
+        var items=(data&&Array.isArray(data.items))?data.items:[];
+        if(!items.length)continue;
+        var cached=cache[key];
+        var summary;
+        if(cached&&cached.itemCount===items.length&&cached.summary){
+          summary=cached.summary;
+        } else {
+          summary=await aiChatSummarizeFile(key,items);
+          if(summary){
+            cache[key]={summary:summary,itemCount:items.length,updatedAt:new Date().toISOString()};
+            cacheChanged=true;
+          }
+        }
+        if(summary)parts.push("- "+(AI_CHAT_SUMMARY_LABELS[key]||key)+": "+summary);
+      }
+      // Blås egna kommentarer (aldrig ändrade av AI:n) räknas också med i det som
+      // skickas till AI-chatten - det är hela poängen med att kunna lägga in dem. Tak på
+      // antal/längd HÄR påverkar bara vad som SKICKAS till AI:n per meddelande, inte vad
+      // som faktiskt sparas i ai.json (den listan rör vi aldrig).
+      var kommentarer=Array.isArray(cache.kommentarer)?cache.kommentarer:[];
+      if(kommentarer.length){
+        var kommentarText=kommentarer.slice(0,15).map(function(k){
+          return "- "+String((k&&k.text)||"").slice(0,300);
+        }).join("\n");
+        parts.push("- egna anteckningar personen lagt in:\n"+kommentarText);
+      }
+      if(cacheChanged)await driveWriteJson(LASHJALP_FOLDER,LASHJALP_FILES.ai,cache);
+      aiChatBackgroundContext=parts.join("\n");
+    }catch(err){
+      console.error("sokbar: kunde inte hämta AI-chattens bakgrundskontext",err);
+      aiChatBackgroundContext="";
+    }
+  })();
+  return aiChatBackgroundContextPromise;
 }
 
 function openAiChat(){
@@ -1369,6 +1463,7 @@ function openAiChat(){
   overlay.style.display="flex";
   document.body.style.overflow="hidden";
   renderAiChatMessages();
+  aiChatRefreshBackgroundContext();
   var input=document.getElementById("aiChatInput");
   if(input)input.focus();
 }
@@ -1378,10 +1473,6 @@ function closeAiChat(){
   aiChatStopCamera();
   overlay.style.display="none";
   document.body.style.overflow="";
-  var panel=document.getElementById("aiChatSavedPanel");
-  var toggleBtn=document.getElementById("aiChatSavedBtn");
-  if(panel)panel.style.display="none";
-  if(toggleBtn)toggleBtn.setAttribute("aria-expanded","false");
   if(aiChatLastFocus&&typeof aiChatLastFocus.focus==="function")aiChatLastFocus.focus();
   aiChatLastFocus=null;
 }
@@ -1395,10 +1486,11 @@ function initAiChat(){
   var closeBtn=document.getElementById("aiChatCloseBtn");
   if(closeBtn)closeBtn.onclick=closeAiChat;
 
-  var pinBtn=document.getElementById("aiChatPinBtn");
-  if(pinBtn)pinBtn.onclick=function(){aiChatPinConversation(pinBtn);};
-  var savedBtn=document.getElementById("aiChatSavedBtn");
-  if(savedBtn)savedBtn.onclick=toggleAiChatSavedPanel;
+  // Samma ⚙️ Inställningar-panel som Läshjälp använder (openLashjalpSettings/
+  // closeLashjalpSettings, se den funktionen för hur den kommer ihåg vilken av de två
+  // som ska visas igen när panelen stängs).
+  var settingsBtn=document.getElementById("aiChatSettingsBtn");
+  if(settingsBtn)settingsBtn.onclick=function(){openLashjalpSettings("aiChatOverlay","aiChatSettingsBtn");};
 
   // Fristående overlay (inte en syskon-panel till något annat) - klick utanför,
   // Escape och ✕ stänger alla helt, till skillnad från Läshjälps under-paneler.
@@ -1564,7 +1656,7 @@ function initLashjalp(){
   if(ordBtn)ordBtn.onclick=lashjalpSearchWord;
 
   var settingsBtn=document.getElementById("lashjalpSettingsBtn");
-  if(settingsBtn)settingsBtn.onclick=openLashjalpSettings;
+  if(settingsBtn)settingsBtn.onclick=function(){openLashjalpSettings("lashjalpOverlay","lashjalpSettingsBtn");};
 
   var settingsOverlay=document.getElementById("lashjalpSettingsOverlay");
   if(settingsOverlay){
@@ -1576,6 +1668,12 @@ function initLashjalp(){
     if(settingsSaveBtn)settingsSaveBtn.onclick=saveLashjalpSettingsFile;
     var settingsFileSelect=document.getElementById("lashjalpSettingsFileSelect");
     if(settingsFileSelect)settingsFileSelect.onchange=loadLashjalpSettingsFile;
+    var aiCommentAddBtn=document.getElementById("lashjalpSettingsAiCommentAddBtn");
+    if(aiCommentAddBtn)aiCommentAddBtn.onclick=lashjalpSettingsAddAiComment;
+    var aiCommentInput=document.getElementById("lashjalpSettingsAiCommentInput");
+    if(aiCommentInput)aiCommentInput.onkeydown=function(e){
+      if(e.key==="Enter"){e.preventDefault();lashjalpSettingsAddAiComment();}
+    };
 
     // Klick på den mörka bakgrunden stänger, precis som huvud-overlayet.
     settingsOverlay.addEventListener("mousedown",function(e){

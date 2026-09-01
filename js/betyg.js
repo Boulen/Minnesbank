@@ -351,9 +351,6 @@ function showBetygSettings(){
     bindGroup("bp",wPlats,function(){return editPlatsIdx;},function(v){editPlatsIdx=v;});
     ov.querySelector("#bs-json-editor").onclick=function(){openBetygJsonEditor();};
     ov.querySelector("#bs-save").onclick=function(){
-      if(!wMedia.length){alert("Du måste ha minst en Media-kategori kvar.");return;}
-      if(!wObj.length){alert("Du måste ha minst en Föremål-kategori kvar.");return;}
-      if(!wPlats.length){alert("Du måste ha minst en Plats-kategori kvar.");return;}
       MEDIA_CAT_PRESETS=wMedia;
       OBJ_CAT_PRESETS=wObj;
       PLATS_CAT_PRESETS=wPlats;
