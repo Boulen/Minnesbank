@@ -121,6 +121,127 @@ async function saveSamtalMuntligt(){
   return driveWriteJson(["Samtal"],"muntlig.json",{muntKonversationer:muntKonversationer});
 }
 
+// ---- AI-sammanfattad bakgrundskontext (Samtal) ----
+// Mönster från js/sokbar.js AI-chatt-ruta, se HANDOFF_samtal_bakgrundskontext_2026-09-01.md.
+// Egen cache (Samtal/ai.json), plus en READ-ONLY källa: sökrutans egen ai.json
+// (Sokruta/ai.json, känt fil-ID nedan) - ALDRIG skriven till härifrån.
+var SAMTAL_AI_SUMMARY_MAX_CHARS=400;
+var SAMTAL_EXTERN_CONTEXT_FILE_ID="1Z7EBVkQ31hdbOv9W6DoJBElUzgwsWeu3"; // Sökrutans ai.json
+var samtalBackgroundContextPromise=null;
+var samtalBackgroundContextText="";
+
+// Läser Sökrutans ai.json direkt via dess fil-ID (annan Drive-mapp än Samtal/). Read-only.
+async function samtalReadExternContext(){
+  if(!accessToken)return null;
+  try{
+    var r=await fetch(DRIVE_API+"/"+SAMTAL_EXTERN_CONTEXT_FILE_ID+"?alt=media",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)return null;
+    var text=await r.text();
+    if(!text||!text.trim())return null;
+    return JSON.parse(text);
+  }catch(e){
+    console.warn("Kunde inte läsa extern kontextfil (Sökrutans ai.json):",e);
+    return null;
+  }
+}
+
+async function samtalReadAiCache(){
+  try{return await driveReadJson(["Samtal"],"ai.json");}catch(e){console.warn("Kunde inte läsa Samtal/ai.json:",e);return null;}
+}
+async function samtalWriteAiCachePatch(patch){
+  // Läser färskt och slår bara ihop de nycklar som patchas in - rör ALDRIG hela objektet,
+  // så att kommentarer (skrivna via samtalSettingsAddAiComment) alltid överlever.
+  var current=(await samtalReadAiCache())||{};
+  var merged=Object.assign({},current,patch);
+  return driveWriteJson(["Samtal"],"ai.json",merged);
+}
+// Skriver ett HELT objekt (t.ex. från rå JSON-redigering eller ett nytt kommentar-tillägg) -
+// bygger om det så "kommentarer" alltid hamnar som första nyckel (ren objektnyckel-ordning).
+async function samtalWriteAiCacheFull(obj){
+  var ordered={};
+  if(obj.kommentarer)ordered.kommentarer=obj.kommentarer;
+  Object.keys(obj).forEach(function(k){if(k!=="kommentarer")ordered[k]=obj[k];});
+  return driveWriteJson(["Samtal"],"ai.json",ordered);
+}
+// AI-orört kommentarfält - unshift:ar en ny kommentar, koden rör aldrig dessa automatiskt
+// (bakgrundskontext-patchningen ovan rör bara sina egna nycklar, aldrig "kommentarer").
+async function samtalSettingsAddAiComment(text){
+  var t=(text||"").trim();
+  if(!t)return;
+  var current=(await samtalReadAiCache())||{};
+  var kommentarer=(current.kommentarer||[]).slice();
+  kommentarer.unshift({text:t,timestamp:new Date().toISOString()});
+  current.kommentarer=kommentarer;
+  await samtalWriteAiCacheFull(current);
+}
+
+// Kort AI-sammanfattning av en lista konversationer/entries, cachad tills itemCount ändras.
+async function samtalSummarizeIfChanged(cache,key,items,sampleTextFn,promptLabel){
+  if(cache[key]&&cache[key].itemCount===items.length)return null; // oförändrat, återanvänd cache
+  var sample=items.slice(0,20).map(sampleTextFn).join("\n");
+  var sys="Sammanfatta i 2-3 meningar vilka teman/mönster som syns i "+promptLabel+". Svara med bara sammanfattningen, ingen inledning, ingen JSON.";
+  try{
+    var res=await aiCall(sys,sample||"(inget sparat än)",300);
+    var data=await res.json();
+    var summary=aiText(data).trim().slice(0,SAMTAL_AI_SUMMARY_MAX_CHARS);
+    return {summary:summary,itemCount:items.length,updatedAt:new Date().toISOString()};
+  }catch(e){
+    console.warn("Kunde inte sammanfatta "+key+":",e);
+    return null;
+  }
+}
+
+// Fire-and-forget: anropas så fort ett samtalsfönster öppnas. Sparas i modul-variabeln
+// samtalBackgroundContextPromise som awaitas precis innan systemprompten byggs i varje
+// do*-funktion (doKonvUtvardering/doKonvKlarhet/doKonvForslag/doMuntTips/doMuntTankePa/doMuntVill).
+function samtalRefreshBackgroundContext(){
+  samtalBackgroundContextPromise=(async function(){
+    try{
+      var cache=(await samtalReadAiCache())||{};
+      var patch={};
+
+      var konvPatch=await samtalSummarizeIfChanged(cache,"konversationer",konversationer,function(k){
+        return k.name+": "+k.messages.slice(-6).map(function(m){return (m.sender==="mig"?"Jag":"De")+": "+m.text;}).join(" / ");
+      },"personens sparade SKRIFTLIGA samtalsträning");
+      if(konvPatch)patch.konversationer=konvPatch;
+
+      var muntPatch=await samtalSummarizeIfChanged(cache,"muntligt",muntKonversationer,function(k){
+        return k.name+": "+(k.entries||[]).slice(-4).map(function(e){return (e.summary||"")+(e.feeling?" ("+e.feeling+")":"");}).join(" / ");
+      },"personens sparade MUNTLIGA samtalsträning");
+      if(muntPatch)patch.muntligt=muntPatch;
+
+      if(Object.keys(patch).length)await samtalWriteAiCachePatch(patch);
+
+      var extern=null;
+      try{extern=await samtalReadExternContext();}catch(e){}
+
+      var merged=Object.assign({},cache,patch);
+      var parts=[];
+      if(merged.konversationer&&merged.konversationer.summary)parts.push("Skriftlig samtalsträning: "+merged.konversationer.summary);
+      if(merged.muntligt&&merged.muntligt.summary)parts.push("Muntlig samtalsträning: "+merged.muntligt.summary);
+      if(merged.kommentarer&&merged.kommentarer.length)parts.push("Kommentarer från personen:\n"+merged.kommentarer.slice(0,15).map(function(c){return "- "+String(c.text||"").slice(0,300);}).join("\n"));
+      if(extern){
+        var externParts=[];
+        if(extern.ord&&extern.ord.summary)externParts.push("Ordintressen: "+extern.ord.summary);
+        if(extern.oversattning&&extern.oversattning.summary)externParts.push("Översättningar: "+extern.oversattning.summary);
+        if(extern.kommentarer&&extern.kommentarer.length)externParts.push("Kommentarer från sökrutan:\n"+extern.kommentarer.slice(0,15).map(function(c){return "- "+String(c.text||"").slice(0,300);}).join("\n"));
+        if(externParts.length)parts.push("Övrig bakgrund (från sökrutan):\n"+externParts.join("\n"));
+      }
+      samtalBackgroundContextText=parts.join("\n\n");
+    }catch(e){
+      console.warn("Kunde inte uppdatera Samtals AI-bakgrundskontext:",e);
+    }
+  })();
+  return samtalBackgroundContextPromise;
+}
+// Hjälpare som do*-funktionerna anropar direkt: garanterar att en uppdatering är på gång
+// (startar en om ingen redan pågår) och väntar in den, returnerar en färdig prompt-bit.
+async function samtalGetBackgroundContextPart(){
+  if(!samtalBackgroundContextPromise)samtalRefreshBackgroundContext();
+  await samtalBackgroundContextPromise;
+  return samtalBackgroundContextText?("\n\nBakgrund om personen (från tidigare sparad data):\n"+samtalBackgroundContextText):"";
+}
+
 var samtalSubview="text"; // text | muntligt
 
 // -- Konversationer (namngivna trådar med meddelanden + AI-hjälp) --
@@ -145,7 +266,7 @@ function renderSamtalTop(){
   });
   var settingsBtn=b.querySelector("#samtal-settings-btn");
   if(settingsBtn)settingsBtn.onclick=function(){showSamtalSettings();};
-  ensureSamtalDataLoaded().then(function(){renderSamtalContent();});
+  ensureSamtalDataLoaded().then(function(){renderSamtalContent();samtalRefreshBackgroundContext();});
 }
 function switchSamtalSubview(sub){
   samtalSubview=sub;
@@ -447,7 +568,8 @@ async function doKonvUtvardering(k,text){
   var threadText=k.messages.slice(-12).map(function(m){return (m.sender==="mig"?"Jag":"De")+": "+m.text;}).join("\n");
   var notesTxt=notesContextText(k);
   var notePart=notesTxt?("\n\nYtterligare information om samtalet: "+notesTxt):"";
-  var sys="Du ar en kommunikationscoach. Har ar samtalshistoriken hittills:\n\n"+(threadText||"(inga tidigare meddelanden)")+notePart+"\n\nPersonen funderar pa att skicka foljande meddelande till "+konvAiCtx.toLowerCase()+". Ge en konstruktiv utvardering av meddelandet - vad fungerar bra, vad kan bli battre, och nagra konkreta tips. Svara BARA med giltig JSON: {\"evaluation\":\"...\",\"tips\":[\"...\",\"...\",\"...\"]}";
+  var bgPart=await samtalGetBackgroundContextPart();
+  var sys="Du ar en kommunikationscoach. Har ar samtalshistoriken hittills:\n\n"+(threadText||"(inga tidigare meddelanden)")+notePart+bgPart+"\n\nPersonen funderar pa att skicka foljande meddelande till "+konvAiCtx.toLowerCase()+". Ge en konstruktiv utvardering av meddelandet - vad fungerar bra, vad kan bli battre, och nagra konkreta tips. Svara BARA med giltig JSON: {\"evaluation\":\"...\",\"tips\":[\"...\",\"...\",\"...\"]}";
   try{
     var res=await aiCall(sys,"Meddelandet jag funderar pa att skicka: "+text,1000);
     var data=await res.json();
@@ -465,7 +587,8 @@ async function doKonvKlarhet(k,text){
   var threadText=k.messages.slice(-12).map(function(m){return (m.sender==="mig"?"Jag":"De")+": "+m.text;}).join("\n");
   var notesTxt=notesContextText(k);
   var notePart=notesTxt?("\n\nYtterligare information om samtalet: "+notesTxt):"";
-  var sys="Du ar en kommunikationscoach. Har ar samtalshistoriken hittills:\n\n"+(threadText||"(inga tidigare meddelanden)")+notePart+"\n\nOmformulera foljande meddelande sa det blir tydligare till "+konvAiCtx.toLowerCase()+", och forklara kort varfor du valde just den formuleringen. Svara BARA med giltig JSON: {\"message\":\"...\",\"explanation\":\"...\"}";
+  var bgPart=await samtalGetBackgroundContextPart();
+  var sys="Du ar en kommunikationscoach. Har ar samtalshistoriken hittills:\n\n"+(threadText||"(inga tidigare meddelanden)")+notePart+bgPart+"\n\nOmformulera foljande meddelande sa det blir tydligare till "+konvAiCtx.toLowerCase()+", och forklara kort varfor du valde just den formuleringen. Svara BARA med giltig JSON: {\"message\":\"...\",\"explanation\":\"...\"}";
   try{
     var res=await aiCall(sys,"Mitt meddelande: "+text,1000);
     var data=await res.json();
@@ -484,7 +607,8 @@ async function doKonvForslag(k,goal){
   var notesTxt=notesContextText(k);
   var notePart=notesTxt?("\n\nYtterligare information om samtalet: "+notesTxt):"";
   var goalPart=goal?("Vad jag vill fa ut av meddelandet: "+goal):"Inget speciellt mal angivet - utga fran sammanhanget i samtalet ovan.";
-  var sys="Du ar en kommunikationscoach. Har ar samtalshistoriken hittills:\n\n"+(threadText||"(inga tidigare meddelanden)")+notePart+"\n\nSkriv ett forslag till nasta meddelande till "+konvAiCtx.toLowerCase()+", och forklara kort varfor du formulerade och skrev det just sa. Svara BARA med giltig JSON: {\"message\":\"...\",\"explanation\":\"...\"}";
+  var bgPart=await samtalGetBackgroundContextPart();
+  var sys="Du ar en kommunikationscoach. Har ar samtalshistoriken hittills:\n\n"+(threadText||"(inga tidigare meddelanden)")+notePart+bgPart+"\n\nSkriv ett forslag till nasta meddelande till "+konvAiCtx.toLowerCase()+", och forklara kort varfor du formulerade och skrev det just sa. Svara BARA med giltig JSON: {\"message\":\"...\",\"explanation\":\"...\"}";
   try{
     var res=await aiCall(sys,goalPart,1000);
     var data=await res.json();
@@ -791,7 +915,8 @@ function renderMuntKonvOpen(b){
 async function doMuntTips(k,text){
   muntAiLoading=true;renderMuntKonvOpen(document.getElementById("samtal-content"));
   var ctxText=muntContextParts(k);
-  var sys="Du ar en kommunikationscoach for MUNTLIGA samtal. Har ar bakgrund om samtalet:\n\n"+ctxText+"\n\nGe konkreta tips pa hur personen kan ga till vaga med det de skriver, med tanke pa "+muntAiCtx.toLowerCase()+". Svara BARA med giltig JSON: {\"tips\":[\"...\",\"...\",\"...\"]}";
+  var bgPart=await samtalGetBackgroundContextPart();
+  var sys="Du ar en kommunikationscoach for MUNTLIGA samtal. Har ar bakgrund om samtalet:\n\n"+ctxText+bgPart+"\n\nGe konkreta tips pa hur personen kan ga till vaga med det de skriver, med tanke pa "+muntAiCtx.toLowerCase()+". Svara BARA med giltig JSON: {\"tips\":[\"...\",\"...\",\"...\"]}";
   try{
     var res=await aiCall(sys,text||"(inget sarskilt skrivet - ge allmanna tips utifran bakgrunden ovan)",1000);
     var data=await res.json();
@@ -808,7 +933,8 @@ async function doMuntTankePa(k,text){
   muntAiLoading=true;renderMuntKonvOpen(document.getElementById("samtal-content"));
   var ctxText=muntContextParts(k);
   var extraPart=text?("\n\nJag funderar ocksa pa: "+text):"";
-  var sys="Du ar en kommunikationscoach for MUNTLIGA samtal. Har ar bakgrund om tidigare/planerade samtal:\n\n"+ctxText+extraPart+"\n\nGe saker personen bor tanka pa infor ett samtal med "+muntAiCtx.toLowerCase()+", baserat bade pa bakgrunden och det de skrivit nu. Svara BARA med giltig JSON: {\"points\":[\"...\",\"...\",\"...\"]}";
+  var bgPart=await samtalGetBackgroundContextPart();
+  var sys="Du ar en kommunikationscoach for MUNTLIGA samtal. Har ar bakgrund om tidigare/planerade samtal:\n\n"+ctxText+extraPart+bgPart+"\n\nGe saker personen bor tanka pa infor ett samtal med "+muntAiCtx.toLowerCase()+", baserat bade pa bakgrunden och det de skrivit nu. Svara BARA med giltig JSON: {\"points\":[\"...\",\"...\",\"...\"]}";
   try{
     var res=await aiCall(sys,text||"Vad bor jag tanka pa infor samtalet?",1000);
     var data=await res.json();
@@ -824,7 +950,8 @@ async function doMuntTankePa(k,text){
 async function doMuntVill(k,goal){
   muntAiLoading=true;renderMuntKonvOpen(document.getElementById("samtal-content"));
   var ctxText=muntContextParts(k);
-  var sys="Du ar en kommunikationscoach for MUNTLIGA samtal. Har ar bakgrund om samtalet:\n\n"+ctxText+"\n\nPersonen skriver vad de vill uppna. Ge radgivning om ett konkret tillvagagangssatt for att na dit, med tanke pa "+muntAiCtx.toLowerCase()+". Svara BARA med giltig JSON: {\"advice\":\"...\",\"steps\":[\"...\",\"...\",\"...\"]}";
+  var bgPart=await samtalGetBackgroundContextPart();
+  var sys="Du ar en kommunikationscoach for MUNTLIGA samtal. Har ar bakgrund om samtalet:\n\n"+ctxText+bgPart+"\n\nPersonen skriver vad de vill uppna. Ge radgivning om ett konkret tillvagagangssatt for att na dit, med tanke pa "+muntAiCtx.toLowerCase()+". Svara BARA med giltig JSON: {\"advice\":\"...\",\"steps\":[\"...\",\"...\",\"...\"]}";
   try{
     var res=await aiCall(sys,"Vad jag vill: "+goal,1200);
     var data=await res.json();
@@ -878,14 +1005,15 @@ async function findSamtalDriveFileId(filename){
   return (d.files&&d.files.length)?d.files[0].id:null;
 }
 function openSamtalJsonEditor(){
-  var current="text"; // text | muntligt
+  var current="text"; // text | muntligt | ai
   var ov2=document.createElement("div");
   ov2.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px";
 
-  function fileFor(key){return key==="text"?"text.json":"muntlig.json";}
+  function fileFor(key){if(key==="text")return "text.json";if(key==="muntligt")return "muntlig.json";return "ai.json";}
   function dataFor(key){
     if(key==="text")return {konversationer:konversationer};
-    return {muntKonversationer:muntKonversationer};
+    if(key==="muntligt")return {muntKonversationer:muntKonversationer};
+    return {kommentarer:[]};
   }
 
   function render(){
@@ -894,10 +1022,21 @@ function openSamtalJsonEditor(){
       +"<select id='sje-select' style='background:#131313;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:6px 8px;flex:1;min-width:110px'>"
       +"<option value='text'"+(current==="text"?" selected":"")+">Text (text.json)</option>"
       +"<option value='muntligt'"+(current==="muntligt"?" selected":"")+">Muntligt (muntlig.json)</option>"
+      +"<option value='ai'"+(current==="ai"?" selected":"")+">AI-bakgrundskontext (ai.json)</option>"
       +"</select>"
       +"<button id='sje-open-drive' title='Öppna filen i Google Drive' style='background:none;border:1px solid #2a2a2a;border-radius:8px;color:#4fa8ff;font-size:12px;padding:6px 10px;cursor:pointer;white-space:nowrap;flex-shrink:0'>🔗 Öppna i Drive</button>"
       +"<button id='sje-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1;flex-shrink:0'>✕</button>"
       +"</div>"
+      +(current==="ai"?(
+        "<div style='padding:10px 18px 0'>"
+        +"<div class='lbl' style='margin-bottom:4px'>Lägg till kommentar</div>"
+        +"<div style='font-size:11px;color:#5c5c5c;margin-bottom:6px'>Sparas direkt, AI:n rör aldrig dessa automatiskt - redigera/ta bort görs i den råa JSON-textan nedan.</div>"
+        +"<div style='display:flex;gap:6px;margin-bottom:8px'>"
+        +"<input class='inp' id='sje-comment-inp' placeholder='Skriv en kommentar om dig själv...' style='flex:1'/>"
+        +"<button id='sje-comment-add' class='chip' type='button' style='flex-shrink:0;padding:7px 12px'>+</button>"
+        +"</div>"
+        +"</div>"
+      ):"")
       +"<div id='sje-status' style='padding:8px 18px 0;font-size:11px;color:#5c5c5c'>Hämtar aktuellt innehåll från Drive...</div>"
       +"<textarea id='sje-text' spellcheck='false' disabled style='flex:1;background:#0a0a0a;color:#f2f2f2;border:none;padding:14px;font-family:monospace;font-size:12px;min-height:300px;resize:vertical'></textarea>"
       +"<div id='sje-warning' style='padding:0 18px 8px;font-size:11px;color:#d97a83'></div>"
@@ -927,6 +1066,22 @@ function openSamtalJsonEditor(){
       }
     })();
 
+    var commentInp=ov2.querySelector("#sje-comment-inp");
+    var commentAddBtn=ov2.querySelector("#sje-comment-add");
+    if(commentAddBtn)commentAddBtn.onclick=async function(){
+      var v=(commentInp?commentInp.value:"").trim();
+      if(!v)return;
+      commentAddBtn.disabled=true;
+      try{
+        await samtalSettingsAddAiComment(v);
+        render();
+      }catch(e){
+        var warn=ov2.querySelector("#sje-warning");
+        if(warn)warn.textContent="Kunde inte spara kommentaren: "+e.message;
+        commentAddBtn.disabled=false;
+      }
+    };
+
     ov2.querySelector("#sje-open-drive").onclick=function(){
       var warn=ov2.querySelector("#sje-warning");
       if(!accessToken){warn.textContent="Logga in för att öppna filen i Drive.";return;}
@@ -948,13 +1103,17 @@ function openSamtalJsonEditor(){
       if(current==="text"){
         if(!Array.isArray(parsed.konversationer)){warn.textContent="Förväntade ett 'konversationer'-fält med en lista.";return;}
         konversationer=parsed.konversationer;
-      }else{
+      }else if(current==="muntligt"){
         if(!Array.isArray(parsed.muntKonversationer)){warn.textContent="Förväntade ett 'muntKonversationer'-fält med en lista.";return;}
         muntKonversationer=parsed.muntKonversationer;
+      }else{
+        if(parsed.kommentarer&&!Array.isArray(parsed.kommentarer)){warn.textContent="'kommentarer' måste vara en lista om den finns.";return;}
       }
       saveBtn.disabled=true;saveBtn.textContent="Sparar...";
       try{
-        await (current==="text"?saveSamtalText():saveSamtalMuntligt());
+        if(current==="text")await saveSamtalText();
+        else if(current==="muntligt")await saveSamtalMuntligt();
+        else await samtalWriteAiCacheFull(parsed);
         ov2.remove();
         renderSamtalContent();
       }catch(e){

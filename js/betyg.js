@@ -1,3 +1,13 @@
+function syncUtvTopNav(){
+  document.querySelectorAll("[data-utvsub]").forEach(function(btn){
+    btn.classList.toggle("on",!utvExtraView&&btn.dataset.utvsub===utvSubview);
+  });
+  var recensionerBtn=document.getElementById("betyg-recensioner-btn");
+  if(recensionerBtn)recensionerBtn.classList.toggle("on",utvExtraView==="recensioner");
+  var pagaendeBtn=document.getElementById("betyg-pagaende-btn");
+  if(pagaendeBtn)pagaendeBtn.classList.toggle("on",utvExtraView==="pagaende");
+}
+
 function renderUtvarderingarTop(){
   var lc=document.getElementById("body");
   if(!lc)return;
@@ -5,13 +15,14 @@ function renderUtvarderingarTop(){
   ensureBetygDataLoaded();
   var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:8px'>"
     +"<div style='flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px'>"
-    +"<button class='mode-btn"+(!utvRecensionerOpen&&utvSubview==="media"?" on":"")+"' data-utvsub='media' style='font-size:11px'>Media</button>"
-    +"<button class='mode-btn"+(!utvRecensionerOpen&&utvSubview==="objekt"?" on":"")+"' data-utvsub='objekt' style='font-size:11px'>Föremål</button>"
-    +"<button class='mode-btn"+(!utvRecensionerOpen&&utvSubview==="plats"?" on":"")+"' data-utvsub='plats' style='font-size:11px'>Plats</button>"
+    +"<button class='mode-btn"+(!utvExtraView&&utvSubview==="media"?" on":"")+"' data-utvsub='media' style='font-size:11px'>Media</button>"
+    +"<button class='mode-btn"+(!utvExtraView&&utvSubview==="objekt"?" on":"")+"' data-utvsub='objekt' style='font-size:11px'>Föremål</button>"
+    +"<button class='mode-btn"+(!utvExtraView&&utvSubview==="plats"?" on":"")+"' data-utvsub='plats' style='font-size:11px'>Plats</button>"
     +"</div>"
     +"<button id='betyg-settings-btn' type='button' title='Inställningar' style='background:none;border:none;color:#6b6880;font-size:20px;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0'>⚙️</button>"
     +"</div>"
-    +"<button id='betyg-recensioner-btn' type='button' class='mode-btn"+(utvRecensionerOpen?" on":"")+"' style='width:100%;margin-bottom:20px'>📝 Recensioner</button>";
+    +"<button id='betyg-recensioner-btn' type='button' class='mode-btn"+(utvExtraView==="recensioner"?" on":"")+"' style='width:100%;margin-bottom:6px'>📝 Recensioner</button>"
+    +"<button id='betyg-pagaende-btn' type='button' class='mode-btn"+(utvExtraView==="pagaende"?" on":"")+"' style='width:100%;margin-bottom:20px'>🔄 Pågående</button>";
   lc.innerHTML=subTabs+"<div id='utv-content'></div>";
   lc.querySelectorAll("[data-utvsub]").forEach(function(btn){
     btn.onclick=function(){switchUtvSubview(btn.dataset.utvsub);};
@@ -24,22 +35,30 @@ function renderUtvarderingarTop(){
     showBetygSettings();
   };
   var recensionerBtn=lc.querySelector("#betyg-recensioner-btn");
+  var pagaendeBtn=lc.querySelector("#betyg-pagaende-btn");
   if(recensionerBtn)recensionerBtn.onclick=function(){
-    utvRecensionerOpen=true;
+    utvExtraView="recensioner";
     mediaRecensionCat=mediaCat||MEDIA_CAT_PRESETS[0]||"";
     mediaRecensionCreator=null;mediaRecensionSearch="";mediaRecensionSortMode="namn";mediaRecensionLetter="";mediaRecensionSenasteDesc=true;
+    syncUtvTopNav();
     renderMediaRecension();
   };
-  if(utvRecensionerOpen)renderMediaRecension();
+  if(pagaendeBtn)pagaendeBtn.onclick=function(){
+    utvExtraView="pagaende";
+    mediaPagCat=mediaCat||MEDIA_CAT_PRESETS[0]||"";
+    mediaPagCreator=null;mediaPagSearch="";mediaPagSortMode="namn";mediaPagLetter="";mediaPagSenasteDesc=true;
+    syncUtvTopNav();
+    renderMediaPagaende();
+  };
+  if(utvExtraView==="recensioner")renderMediaRecension();
+  else if(utvExtraView==="pagaende")renderMediaPagaende();
   else renderUtvContent();
 }
 
 function switchUtvSubview(sub){
   utvSubview=sub;
-  utvRecensionerOpen=false;
-  document.querySelectorAll("[data-utvsub]").forEach(function(btn){btn.classList.toggle("on",btn.dataset.utvsub===sub);});
-  var recensionerBtn=document.getElementById("betyg-recensioner-btn");
-  if(recensionerBtn)recensionerBtn.classList.remove("on");
+  utvExtraView=null;
+  syncUtvTopNav();
   var uc=document.getElementById("utv-content");
   if(uc)uc.innerHTML="<div style='padding:30px;text-align:center;color:#5c5c5c;font-size:13px'>⏳ Laddar...</div>";
   ensureBetygDataLoaded().then(function(){renderUtvContent();});
@@ -726,7 +745,7 @@ var OBJ_MAKER_BY_CAT={};
 var objRecensionCat="", objRecensionTillverkare=null;
 var OBJ_UNKNOWN_TILLVERKARE="__okand_tillverkare__";
 var utvSubview="media"; // media | objekt | plats
-var utvRecensionerOpen=false; // true = Recensioner-vyn (full bredd, oberoende av media/objekt/plats) visas
+var utvExtraView=null; // null | "recensioner" | "pagaende" - full bredd-vyer oberoende av media/objekt/plats
 
 function getRecentObjItems(limit){
   var all=[];
@@ -887,13 +906,13 @@ function renderLogMedia(){
 
   var mediaCatSel=c.querySelector("#mediacat-select");
   if(mediaCatSel)mediaCatSel.onchange=function(){mediaCat=mediaCatSel.value;mediaGenreSelected=[];renderLogMedia();};
-
   var inp=c.querySelector("#media-inp");
   var creatorInp=c.querySelector("#media-creator-inp");
   var anteckningInp=c.querySelector("#media-anteckning-inp");
   var targetCatSel=c.querySelector("#media-target-cat");
   var addBtn=c.querySelector("#media-add");
   var mediaGetCat=function(){return mediaCat||(targetCatSel?targetCatSel.value:"");};
+
   var mediaGenrePicker=bindMediaGenrePicker(c,"media-genre",mediaGetCat,mediaGenreSelected);
 
   if(addBtn)addBtn.onclick=function(){
@@ -939,11 +958,7 @@ function renderLogMedia(){
     el.onclick=function(){
       var idx=parseInt(el.dataset.jumpmed);
       var item=mediaList[mediaCat][idx];
-      historySubview="betyg";histBetygSubview="media";
-      setView("history");
-      renderHistory();
-      // After render, show Klar modal for this item
-      setTimeout(function(){showHistMediaModal(mediaItemTitle(item),idx,mediaCat,mediaItemCreator(item),mediaItemGenre(item),mediaItemAnteckning(item),mediaItemGenresArr(item));},50);
+      showMediaModal(item,idx,mediaCat,renderLogMedia);
     };
   });
 
@@ -970,10 +985,7 @@ function renderLogMedia(){
       var cat=el.dataset.jumpmedrecentcat;
       var idx=parseInt(el.dataset.jumpmedrecent);
       var item=mediaList[cat][idx];
-      historySubview="betyg";histBetygSubview="media";
-      setView("history");
-      renderHistory();
-      setTimeout(function(){showHistMediaModal(mediaItemTitle(item),idx,cat,mediaItemCreator(item),mediaItemGenre(item),mediaItemAnteckning(item),mediaItemGenresArr(item));},50);
+      showMediaModal(item,idx,cat,renderLogMedia);
     };
   });
 }
@@ -982,6 +994,10 @@ var mediaRecensionCat="", mediaRecensionCreator=null;
 var mediaRecensionSearch="", mediaRecensionLetter="";
 var mediaRecensionSortMode="namn"; // "namn" | "kreator" | "senaste"
 var mediaRecensionSenasteDesc=true; // true = nyast överst (senaste-läget)
+var mediaPagCat="", mediaPagCreator=null;
+var mediaPagSearch="", mediaPagLetter="";
+var mediaPagSortMode="namn"; // "namn" | "kreator" | "senaste"
+var mediaPagSenasteDesc=true; // true = senast tillagd överst (senaste-läget)
 var MEDIA_REC_ALPHABET=["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","Å","Ä","Ö"];
 var MEDIA_UNKNOWN_CREATOR="__okand_kreator__";
 
@@ -1139,10 +1155,7 @@ function renderObj(){
     el.onclick=function(){
       var idx=parseInt(el.dataset.jumpobj);
       var item=objList[objCat][idx];
-      historySubview="betyg";histBetygSubview="objekt";
-      setView("history");
-      renderHistory();
-      setTimeout(function(){showHistObjModal(objItemTitle(item),idx,objCat,objItemTillverkare(item),objItemAnteckning(item));},50);
+      showHistObjModal(objItemTitle(item),idx,objCat,objItemTillverkare(item),objItemAnteckning(item));
     };
   });
 
@@ -1169,10 +1182,7 @@ function renderObj(){
       var cat=el.dataset.jumpobjrecentcat;
       var idx=parseInt(el.dataset.jumpobjrecent);
       var item=objList[cat][idx];
-      historySubview="betyg";histBetygSubview="objekt";
-      setView("history");
-      renderHistory();
-      setTimeout(function(){showHistObjModal(objItemTitle(item),idx,cat,objItemTillverkare(item),objItemAnteckning(item));},50);
+      showHistObjModal(objItemTitle(item),idx,cat,objItemTillverkare(item),objItemAnteckning(item));
     };
   });
 }
@@ -1399,7 +1409,7 @@ function showHistObjModal(title,idx,cat,tillverkare,anteckning){
     if(objList[cat])objList[cat].splice(idx,1);
     saveBetygForemal();
     overlay.remove();
-    renderHistory();
+    renderObj();
   };
 }
 
@@ -1557,10 +1567,7 @@ function renderPlats(){
     el.onclick=function(){
       var idx=parseInt(el.dataset.jumpplats);
       var item=platsList[platsCat][idx];
-      historySubview="betyg";histBetygSubview="plats";
-      setView("history");
-      renderHistory();
-      setTimeout(function(){showHistPlatsModal(platsItemTitle(item),idx,platsCat,platsItemKommun(item),platsItemAnteckning(item));},50);
+      showHistPlatsModal(platsItemTitle(item),idx,platsCat,platsItemKommun(item),platsItemAnteckning(item));
     };
   });
 
@@ -1587,10 +1594,7 @@ function renderPlats(){
       var cat=el.dataset.jumpplatsrecentcat;
       var idx=parseInt(el.dataset.jumpplatsrecent);
       var item=platsList[cat][idx];
-      historySubview="betyg";histBetygSubview="plats";
-      setView("history");
-      renderHistory();
-      setTimeout(function(){showHistPlatsModal(platsItemTitle(item),idx,cat,platsItemKommun(item),platsItemAnteckning(item));},50);
+      showHistPlatsModal(platsItemTitle(item),idx,cat,platsItemKommun(item),platsItemAnteckning(item));
     };
   });
 }
@@ -1817,7 +1821,7 @@ function showHistPlatsModal(title,idx,cat,kommun,anteckning){
     if(platsList[cat])platsList[cat].splice(idx,1);
     saveBetygPlats();
     overlay.remove();
-    renderHistory();
+    renderPlats();
   };
 }
 
@@ -1840,7 +1844,7 @@ function renderMediaRecension(){
     +"<div id='rec-bookshelf-bar'></div>"
     +"<div id='rec-creators-list'></div>";
 
-  c.querySelector("#rec-back").onclick=function(){utvRecensionerOpen=false;renderUtvContent();};
+  c.querySelector("#rec-back").onclick=function(){utvExtraView=null;syncUtvTopNav();renderUtvContent();};
   var sel=c.querySelector("#rec-cat-select");
   if(sel)sel.onchange=function(){mediaRecensionCat=sel.value;mediaRecensionSearch="";mediaRecensionLetter="";renderMediaRecension();};
   var searchInp=c.querySelector("#rec-search");
@@ -2021,6 +2025,240 @@ function renderMediaRecensionByCreator(){
   });
 }
 
+// ---- Pågående: samma bokhylle-koncept som Recensioner (Namn/Kreatör/Senaste + bokstavsrad),
+// men källan är mediaList (ej klarmarkerade poster) istället för mediaFardig. Klick på ett
+// inlägg öppnar showMediaModal för att klarmarkera + betygsätta det (samma modal som
+// "Senaste 5" under Att konsumera använder).
+function renderMediaPagaende(){
+  if(mediaPagCreator!==null)return renderMediaPagaendeByCreator();
+
+  var c=document.getElementById("utv-content");
+  if(!mediaPagCat||MEDIA_CAT_PRESETS.indexOf(mediaPagCat)<0)mediaPagCat=MEDIA_CAT_PRESETS[0]||"";
+  var catOptions=MEDIA_CAT_PRESETS.map(function(catName){return "<option value='"+esc(catName)+"'"+(catName===mediaPagCat?" selected":"")+">"+esc(catName)+"</option>";}).join("");
+
+  c.innerHTML="<button class='sec ghost' id='pag-back' style='margin-bottom:16px'>&#8592; Tillbaka</button>"
+    +"<div class='lbl'>Pågående</div>"
+    +"<select id='pag-cat-select' style='width:100%;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:14px;padding:10px 12px;cursor:pointer;font-family:inherit;margin-bottom:10px'>"+catOptions+"</select>"
+    +"<input class='inp w100' id='pag-search' placeholder='Sök kreatör, titel eller genre...' style='margin-bottom:14px' value='"+esc(mediaPagSearch)+"'/>"
+    +"<div style='display:flex;gap:6px;margin-bottom:10px'>"
+    +"<button data-pagsort='namn' class='mode-btn"+(mediaPagSortMode==="namn"?" on":"")+"' style='flex:1;font-size:11px'>📚 Namn</button>"
+    +"<button data-pagsort='kreator' class='mode-btn"+(mediaPagSortMode==="kreator"?" on":"")+"' style='flex:1;font-size:11px'>Kreatör</button>"
+    +"<button data-pagsort='senaste' class='mode-btn"+(mediaPagSortMode==="senaste"?" on":"")+"' style='flex:1;font-size:11px'>🕐 Senaste</button>"
+    +"</div>"
+    +"<div id='pag-bookshelf-bar'></div>"
+    +"<div id='pag-list'></div>";
+
+  c.querySelector("#pag-back").onclick=function(){utvExtraView=null;syncUtvTopNav();renderUtvContent();};
+  var sel=c.querySelector("#pag-cat-select");
+  if(sel)sel.onchange=function(){mediaPagCat=sel.value;mediaPagSearch="";mediaPagLetter="";renderMediaPagaende();};
+  var searchInp=c.querySelector("#pag-search");
+  if(searchInp)searchInp.oninput=function(){mediaPagSearch=searchInp.value;updateMediaPagList();};
+  c.querySelectorAll("[data-pagsort]").forEach(function(btn){
+    btn.onclick=function(){
+      mediaPagSortMode=btn.dataset.pagsort;
+      mediaPagLetter="";
+      renderMediaPagaende();
+    };
+  });
+  updateMediaPagList();
+}
+
+function renderPagLetterBar(barEl,availLetters){
+  barEl.innerHTML="<div style='display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px'>"
+    +MEDIA_REC_ALPHABET.map(function(l){
+      var has=!!availLetters[l];
+      var active=mediaPagLetter===l;
+      return "<button data-pagletter='"+l+"'"+(has?"":" disabled")+" style='min-width:26px;padding:6px 0;font-size:11px;border-radius:6px;border:1px solid "+(active?"#c9a24a":"#2a2a2a")+";background:"+(active?"#c9a24a":"#161616")+";color:"+(active?"#161616":(has?"#f2f2f2":"#3a3a3a"))+";cursor:"+(has?"pointer":"default")+"'>"+l+"</button>";
+    }).join("")
+    +"<button data-pagletter='' style='padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid #2a2a2a;background:"+(!mediaPagLetter?"#c9a24a":"#161616")+";color:"+(!mediaPagLetter?"#161616":"#f2f2f2")+";cursor:pointer'>Alla</button>"
+    +"</div>";
+  barEl.querySelectorAll("[data-pagletter]").forEach(function(btn){
+    if(btn.disabled)return;
+    btn.onclick=function(){
+      var l=btn.dataset.pagletter;
+      mediaPagLetter=mediaPagLetter===l?"":l;
+      updateMediaPagList();
+    };
+  });
+}
+
+// Platt lista utan stjärnor (posten är ännu inte betygsatt) - klick på raden öppnar
+// showMediaModal för att klarmarkera + betygsätta, ✏️ redigerar, x tar bort.
+function renderPagFlatList(listEl,list){
+  listEl.innerHTML=list.length?list.map(function(en){
+    var item=en.item,idx=en.idx;
+    var title=mediaItemTitle(item),creator=mediaItemCreator(item),genre=mediaItemGenre(item),anteckning=mediaItemAnteckning(item);
+    return "<div style='padding:10px 14px;background:#131313;border:1px solid #2a2a2a;border-radius:10px;margin-bottom:8px'>"
+      +"<div style='display:flex;align-items:center;gap:8px'>"
+      +"<div data-pagclick='"+idx+"' style='flex:1;min-width:0;cursor:pointer'>"
+      +"<div style='font-size:13px;color:#f2f2f2;font-weight:500'>"+esc(title)+"</div>"
+      +(creator?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(creator)+"</div>":"")
+      +(genre?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(genre)+"</div>":"")
+      +(anteckning?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(anteckning)+"</div>":"")
+      +"</div>"
+      +"<button data-pagedit='"+idx+"' style='background:none;border:none;color:#5c5c5c;cursor:pointer;font-size:14px;padding:0 4px;flex-shrink:0'>✏️</button>"
+      +"<button data-pagdel='"+idx+"' style='background:none;border:none;color:#5c5c5c;cursor:pointer;font-size:16px;padding:0 4px;flex-shrink:0'>x</button>"
+      +"</div>"
+      +"</div>";
+  }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>🔄</div>Inga träffar.</div>";
+
+  listEl.querySelectorAll("[data-pagclick]").forEach(function(el){
+    el.onclick=function(){
+      var idx=parseInt(el.dataset.pagclick);
+      var item=(mediaList[mediaPagCat]||[])[idx];
+      if(item)showMediaModal(item,idx,mediaPagCat,updateMediaPagList);
+    };
+  });
+  listEl.querySelectorAll("[data-pagedit]").forEach(function(btn){
+    btn.onclick=function(){
+      editPendingMediaItem(mediaPagCat,parseInt(btn.dataset.pagedit),updateMediaPagList);
+    };
+  });
+  listEl.querySelectorAll("[data-pagdel]").forEach(function(btn){
+    btn.onclick=function(){
+      var idx=parseInt(btn.dataset.pagdel);
+      var item=(mediaList[mediaPagCat]||[])[idx];
+      var title=item?mediaItemTitle(item):"";
+      confirmDelete("Vill du ta bort \""+esc(title)+"\"?",function(){
+        if(mediaList[mediaPagCat])mediaList[mediaPagCat].splice(idx,1);
+        saveBetygMedia();updateMediaPagList();
+      });
+    };
+  });
+}
+
+function updateMediaPagList(){
+  var listEl=document.getElementById("pag-list");
+  var barEl=document.getElementById("pag-bookshelf-bar");
+  if(!listEl)return;
+
+  var q=mediaPagSearch.trim().toLowerCase();
+  var rawItems=mediaList[mediaPagCat]||[];
+  var entries=rawItems.map(function(item,idx){return {item:item,idx:idx};}).filter(function(en){
+    if(!q)return true;
+    var creator=mediaItemCreator(en.item),title=mediaItemTitle(en.item),genre=mediaItemGenre(en.item);
+    return (creator&&creator.toLowerCase().indexOf(q)>=0)
+      ||(title&&title.toLowerCase().indexOf(q)>=0)
+      ||(genre&&genre.toLowerCase().indexOf(q)>=0);
+  });
+
+  if(mediaPagSortMode==="senaste"){
+    if(barEl){
+      barEl.innerHTML="<div style='display:flex;justify-content:flex-end;margin-bottom:10px'>"
+        +"<button id='pag-senaste-flip' class='chip' type='button' style='font-size:12px'>"+(mediaPagSenasteDesc?"⇅ Äldst överst":"⇅ Nyast överst")+"</button>"
+        +"</div>";
+      var flipBtn=barEl.querySelector("#pag-senaste-flip");
+      if(flipBtn)flipBtn.onclick=function(){mediaPagSenasteDesc=!mediaPagSenasteDesc;updateMediaPagList();};
+    }
+    var chronoEntries=entries.slice().sort(function(a,b){
+      var diff=new Date(b.item.timestamp)-new Date(a.item.timestamp);
+      return mediaPagSenasteDesc?diff:-diff;
+    });
+    renderPagFlatList(listEl,chronoEntries);
+    return;
+  }
+
+  if(mediaPagSortMode==="kreator"){
+    var counts={};
+    entries.forEach(function(en){
+      var cr=mediaItemCreator(en.item);
+      var key=cr?cr:MEDIA_UNKNOWN_CREATOR;
+      counts[key]=(counts[key]||0)+1;
+    });
+    var allCreators=Object.keys(counts).filter(function(k){return k!==MEDIA_UNKNOWN_CREATOR;}).sort(function(a,b){return a.toLowerCase().localeCompare(b.toLowerCase(),"sv");});
+    if(counts[MEDIA_UNKNOWN_CREATOR])allCreators.push(MEDIA_UNKNOWN_CREATOR);
+
+    if(barEl){
+      var availLettersKr={};
+      allCreators.forEach(function(cr){if(cr!==MEDIA_UNKNOWN_CREATOR)availLettersKr[cr.charAt(0).toUpperCase()]=true;});
+      renderPagLetterBar(barEl,availLettersKr);
+    }
+    var creators=allCreators;
+    if(mediaPagLetter)creators=creators.filter(function(cr){return cr!==MEDIA_UNKNOWN_CREATOR&&cr.charAt(0).toUpperCase()===mediaPagLetter;});
+
+    listEl.innerHTML=creators.length?creators.map(function(cr){
+      var label=cr===MEDIA_UNKNOWN_CREATOR?"Okänd kreatör":cr;
+      return "<div class='khist' style='display:flex;align-items:center;gap:8px' data-pagcreator='"+esc(cr)+"'>"
+        +"<div style='flex:1;min-width:0'><div class='kmsg' style='white-space:normal;font-weight:600'>"+esc(label)+"</div>"
+        +"<div class='kmeta'><span class='kbadge'>"+counts[cr]+" pågående</span></div></div>"
+        +"</div>";
+    }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>🔄</div>Inget pågående i denna kategori ännu.</div>";
+
+    listEl.querySelectorAll("[data-pagcreator]").forEach(function(el){
+      el.onclick=function(){mediaPagCreator=el.dataset.pagcreator;renderMediaPagaende();};
+    });
+    return;
+  }
+
+  // "namn" - standardläget
+  if(barEl){
+    var availLettersNamn={};
+    entries.forEach(function(en){var t=mediaItemTitle(en.item);if(t)availLettersNamn[t.charAt(0).toUpperCase()]=true;});
+    renderPagLetterBar(barEl,availLettersNamn);
+  }
+  var namnEntries=entries.slice();
+  if(mediaPagLetter)namnEntries=namnEntries.filter(function(en){return (mediaItemTitle(en.item)||"").charAt(0).toUpperCase()===mediaPagLetter;});
+  namnEntries.sort(function(a,b){return (mediaItemTitle(a.item)||"").toLowerCase().localeCompare((mediaItemTitle(b.item)||"").toLowerCase(),"sv");});
+  renderPagFlatList(listEl,namnEntries);
+}
+
+function renderMediaPagaendeByCreator(){
+  var c=document.getElementById("utv-content");
+  var isUnknown=mediaPagCreator===MEDIA_UNKNOWN_CREATOR;
+  var label=isUnknown?"Okänd kreatör":mediaPagCreator;
+
+  var rawItems=mediaList[mediaPagCat]||[];
+  var entries=rawItems.map(function(item,idx){return {item:item,idx:idx};}).filter(function(en){
+    var cr=mediaItemCreator(en.item);
+    return isUnknown?!cr:cr===mediaPagCreator;
+  });
+  entries.sort(function(a,b){return new Date(b.item.timestamp)-new Date(a.item.timestamp);});
+
+  var list=entries.length?entries.map(function(en){
+    var item=en.item,idx=en.idx;
+    var title=mediaItemTitle(item),genre=mediaItemGenre(item),anteckning=mediaItemAnteckning(item);
+    return "<div style='padding:10px 14px;background:#131313;border:1px solid #2a2a2a;border-radius:10px;margin-bottom:8px'>"
+      +"<div style='display:flex;align-items:center;gap:8px'>"
+      +"<div data-pagclickcr='"+idx+"' style='flex:1;min-width:0;cursor:pointer'>"
+      +"<div style='font-size:13px;color:#f2f2f2;font-weight:500'>"+esc(title)+"</div>"
+      +(genre?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(genre)+"</div>":"")
+      +(anteckning?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(anteckning)+"</div>":"")
+      +"</div>"
+      +"<button data-pageditcr='"+idx+"' style='background:none;border:none;color:#5c5c5c;cursor:pointer;font-size:14px;padding:0 4px;flex-shrink:0'>✏️</button>"
+      +"<button data-pagdelcr='"+idx+"' style='background:none;border:none;color:#5c5c5c;cursor:pointer;font-size:16px;padding:0 4px;flex-shrink:0'>x</button>"
+      +"</div>"
+      +"</div>";
+  }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>🔄</div>Inget pågående ännu.</div>";
+
+  c.innerHTML="<button class='sec ghost' id='pag-back-creators' style='margin-bottom:16px'>&#8592; Alla kreatörer</button>"
+    +"<div class='lbl'>"+esc(label)+"</div>"+list;
+
+  c.querySelector("#pag-back-creators").onclick=function(){mediaPagCreator=null;renderMediaPagaende();};
+  c.querySelectorAll("[data-pagclickcr]").forEach(function(el){
+    el.onclick=function(){
+      var idx=parseInt(el.dataset.pagclickcr);
+      var item=(mediaList[mediaPagCat]||[])[idx];
+      if(item)showMediaModal(item,idx,mediaPagCat,renderMediaPagaendeByCreator);
+    };
+  });
+  c.querySelectorAll("[data-pageditcr]").forEach(function(btn){
+    btn.onclick=function(){
+      editPendingMediaItem(mediaPagCat,parseInt(btn.dataset.pageditcr),renderMediaPagaendeByCreator);
+    };
+  });
+  c.querySelectorAll("[data-pagdelcr]").forEach(function(btn){
+    btn.onclick=function(){
+      var idx=parseInt(btn.dataset.pagdelcr);
+      var item=(mediaList[mediaPagCat]||[])[idx];
+      var title=item?mediaItemTitle(item):"";
+      confirmDelete("Vill du ta bort \""+esc(title)+"\"?",function(){
+        if(mediaList[mediaPagCat])mediaList[mediaPagCat].splice(idx,1);
+        saveBetygMedia();renderMediaPagaendeByCreator();
+      });
+    };
+  });
+}
+
 function editPendingMediaItem(cat,idx,onSaved){
   var item=(mediaList[cat]||[])[idx];
   if(!item)return;
@@ -2140,13 +2378,18 @@ function editMediaFardigEntry(entry,onSaved){
   };
 }
 
-function showMediaModal(title,idx){
+function showMediaModal(item,idx,cat,onSaved){
+  var title=mediaItemTitle(item),creator=mediaItemCreator(item),genre=mediaItemGenre(item),anteckning=mediaItemAnteckning(item);
+  var genresArr=mediaItemGenresArr(item);
   var selectedRating=0;
   var overlay=document.createElement("div");
   overlay.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px";
   overlay.innerHTML="<div style='background:#161616;border-radius:16px;border:1px solid #4fa8ff;padding:20px;width:100%;max-width:400px'>"
     +"<div class='lbl'>Klarmarkera</div>"
-    +"<div style='font-size:15px;color:#f2f2f2;margin:8px 0 16px;font-weight:500'>"+esc(title)+"</div>"
+    +"<div style='font-size:15px;color:#f2f2f2;margin:8px 0 4px;font-weight:500'>"+esc(title)+"</div>"
+    +(creator?"<div style='font-size:12px;color:#5c5c5c'>"+esc(creator)+"</div>":"")
+    +(genre?"<div style='font-size:12px;color:#5c5c5c'>"+esc(genre)+"</div>":"")
+    +(anteckning?"<div style='font-size:12px;color:#5c5c5c;margin-bottom:12px'>"+esc(anteckning)+"</div>":"<div style='margin-bottom:12px'></div>")
     +"<div class='lbl'>Betyg</div>"
     +"<div id='media-stars' style='display:flex;gap:8px;margin-bottom:4px'>"
     +[1,2,3,4,5,6,7,8,9,10].map(function(n){return "<button data-star='"+n+"' style='font-size:19px;padding:2px;background:none;border:none;cursor:pointer;opacity:0.3'>★</button>";}).join("")
@@ -2174,10 +2417,14 @@ function showMediaModal(title,idx){
   overlay.querySelector("#modal-cancel").onclick=function(){overlay.remove();};
   overlay.querySelector("#modal-save").onclick=function(){
     var comment=overlay.querySelector("#media-comment").value.trim();
-    mediaFardig.push({title:title,cat:mediaCat,rating:selectedRating,comment:comment,timestamp:new Date().toISOString()});
-    if(mediaList[mediaCat])mediaList[mediaCat].splice(idx,1);
+    var fardigItem={title:title,cat:cat,creator:creator,anteckning:anteckning,rating:selectedRating,comment:comment,timestamp:new Date().toISOString()};
+    if(genresArr.length){fardigItem.genres=genresArr;fardigItem.genre=genresArr.join(", ");}
+    else if(genre){fardigItem.genre=genre;}
+    mediaFardig.push(fardigItem);
+    if(mediaList[cat])mediaList[cat].splice(idx,1);
     saveBetygMedia();
     overlay.remove();
-    renderLogMedia();
+    if(onSaved)onSaved();
   };
 }
+
