@@ -95,7 +95,7 @@ function bindAnteckningSubPicker(container,idPrefix,getCat,selected){
 
 // ---- ⚙️ Inställningar — Notering (en gemensam panel för hela fliken, mönster från Aktivitet) ----
 // OBS: kategorierna här är enkla strängar (inte id/label/emoji-objekt som i Aktivitet) - det
-// matchar hur FUND_CAT_PRESETS/ANTECKNING_CAT_PRESETS redan lagras. Ingen emoji-väljare.
+// matchar hur FUND_CAT_PRESETS/ANTECKNING_CAT_PRESETS redan lagras. Emoji sätts in i textfältet via 😀-knappen (öppnar samma emoji-väljare som Aktivitet, se openNoteringEmojiPicker).
 function showNoteringSettings(){
   var wFund=FUND_CAT_PRESETS.slice();
   var wTt=ANTECKNING_CAT_PRESETS.slice();
@@ -116,6 +116,7 @@ function showNoteringSettings(){
         if(i===editIdx){
           return "<span style='display:inline-flex;align-items:center;gap:4px;background:#1c3c5a;border:1px solid #4fa8ff;border-radius:8px;padding:4px 4px 4px 6px'>"
             +"<input id='"+prefix+"-edit-label' value='"+esc(label)+"' style='width:110px;background:none;border:none;color:#f2f2f2;font-size:13px;padding:2px 0'/>"
+            +"<button id='"+prefix+"-edit-emoji' type='button' title='Välj emoji' style='background:none;border:none;color:#f2f2f2;cursor:pointer;font-size:15px;padding:2px'>😀</button>"
             +"<button id='"+prefix+"-edit-confirm' title='Klar' style='background:none;border:none;color:#4fa8ff;cursor:pointer;font-size:14px;padding:2px'>✓</button>"
             +"</span>";
         }
@@ -144,6 +145,7 @@ function showNoteringSettings(){
       +simpleChipsHtml(wFund,editFundIdx,"fund","Inga kategorier kvar - lägg till minst en nedan.")
       +"<div style='display:flex;gap:6px;margin-bottom:4px'>"
       +"<input class='inp' id='ns-newfund-label' placeholder='Ny kategori...' style='flex:1;padding:7px 10px;font-size:13px'/>"
+      +"<button class='chip' id='ns-newfund-emoji' type='button' title='Välj emoji' style='flex-shrink:0;padding:7px 10px;font-size:15px'>😀</button>"
       +"<button class='chip' id='ns-newfund-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
       +"</div>"
 
@@ -155,6 +157,7 @@ function showNoteringSettings(){
       +simpleChipsHtml(wTt,editTtIdx,"tt","Inga kategorier kvar - lägg till minst en nedan.")
       +"<div style='display:flex;gap:6px;margin-bottom:4px'>"
       +"<input class='inp' id='ns-newtt-label' placeholder='Ny kategori...' style='flex:1;padding:7px 10px;font-size:13px'/>"
+      +"<button class='chip' id='ns-newtt-emoji' type='button' title='Välj emoji' style='flex-shrink:0;padding:7px 10px;font-size:15px'>😀</button>"
       +"<button class='chip' id='ns-newtt-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
       +"</div>"
 
@@ -166,6 +169,7 @@ function showNoteringSettings(){
           +simpleChipsHtml(wSub[anteckningSubCat]||[],editSubIdx,"sub","Inga subkategorier ännu för denna kategori.")
           +"<div style='display:flex;gap:6px;margin-bottom:4px'>"
           +"<input class='inp' id='ns-newsub-label' placeholder='Ny subkategori...' style='flex:1;padding:7px 10px;font-size:13px'/>"
+          +"<button class='chip' id='ns-newsub-emoji' type='button' title='Välj emoji' style='flex-shrink:0;padding:7px 10px;font-size:15px'>😀</button>"
           +"<button class='chip' id='ns-newsub-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
           +"</div>"
         : "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Lägg till minst en Anteckningar-kategori ovan först.</div>")
@@ -245,6 +249,16 @@ function showNoteringSettings(){
       if(onRename&&before!==null)onRename(before,arr[idx]);
       rerender();
     };
+    var emojiBtn=ov.querySelector("#"+prefix+"-edit-emoji");
+    if(emojiBtn)emojiBtn.onclick=function(){
+      openNoteringEmojiPicker(function(emoji){
+        var lEl=ov.querySelector("#"+prefix+"-edit-label");
+        if(!lEl)return;
+        var pos=lEl.selectionStart!=null?lEl.selectionStart:lEl.value.length;
+        lEl.value=lEl.value.slice(0,pos)+emoji+" "+lEl.value.slice(pos);
+        lEl.focus();
+      });
+    };
     var editLabelEl=ov.querySelector("#"+prefix+"-edit-label");
     if(editLabelEl)editLabelEl.onkeydown=function(e){
       if(e.key==="Enter"){
@@ -281,6 +295,12 @@ function showNoteringSettings(){
     });
 
     ov.querySelector("#ns-newfund-label").onkeydown=function(e){if(e.key==="Enter")ov.querySelector("#ns-newfund-add").click();};
+    ov.querySelector("#ns-newfund-emoji").onclick=function(){
+      openNoteringEmojiPicker(function(emoji){
+        var inp=ov.querySelector("#ns-newfund-label");
+        if(inp){inp.value=emoji+" "+inp.value;inp.focus();}
+      });
+    };
     ov.querySelector("#ns-newfund-add").onclick=function(){
       var labelInp=ov.querySelector("#ns-newfund-label");
       var label=labelInp.value.trim();
@@ -289,6 +309,12 @@ function showNoteringSettings(){
       rerender();
     };
     ov.querySelector("#ns-newtt-label").onkeydown=function(e){if(e.key==="Enter")ov.querySelector("#ns-newtt-add").click();};
+    ov.querySelector("#ns-newtt-emoji").onclick=function(){
+      openNoteringEmojiPicker(function(emoji){
+        var inp=ov.querySelector("#ns-newtt-label");
+        if(inp){inp.value=emoji+" "+inp.value;inp.focus();}
+      });
+    };
     ov.querySelector("#ns-newtt-add").onclick=function(){
       var labelInp=ov.querySelector("#ns-newtt-label");
       var label=labelInp.value.trim();
@@ -306,6 +332,13 @@ function showNoteringSettings(){
       bindSimpleChipGroup("sub",wSub[anteckningSubCat],function(){return editSubIdx;},function(v){editSubIdx=v;});
       var newSubLabelEl=ov.querySelector("#ns-newsub-label");
       if(newSubLabelEl)newSubLabelEl.onkeydown=function(e){if(e.key==="Enter")ov.querySelector("#ns-newsub-add").click();};
+      var newSubEmojiEl=ov.querySelector("#ns-newsub-emoji");
+      if(newSubEmojiEl)newSubEmojiEl.onclick=function(){
+        openNoteringEmojiPicker(function(emoji){
+          var inp=ov.querySelector("#ns-newsub-label");
+          if(inp){inp.value=emoji+" "+inp.value;inp.focus();}
+        });
+      };
       var newSubAddEl=ov.querySelector("#ns-newsub-add");
       if(newSubAddEl)newSubAddEl.onclick=function(){
         var labelInp=ov.querySelector("#ns-newsub-label");
@@ -527,8 +560,8 @@ var anteckningCatSelect="", anteckningReadCat="", anteckningReadSubcat="", antec
 // fundering.json = fundHist, anteckning.json = anteckningHist, settings.json = kategorierna.
 // Alla tre ligger i Drive-mappen "Notering". Inga referenser till Installningar - core.js's
 // gamla delade DRIVE_STRUCTURE/saveTab/loadTab-system hanterar inte denna flik längre.
-var noteringDataLoaded=false;
-var noteringSettingsLoaded=false;
+var noteringDataLoadPromise=null;
+var noteringSettingsLoadPromise=null;
 
 function showNoteringDriveError(context,e){
   console.error(context,e);
@@ -539,19 +572,26 @@ function showNoteringDriveError(context,e){
   setTimeout(function(){el.remove();},6000);
 }
 
-async function ensureNoteringDataLoaded(){
-  if(noteringDataLoaded||!accessToken)return;
-  noteringDataLoaded=true;
-  try{
-    var fundData=await driveReadJson(["Notering"],"fundering.json");
-    if(fundData&&fundData.fundHist)fundHist=fundData.fundHist;
-    var antData=await driveReadJson(["Notering"],"anteckning.json");
-    if(antData&&antData.anteckningHist)anteckningHist=antData.anteckningHist;
-    if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
-  }catch(e){
-    noteringDataLoaded=false; // tillåt nytt försök nästa gång fliken öppnas
-    showNoteringDriveError("Kunde inte läsa Notering-data",e);
-  }
+// Returnerar SAMMA pågående inläsning till alla som anropar samtidigt (inte bara en flagga) -
+// annars kan t.ex. ⚙️-knappen "await":a ett anrop som redan flaggats som klart fast den
+// riktiga Drive-läsningen inte hunnit bli klar, och panelen öppnas med tom data (den bugg som
+// orsakade "Du måste ha minst en Fundering-kategori kvar" trots att settings.json hade data).
+function ensureNoteringDataLoaded(){
+  if(!accessToken)return Promise.resolve();
+  if(noteringDataLoadPromise)return noteringDataLoadPromise;
+  noteringDataLoadPromise=(async function(){
+    try{
+      var fundData=await driveReadJson(["Notering"],"fundering.json");
+      if(fundData&&fundData.fundHist)fundHist=fundData.fundHist;
+      var antData=await driveReadJson(["Notering"],"anteckning.json");
+      if(antData&&antData.anteckningHist)anteckningHist=antData.anteckningHist;
+      if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
+    }catch(e){
+      noteringDataLoadPromise=null; // tillåt nytt försök nästa gång fliken öppnas
+      showNoteringDriveError("Kunde inte läsa Notering-data",e);
+    }
+  })();
+  return noteringDataLoadPromise;
 }
 
 async function saveNoteringFundering(){
@@ -572,21 +612,24 @@ async function saveNoteringAnteckning(){
   }
 }
 
-async function ensureNoteringSettingsLoaded(){
-  if(noteringSettingsLoaded||!accessToken)return;
-  noteringSettingsLoaded=true;
-  try{
-    var data=await driveReadJson(["Notering"],"settings.json");
-    if(data){
-      if(data.fundCatPresets&&data.fundCatPresets.length)FUND_CAT_PRESETS=data.fundCatPresets;
-      if(data.anteckningCatPresets&&data.anteckningCatPresets.length)ANTECKNING_CAT_PRESETS=data.anteckningCatPresets;
-      if(data.anteckningSubcatByCat)ANTECKNING_SUBCAT_BY_CAT=data.anteckningSubcatByCat;
+function ensureNoteringSettingsLoaded(){
+  if(!accessToken)return Promise.resolve();
+  if(noteringSettingsLoadPromise)return noteringSettingsLoadPromise;
+  noteringSettingsLoadPromise=(async function(){
+    try{
+      var data=await driveReadJson(["Notering"],"settings.json");
+      if(data){
+        if(data.fundCatPresets&&data.fundCatPresets.length)FUND_CAT_PRESETS=data.fundCatPresets;
+        if(data.anteckningCatPresets&&data.anteckningCatPresets.length)ANTECKNING_CAT_PRESETS=data.anteckningCatPresets;
+        if(data.anteckningSubcatByCat)ANTECKNING_SUBCAT_BY_CAT=data.anteckningSubcatByCat;
+      }
+      if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
+    }catch(e){
+      noteringSettingsLoadPromise=null; // tillåt nytt försök nästa gång fliken öppnas
+      showNoteringDriveError("Kunde inte läsa Notering-inställningar",e);
     }
-    if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
-  }catch(e){
-    noteringSettingsLoaded=false; // tillåt nytt försök nästa gång fliken öppnas
-    showNoteringDriveError("Kunde inte läsa Notering-inställningar",e);
-  }
+  })();
+  return noteringSettingsLoadPromise;
 }
 
 async function saveNoteringSettings(){
@@ -600,6 +643,48 @@ async function saveNoteringSettings(){
   }catch(e){
     showNoteringDriveError("Kunde inte spara Notering-inställningar",e);
   }
+}
+
+// ---- Emoji-väljare för Notering (samma mönster som Aktivitets openEmojiPicker, men en egen,
+// fristående kopia - rör inte core.js's downloadEmojiRef eller Aktivitets AKTIVITET_EMOJI_GROUPS) ----
+var NOTERING_EMOJI_GROUPS=[
+  ["Ansikten & känslor","😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🫡 🫢 🫣 🤭 🫠 😶 😐 😑 😬 🙄 😯 😦 😧 😮 😲 🥱 😴 🤤 😪 😵 💫 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕 🤑 😈 👿"],
+  ["Händer & kropp","👋 🤚 🖐 ✋ 🖖 🫱 🫲 👌 🤌 🤏 ✌️ 🤞 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 👐 🤲 🤝 🙏 ✍️ 💅 💪 🦾 🫀 🧠 👀 👁 👄 👅 🦷"],
+  ["Sport & aktivitet","⚽ 🏀 🏈 ⚾ 🎾 🏐 🏉 🥏 🎱 🏓 🏸 🏒 🏑 🥍 🏏 🥅 ⛳ 🎣 🤿 🥊 🥋 🎽 🛹 🛼 🎿 ⛷ 🏂 🪂 🏋️ 🤸 ⛹️ 🤺 🤾 🏌️ 🏇 🧘 🏄 🚣 🧗 🚴 🚵 🏊 🤽 🤹 🏆 🥇 🥈 🥉 🎯 🎮 🕹 🎨 🎵 🎬 📚 ✍️ 🎧 🎤"],
+  ["Mat & dryck","🍎 🍊 🍋 🍇 🍓 🫐 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🍆 🥑 🥦 🥬 🥒 🌶 🧄 🧅 🥔 🌽 🥕 🥗 🍔 🍟 🌭 🍕 🥪 🥙 🌮 🌯 🫔 🍱 🍣 🍜 🍝 🍛 🍚 🥟 🍦 🍧 🍨 🍩 🍪 🎂 🍰 🧁 🥧 🍫 🍬 🍭 🍯 ☕ 🍵 🧋 🥤 🍺 🍻 🥂 🍷 🥃 🍸 🍹 🧃"],
+  ["Resor & platser","🚗 🚕 🚙 🚌 🏎 🚓 🚑 🚒 🛻 🚚 🚛 🚜 🛵 🏍 🚲 🛴 🚁 🛸 🚀 ✈️ 🚂 ⛵ 🛶 🚤 🛳 🚢 ⚓ 🏠 🏡 🏢 🏥 🏦 🏨 🏪 🏫 🏬 🏭 🏯 🏰 ⛪ 🕌 🗼 🗽 🌁 🌃 🌄 🌅 🌆 🌇 🌉 🎪 ⛺ 🏕"],
+  ["Natur","🌲 🌳 🌴 🪵 🌱 🌿 ☘️ 🍀 🍃 🍂 🍁 🍄 🌾 💐 🌷 🌹 🥀 🌺 🌸 🌼 🌻 🌞 🌝 🌛 🌜 🌚 🌕 🌙 🌟 ⭐ 🌠 ☁️ ⛅ ⛈ 🌤 🌧 🌨 🌩 🌪 🌫 🌬 🌀 🌈 ❄️ ⛄ ☃️ 💧 💦 🌊 🔥 🌋"],
+  ["Djur","🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🙈 🙉 🙊 🐔 🐧 🐦 🐤 🦆 🦅 🦉 🦇 🐺 🐴 🦄 🐝 🦋 🐌 🐞 🐢 🐍 🦎 🐙 🦑 🦐 🦀 🐡 🐠 🐟 🐬 🐳 🦈 🐊 🐘 🦛 🦒 🦘 🐕 🐈 🦜 🦢 🕊 🦔 🐇 🦝 🦦 🦥"],
+  ["Vardag & objekt","🏠 💼 💻 📱 🛏 🧹 🧺 🧴 🛒 🔧 🔨 ⚙️ 💡 🔦 📷 🎁 🕒 ⏰ 💰 💳 📈 📉 📊 📌 📎 ✂️ 🔒 🔑 📚 📖 📝 ✏️ 🖊 📐 🧮 🔬 🔭 💉 💊 🩹 🚪 🛋 🚿 🛁 🧼 🧻 🏺 ✨ 🎉 🎊"]
+];
+function openNoteringEmojiPicker(onSelect){
+  var ov=document.createElement("div");
+  ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:10002;display:flex;align-items:center;justify-content:center;padding:24px 16px";
+  ov.innerHTML="<div style='background:#161616;border-radius:20px;width:100%;max-width:460px;max-height:75vh;display:flex;flex-direction:column'>"
+    +"<div style='padding:14px 18px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between;flex-shrink:0'>"
+    +"<div style='font-size:15px;font-weight:600;color:#f2f2f2'>Välj emoji</div>"
+    +"<button id='nep-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1'>✕</button>"
+    +"</div>"
+    +"<div style='padding:14px 18px;overflow-y:auto'>"
+    +NOTERING_EMOJI_GROUPS.map(function(g){
+      return "<div style='font-size:11px;color:#5c5c5c;font-weight:600;margin:10px 0 6px;text-transform:uppercase;letter-spacing:.5px'>"+g[0]+"</div>"
+        +"<div style='display:flex;flex-wrap:wrap;gap:4px'>"
+        +g[1].split(" ").map(function(e){
+          return "<button data-notering-emoji-pick='"+e+"' style='background:none;border:none;font-size:24px;padding:5px;border-radius:8px;cursor:pointer;line-height:1'>"+e+"</button>";
+        }).join("")
+        +"</div>";
+    }).join("")
+    +"</div>"
+    +"</div>";
+  document.body.appendChild(ov);
+  ov.querySelector("#nep-close").onclick=function(){ov.remove();};
+  ov.addEventListener("mousedown",function(e){if(e.target===ov)ov.remove();});
+  ov.querySelectorAll("[data-notering-emoji-pick]").forEach(function(btn){
+    btn.onclick=function(){
+      if(onSelect)onSelect(btn.dataset.noteringEmojiPick);
+      ov.remove();
+    };
+  });
 }
 
 function fundRow(f,prefix){
@@ -670,7 +755,12 @@ function renderLogFunderingar(){
     btn.onclick=function(){funderingarSubview=btn.dataset.fundsub;renderLogFunderingar();};
   });
   var settingsBtn=c.querySelector("#notering-settings-btn");
-  if(settingsBtn)settingsBtn.onclick=function(){showNoteringSettings();};
+  if(settingsBtn)settingsBtn.onclick=async function(){
+    settingsBtn.disabled=true;settingsBtn.style.opacity="0.5";
+    await ensureNoteringSettingsLoaded(); // säkerställ att kategorierna hunnit laddas innan panelen öppnas
+    settingsBtn.disabled=false;settingsBtn.style.opacity="1";
+    showNoteringSettings();
+  };
   if(funderingarSubview==="anteckning")renderAnteckning();
   else renderFunderingHome();
 }
