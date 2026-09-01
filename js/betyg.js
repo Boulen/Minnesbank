@@ -3,14 +3,15 @@ function renderUtvarderingarTop(){
   if(!lc)return;
   ensureBetygSettingsLoaded();
   ensureBetygDataLoaded();
-  var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:20px'>"
+  var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:8px'>"
     +"<div style='flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px'>"
-    +"<button class='mode-btn"+(utvSubview==="media"?" on":"")+"' data-utvsub='media' style='font-size:11px'>Media</button>"
-    +"<button class='mode-btn"+(utvSubview==="objekt"?" on":"")+"' data-utvsub='objekt' style='font-size:11px'>Föremål</button>"
-    +"<button class='mode-btn"+(utvSubview==="plats"?" on":"")+"' data-utvsub='plats' style='font-size:11px'>Plats</button>"
+    +"<button class='mode-btn"+(!utvRecensionerOpen&&utvSubview==="media"?" on":"")+"' data-utvsub='media' style='font-size:11px'>Media</button>"
+    +"<button class='mode-btn"+(!utvRecensionerOpen&&utvSubview==="objekt"?" on":"")+"' data-utvsub='objekt' style='font-size:11px'>Föremål</button>"
+    +"<button class='mode-btn"+(!utvRecensionerOpen&&utvSubview==="plats"?" on":"")+"' data-utvsub='plats' style='font-size:11px'>Plats</button>"
     +"</div>"
     +"<button id='betyg-settings-btn' type='button' title='Inställningar' style='background:none;border:none;color:#6b6880;font-size:20px;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0'>⚙️</button>"
-    +"</div>";
+    +"</div>"
+    +"<button id='betyg-recensioner-btn' type='button' class='mode-btn"+(utvRecensionerOpen?" on":"")+"' style='width:100%;margin-bottom:20px'>📝 Recensioner</button>";
   lc.innerHTML=subTabs+"<div id='utv-content'></div>";
   lc.querySelectorAll("[data-utvsub]").forEach(function(btn){
     btn.onclick=function(){switchUtvSubview(btn.dataset.utvsub);};
@@ -22,12 +23,23 @@ function renderUtvarderingarTop(){
     settingsBtn.disabled=false;settingsBtn.style.opacity="1";
     showBetygSettings();
   };
-  renderUtvContent();
+  var recensionerBtn=lc.querySelector("#betyg-recensioner-btn");
+  if(recensionerBtn)recensionerBtn.onclick=function(){
+    utvRecensionerOpen=true;
+    mediaRecensionCat=mediaCat||MEDIA_CAT_PRESETS[0]||"";
+    mediaRecensionCreator=null;mediaRecensionSearch="";mediaRecensionSortMode="namn";mediaRecensionLetter="";mediaRecensionSenasteDesc=true;
+    renderMediaRecension();
+  };
+  if(utvRecensionerOpen)renderMediaRecension();
+  else renderUtvContent();
 }
 
 function switchUtvSubview(sub){
   utvSubview=sub;
+  utvRecensionerOpen=false;
   document.querySelectorAll("[data-utvsub]").forEach(function(btn){btn.classList.toggle("on",btn.dataset.utvsub===sub);});
+  var recensionerBtn=document.getElementById("betyg-recensioner-btn");
+  if(recensionerBtn)recensionerBtn.classList.remove("on");
   var uc=document.getElementById("utv-content");
   if(uc)uc.innerHTML="<div style='padding:30px;text-align:center;color:#5c5c5c;font-size:13px'>⏳ Laddar...</div>";
   ensureBetygDataLoaded().then(function(){renderUtvContent();});
@@ -714,6 +726,7 @@ var OBJ_MAKER_BY_CAT={};
 var objRecensionCat="", objRecensionTillverkare=null;
 var OBJ_UNKNOWN_TILLVERKARE="__okand_tillverkare__";
 var utvSubview="media"; // media | objekt | plats
+var utvRecensionerOpen=false; // true = Recensioner-vyn (full bredd, oberoende av media/objekt/plats) visas
 
 function getRecentObjItems(limit){
   var all=[];
@@ -866,7 +879,6 @@ function renderLogMedia(){
 
   c.innerHTML="<div class='lbl'>Kategori</div>"
     +catSelectHtml
-    +"<button class='sec ghost' id='media-recension-btn' style='width:100%;margin:12px 0'>📝 Recensioner</button>"
     +bodySection;
 
   c.querySelectorAll("[data-sortmed]").forEach(function(btn){
@@ -875,8 +887,6 @@ function renderLogMedia(){
 
   var mediaCatSel=c.querySelector("#mediacat-select");
   if(mediaCatSel)mediaCatSel.onchange=function(){mediaCat=mediaCatSel.value;mediaGenreSelected=[];renderLogMedia();};
-  var recBtn=c.querySelector("#media-recension-btn");
-  if(recBtn)recBtn.onclick=function(){mediaRecensionCat=mediaCat;mediaRecensionCreator=null;mediaRecensionSearch="";mediaRecensionBookshelf=false;mediaRecensionLetter="";renderMediaRecension();};
 
   var inp=c.querySelector("#media-inp");
   var creatorInp=c.querySelector("#media-creator-inp");
@@ -969,7 +979,9 @@ function renderLogMedia(){
 }
 
 var mediaRecensionCat="", mediaRecensionCreator=null;
-var mediaRecensionSearch="", mediaRecensionBookshelf=false, mediaRecensionLetter="";
+var mediaRecensionSearch="", mediaRecensionLetter="";
+var mediaRecensionSortMode="namn"; // "namn" | "kreator" | "senaste"
+var mediaRecensionSenasteDesc=true; // true = nyast överst (senaste-läget)
 var MEDIA_REC_ALPHABET=["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","Å","Ä","Ö"];
 var MEDIA_UNKNOWN_CREATOR="__okand_kreator__";
 
@@ -1820,30 +1832,85 @@ function renderMediaRecension(){
     +"<div class='lbl'>Recensioner</div>"
     +"<select id='rec-cat-select' style='width:100%;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:14px;padding:10px 12px;cursor:pointer;font-family:inherit;margin-bottom:10px'>"+catOptions+"</select>"
     +"<input class='inp w100' id='rec-search' placeholder='Sök kreatör, titel eller genre...' style='margin-bottom:14px' value='"+esc(mediaRecensionSearch)+"'/>"
-    +"<div style='display:flex;align-items:center;gap:8px;margin-bottom:10px'>"
-    +"<div class='lbl' style='margin:0;flex:1'>Kreatörer</div>"
-    +"<button class='mode-btn"+(mediaRecensionBookshelf?" on":"")+"' id='rec-bookshelf-btn' style='font-size:11px'>📚 Bokhylla</button>"
+    +"<div style='display:flex;gap:6px;margin-bottom:10px'>"
+    +"<button data-recsort='namn' class='mode-btn"+(mediaRecensionSortMode==="namn"?" on":"")+"' style='flex:1;font-size:11px'>📚 Namn</button>"
+    +"<button data-recsort='kreator' class='mode-btn"+(mediaRecensionSortMode==="kreator"?" on":"")+"' style='flex:1;font-size:11px'>Kreatör</button>"
+    +"<button data-recsort='senaste' class='mode-btn"+(mediaRecensionSortMode==="senaste"?" on":"")+"' style='flex:1;font-size:11px'>🕐 Senaste</button>"
     +"</div>"
     +"<div id='rec-bookshelf-bar'></div>"
     +"<div id='rec-creators-list'></div>";
 
-  c.querySelector("#rec-back").onclick=function(){renderLogMedia();};
+  c.querySelector("#rec-back").onclick=function(){utvRecensionerOpen=false;renderUtvContent();};
   var sel=c.querySelector("#rec-cat-select");
-  if(sel)sel.onchange=function(){mediaRecensionCat=sel.value;mediaRecensionSearch="";mediaRecensionBookshelf=false;mediaRecensionLetter="";renderMediaRecension();};
+  if(sel)sel.onchange=function(){mediaRecensionCat=sel.value;mediaRecensionSearch="";mediaRecensionLetter="";renderMediaRecension();};
   var searchInp=c.querySelector("#rec-search");
-  if(searchInp)searchInp.oninput=function(){mediaRecensionSearch=searchInp.value;updateMediaRecCreatorsList();};
-  c.querySelector("#rec-bookshelf-btn").onclick=function(){
-    mediaRecensionBookshelf=!mediaRecensionBookshelf;
-    mediaRecensionLetter="";
-    renderMediaRecension();
-  };
-  updateMediaRecCreatorsList();
+  if(searchInp)searchInp.oninput=function(){mediaRecensionSearch=searchInp.value;updateMediaRecList();};
+  c.querySelectorAll("[data-recsort]").forEach(function(btn){
+    btn.onclick=function(){
+      mediaRecensionSortMode=btn.dataset.recsort;
+      mediaRecensionLetter="";
+      renderMediaRecension();
+    };
+  });
+  updateMediaRecList();
 }
 
-// Bygger om kreatörslistan (+ ev. bokhylle-bokstavsraden) utan att röra resten av vyn,
-// sa att sökfältet inte tappar fokus medan man skriver.
-// Vid sökning eller bokhylla visas posterna platt (som Historik -> Betyg), annars mappar per kreatör.
-function updateMediaRecCreatorsList(){
+// Delad bokstavsrad (A-Ö) - används av både Namn- och Kreatör-läget, med olika
+// tillgängliga bokstäver beroende på vilket fält som sorteras på.
+function renderRecLetterBar(barEl,availLetters){
+  barEl.innerHTML="<div style='display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px'>"
+    +MEDIA_REC_ALPHABET.map(function(l){
+      var has=!!availLetters[l];
+      var active=mediaRecensionLetter===l;
+      return "<button data-recletter='"+l+"'"+(has?"":" disabled")+" style='min-width:26px;padding:6px 0;font-size:11px;border-radius:6px;border:1px solid "+(active?"#c9a24a":"#2a2a2a")+";background:"+(active?"#c9a24a":"#161616")+";color:"+(active?"#161616":(has?"#f2f2f2":"#3a3a3a"))+";cursor:"+(has?"pointer":"default")+"'>"+l+"</button>";
+    }).join("")
+    +"<button data-recletter='' style='padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid #2a2a2a;background:"+(!mediaRecensionLetter?"#c9a24a":"#161616")+";color:"+(!mediaRecensionLetter?"#161616":"#f2f2f2")+";cursor:pointer'>Alla</button>"
+    +"</div>";
+  barEl.querySelectorAll("[data-recletter]").forEach(function(btn){
+    if(btn.disabled)return;
+    btn.onclick=function(){
+      var l=btn.dataset.recletter;
+      mediaRecensionLetter=mediaRecensionLetter===l?"":l;
+      updateMediaRecList();
+    };
+  });
+}
+
+// Delad platt lista (post för post, som Historik -> Betyg) - används av både Namn- och
+// Senaste-läget, bara ordningen på "list" skiljer.
+function renderRecFlatList(listEl,list){
+  listEl.innerHTML=list.length?list.map(function(e){
+    var stars=[1,2,3,4,5,6,7,8,9,10].map(function(n){return n<=e.rating?"★":"☆";}).join("");
+    var idx=mediaFardig.indexOf(e);
+    return "<div style='padding:10px 14px;background:#131313;border:1px solid #2a2a2a;border-radius:10px;margin-bottom:8px'>"
+      +"<div style='display:flex;align-items:center;gap:8px'>"
+      +"<div style='flex:1;font-size:13px;color:#f2f2f2;font-weight:500'>"+esc(e.title)+"</div>"
+      +"<span style='color:#c9a24a;font-size:14px;letter-spacing:1px'>"+stars+"</span>"
+      +"<button data-editflatrec='"+idx+"' style='background:none;border:none;color:#5c5c5c;cursor:pointer;font-size:14px;padding:0 4px;flex-shrink:0'>✏️</button>"
+      +"</div>"
+      +(e.creator?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(e.creator)+"</div>":"")
+      +(e.genre?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(e.genre)+"</div>":"")
+      +(e.anteckning?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(e.anteckning)+"</div>":"")
+      +(e.comment?"<div style='font-size:12px;color:#5c5c5c;margin-top:4px;line-height:1.5'>"+esc(e.comment)+"</div>":"")
+      +"<div style='font-size:10px;color:#5c5c5c;margin-top:4px'>"+fd(e.timestamp)+"</div>"
+      +"</div>";
+  }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>📝</div>Inga träffar.</div>";
+
+  listEl.querySelectorAll("[data-editflatrec]").forEach(function(btn){
+    btn.onclick=function(){
+      var e=mediaFardig[parseInt(btn.dataset.editflatrec)];
+      if(e)editMediaFardigEntry(e,updateMediaRecList);
+    };
+  });
+}
+
+// Bygger om listan (+ ev. bokstavsrad/spegelvändningsknapp) utan att röra resten av vyn,
+// sa att sökfältet inte tappar fokus medan man skriver. Tre lägen:
+// "namn" (standard) - platt lista, sorterad på medias namn, bokstavsrad på titelns första bokstav.
+// "kreator" - visar bara kreatörsnamn, bokstavsrad på kreatörens första bokstav, klick -> alla
+//             recensioner fran samma kreatör (renderMediaRecensionByCreator).
+// "senaste" - platt lista sorterad kronologiskt, med knapp för att spegelvända ordningen.
+function updateMediaRecList(){
   var listEl=document.getElementById("rec-creators-list");
   var barEl=document.getElementById("rec-bookshelf-bar");
   if(!listEl)return;
@@ -1856,93 +1923,64 @@ function updateMediaRecCreatorsList(){
       ||(e.title&&e.title.toLowerCase().indexOf(q)>=0)
       ||(e.genre&&e.genre.toLowerCase().indexOf(q)>=0);
   });
-  var counts={};
-  entries.forEach(function(e){
-    var key=e.creator?e.creator:MEDIA_UNKNOWN_CREATOR;
-    counts[key]=(counts[key]||0)+1;
-  });
-  var allCreators=Object.keys(counts).filter(function(k){return k!==MEDIA_UNKNOWN_CREATOR;}).sort(function(a,b){return a.toLowerCase().localeCompare(b.toLowerCase(),"sv");});
-  if(counts[MEDIA_UNKNOWN_CREATOR])allCreators.push(MEDIA_UNKNOWN_CREATOR);
 
-  if(barEl){
-    if(mediaRecensionBookshelf){
-      var availLetters={};
-      allCreators.forEach(function(cr){if(cr!==MEDIA_UNKNOWN_CREATOR)availLetters[cr.charAt(0).toUpperCase()]=true;});
-      barEl.innerHTML="<div style='display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px'>"
-        +MEDIA_REC_ALPHABET.map(function(l){
-          var has=!!availLetters[l];
-          var active=mediaRecensionLetter===l;
-          return "<button data-recletter='"+l+"'"+(has?"":" disabled")+" style='min-width:26px;padding:6px 0;font-size:11px;border-radius:6px;border:1px solid "+(active?"#c9a24a":"#2a2a2a")+";background:"+(active?"#c9a24a":"#161616")+";color:"+(active?"#161616":(has?"#f2f2f2":"#3a3a3a"))+";cursor:"+(has?"pointer":"default")+"'>"+l+"</button>";
-        }).join("")
-        +"<button data-recletter='' style='padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid #2a2a2a;background:"+(!mediaRecensionLetter?"#c9a24a":"#161616")+";color:"+(!mediaRecensionLetter?"#161616":"#f2f2f2")+";cursor:pointer'>Alla</button>"
+  if(mediaRecensionSortMode==="senaste"){
+    if(barEl){
+      barEl.innerHTML="<div style='display:flex;justify-content:flex-end;margin-bottom:10px'>"
+        +"<button id='rec-senaste-flip' class='chip' type='button' style='font-size:12px'>"+(mediaRecensionSenasteDesc?"⇅ Äldst överst":"⇅ Nyast överst")+"</button>"
         +"</div>";
-      barEl.querySelectorAll("[data-recletter]").forEach(function(btn){
-        if(btn.disabled)return;
-        btn.onclick=function(){
-          var l=btn.dataset.recletter;
-          mediaRecensionLetter=mediaRecensionLetter===l?"":l;
-          updateMediaRecCreatorsList();
-        };
-      });
-    }else{
-      barEl.innerHTML="";
+      var flipBtn=barEl.querySelector("#rec-senaste-flip");
+      if(flipBtn)flipBtn.onclick=function(){mediaRecensionSenasteDesc=!mediaRecensionSenasteDesc;updateMediaRecList();};
     }
+    var chronoEntries=entries.slice().sort(function(a,b){
+      var diff=new Date(b.timestamp)-new Date(a.timestamp);
+      return mediaRecensionSenasteDesc?diff:-diff;
+    });
+    renderRecFlatList(listEl,chronoEntries);
+    return;
   }
 
-  var flatMode=mediaRecensionBookshelf||!!q;
-
-  if(flatMode){
-    var flatEntries=entries.slice();
-    if(mediaRecensionBookshelf&&mediaRecensionLetter){
-      flatEntries=flatEntries.filter(function(e){
-        var cr=e.creator?e.creator:"";
-        return cr.charAt(0).toUpperCase()===mediaRecensionLetter;
-      });
-    }
-    flatEntries.sort(function(a,b){
-      var ca=(a.creator||"").toLowerCase(),cb=(b.creator||"").toLowerCase();
-      if(ca!==cb)return ca.localeCompare(cb,"sv");
-      return new Date(b.timestamp)-new Date(a.timestamp);
+  if(mediaRecensionSortMode==="kreator"){
+    var counts={};
+    entries.forEach(function(e){
+      var key=e.creator?e.creator:MEDIA_UNKNOWN_CREATOR;
+      counts[key]=(counts[key]||0)+1;
     });
+    var allCreators=Object.keys(counts).filter(function(k){return k!==MEDIA_UNKNOWN_CREATOR;}).sort(function(a,b){return a.toLowerCase().localeCompare(b.toLowerCase(),"sv");});
+    if(counts[MEDIA_UNKNOWN_CREATOR])allCreators.push(MEDIA_UNKNOWN_CREATOR);
 
-    listEl.innerHTML=flatEntries.length?flatEntries.map(function(e){
-      var stars=[1,2,3,4,5,6,7,8,9,10].map(function(n){return n<=e.rating?"★":"☆";}).join("");
-      var idx=mediaFardig.indexOf(e);
-      return "<div style='padding:10px 14px;background:#131313;border:1px solid #2a2a2a;border-radius:10px;margin-bottom:8px'>"
-        +"<div style='display:flex;align-items:center;gap:8px'>"
-        +"<div style='flex:1;font-size:13px;color:#f2f2f2;font-weight:500'>"+esc(e.title)+"</div>"
-        +"<span style='color:#c9a24a;font-size:14px;letter-spacing:1px'>"+stars+"</span>"
-        +"<button data-editflatrec='"+idx+"' style='background:none;border:none;color:#5c5c5c;cursor:pointer;font-size:14px;padding:0 4px;flex-shrink:0'>✏️</button>"
-        +"</div>"
-        +(e.creator?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(e.creator)+"</div>":"")
-        +(e.genre?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(e.genre)+"</div>":"")
-        +(e.anteckning?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(e.anteckning)+"</div>":"")
-        +(e.comment?"<div style='font-size:12px;color:#5c5c5c;margin-top:4px;line-height:1.5'>"+esc(e.comment)+"</div>":"")
-        +"<div style='font-size:10px;color:#5c5c5c;margin-top:4px'>"+fd(e.timestamp)+"</div>"
+    if(barEl){
+      var availLettersKr={};
+      allCreators.forEach(function(cr){if(cr!==MEDIA_UNKNOWN_CREATOR)availLettersKr[cr.charAt(0).toUpperCase()]=true;});
+      renderRecLetterBar(barEl,availLettersKr);
+    }
+    var creators=allCreators;
+    if(mediaRecensionLetter)creators=creators.filter(function(cr){return cr!==MEDIA_UNKNOWN_CREATOR&&cr.charAt(0).toUpperCase()===mediaRecensionLetter;});
+
+    listEl.innerHTML=creators.length?creators.map(function(cr){
+      var label=cr===MEDIA_UNKNOWN_CREATOR?"Okänd kreatör":cr;
+      return "<div class='khist' style='display:flex;align-items:center;gap:8px' data-reccreator='"+esc(cr)+"'>"
+        +"<div style='flex:1;min-width:0'><div class='kmsg' style='white-space:normal;font-weight:600'>"+esc(label)+"</div>"
+        +"<div class='kmeta'><span class='kbadge'>"+counts[cr]+" recensioner</span></div></div>"
         +"</div>";
-    }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>📝</div>Inga träffar.</div>";
+    }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>📝</div>Inga recensioner i denna kategori ännu.</div>";
 
-    listEl.querySelectorAll("[data-editflatrec]").forEach(function(btn){
-      btn.onclick=function(){
-        var e=mediaFardig[parseInt(btn.dataset.editflatrec)];
-        if(e)editMediaFardigEntry(e,updateMediaRecCreatorsList);
-      };
+    listEl.querySelectorAll("[data-reccreator]").forEach(function(el){
+      el.onclick=function(){mediaRecensionCreator=el.dataset.reccreator;renderMediaRecension();};
     });
     return;
   }
 
-  var creators=allCreators;
-  listEl.innerHTML=creators.length?creators.map(function(cr){
-    var label=cr===MEDIA_UNKNOWN_CREATOR?"Okänd kreatör":cr;
-    return "<div class='khist' style='display:flex;align-items:center;gap:8px' data-reccreator='"+esc(cr)+"'>"
-      +"<div style='flex:1;min-width:0'><div class='kmsg' style='white-space:normal;font-weight:600'>"+esc(label)+"</div>"
-      +"<div class='kmeta'><span class='kbadge'>"+counts[cr]+" recensioner</span></div></div>"
-      +"</div>";
-  }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>📝</div>Inga recensioner i denna kategori annu.</div>";
-
-  listEl.querySelectorAll("[data-reccreator]").forEach(function(el){
-    el.onclick=function(){mediaRecensionCreator=el.dataset.reccreator;renderMediaRecension();};
-  });
+  // "namn" - standardläget: platt lista sorterad på medias namn, med bokstavsrad på titeln.
+  if(barEl){
+    var availLettersNamn={};
+    entries.forEach(function(e){if(e.title)availLettersNamn[e.title.charAt(0).toUpperCase()]=true;});
+    renderRecLetterBar(barEl,availLettersNamn);
+  }
+  var namnEntries=entries.slice();
+  if(mediaRecensionLetter)namnEntries=namnEntries.filter(function(e){return (e.title||"").charAt(0).toUpperCase()===mediaRecensionLetter;});
+  namnEntries.sort(function(a,b){return (a.title||"").toLowerCase().localeCompare((b.title||"").toLowerCase(),"sv");});
+  renderRecFlatList(listEl,namnEntries);
 }
 
 function renderMediaRecensionByCreator(){
