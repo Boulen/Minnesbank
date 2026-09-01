@@ -1,32 +1,561 @@
 function renderUtvarderingarTop(){
   var lc=document.getElementById("body");
   if(!lc)return;
-  var subTabs="<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:20px'>"
+  ensureBetygSettingsLoaded();
+  ensureBetygDataLoaded();
+  var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:20px'>"
+    +"<div style='flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px'>"
     +"<button class='mode-btn"+(utvSubview==="media"?" on":"")+"' data-utvsub='media' style='font-size:11px'>Media</button>"
     +"<button class='mode-btn"+(utvSubview==="objekt"?" on":"")+"' data-utvsub='objekt' style='font-size:11px'>Föremål</button>"
     +"<button class='mode-btn"+(utvSubview==="plats"?" on":"")+"' data-utvsub='plats' style='font-size:11px'>Plats</button>"
+    +"</div>"
+    +"<button id='betyg-settings-btn' type='button' title='Inställningar' style='background:none;border:none;color:#6b6880;font-size:20px;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0'>⚙️</button>"
     +"</div>";
   lc.innerHTML=subTabs+"<div id='utv-content'></div>";
   lc.querySelectorAll("[data-utvsub]").forEach(function(btn){
     btn.onclick=function(){switchUtvSubview(btn.dataset.utvsub);};
   });
+  var settingsBtn=lc.querySelector("#betyg-settings-btn");
+  if(settingsBtn)settingsBtn.onclick=async function(){
+    settingsBtn.disabled=true;settingsBtn.style.opacity="0.5";
+    await ensureBetygSettingsLoaded(); // säkerställ att kategorierna hunnit laddas innan panelen öppnas
+    settingsBtn.disabled=false;settingsBtn.style.opacity="1";
+    showBetygSettings();
+  };
   renderUtvContent();
 }
 
 function switchUtvSubview(sub){
   utvSubview=sub;
-  var tabMap={media:"media",objekt:"objekt",plats:"plats"};
-  var tab=tabMap[sub]||"media";
   document.querySelectorAll("[data-utvsub]").forEach(function(btn){btn.classList.toggle("on",btn.dataset.utvsub===sub);});
   var uc=document.getElementById("utv-content");
   if(uc)uc.innerHTML="<div style='padding:30px;text-align:center;color:#5c5c5c;font-size:13px'>⏳ Laddar...</div>";
-  loadTab(tab).then(function(){renderUtvContent();});
+  ensureBetygDataLoaded().then(function(){renderUtvContent();});
 }
 
 function renderUtvContent(){
   if(utvSubview==="objekt")renderObj();
   else if(utvSubview==="plats")renderPlats();
   else renderLogMedia();
+}
+
+// ---- Betyg äger sin egen Drive-JSON/inställningar (se HANDOFF_own_your_data.md) ----
+// media.json = {mediaList, mediaFardig}, föremål.json = {objList, objFardig},
+// plats.json = {platsList, platsFardig} - tre separata huvuddata-filer, alla i mappen "Betyg".
+// settings.json = kategori-presets (mediaCatPresets/objCatPresets/platsCatPresets).
+// OBS: "platsHistory" (Aktivitet-flikens platsförslag i Installningar/Inmatningar) är en
+// annan variabel än Betygs Plats-underflik och ingår medvetet INTE i plats.json här -
+// namnkollision, flaggat till huvud-chatten separat.
+var betygDataLoadPromise=null;
+var betygSettingsLoadPromise=null;
+
+function showBetygDriveError(context,e){
+  console.error(context,e);
+  var el=document.createElement("div");
+  el.style.cssText="position:fixed;bottom:16px;left:16px;right:16px;max-width:420px;margin:0 auto;background:#2e1518;border:1px solid #d97a83;color:#d97a83;padding:10px 14px;border-radius:10px;font-size:12px;z-index:10001";
+  el.textContent="⚠️ "+context+": "+(e&&e.message?e.message:String(e));
+  document.body.appendChild(el);
+  setTimeout(function(){el.remove();},6000);
+}
+
+// Samma pågående inläsning delas av alla som anropar samtidigt (inte bara en flagga) -
+// se motsvarande kommentar i Notering för bakgrunden till varför.
+function ensureBetygDataLoaded(){
+  if(!accessToken)return Promise.resolve();
+  if(betygDataLoadPromise)return betygDataLoadPromise;
+  betygDataLoadPromise=(async function(){
+    try{
+      var md=await driveReadJson(["Betyg"],"media.json");
+      if(md){ if(md.mediaList)mediaList=md.mediaList; if(md.mediaFardig)mediaFardig=md.mediaFardig; }
+      var od=await driveReadJson(["Betyg"],"föremål.json");
+      if(od){ if(od.objList)objList=od.objList; if(od.objFardig)objFardig=od.objFardig; }
+      var pd=await driveReadJson(["Betyg"],"plats.json");
+      if(pd){ if(pd.platsList)platsList=pd.platsList; if(pd.platsFardig)platsFardig=pd.platsFardig; }
+      if(document.getElementById("body")&&view==="utvarderingar")renderUtvContent();
+    }catch(e){
+      betygDataLoadPromise=null; // tillåt nytt försök nästa gång fliken öppnas
+      showBetygDriveError("Kunde inte läsa Betyg-data",e);
+    }
+  })();
+  return betygDataLoadPromise;
+}
+
+async function saveBetygMedia(){
+  if(!accessToken)return;
+  try{
+    await driveWriteJson(["Betyg"],"media.json",{mediaList:mediaList,mediaFardig:mediaFardig});
+  }catch(e){
+    showBetygDriveError("Kunde inte spara Media",e);
+  }
+}
+async function saveBetygForemal(){
+  if(!accessToken)return;
+  try{
+    await driveWriteJson(["Betyg"],"föremål.json",{objList:objList,objFardig:objFardig});
+  }catch(e){
+    showBetygDriveError("Kunde inte spara Föremål",e);
+  }
+}
+async function saveBetygPlats(){
+  if(!accessToken)return;
+  try{
+    await driveWriteJson(["Betyg"],"plats.json",{platsList:platsList,platsFardig:platsFardig});
+  }catch(e){
+    showBetygDriveError("Kunde inte spara Plats",e);
+  }
+}
+
+function ensureBetygSettingsLoaded(){
+  if(!accessToken)return Promise.resolve();
+  if(betygSettingsLoadPromise)return betygSettingsLoadPromise;
+  betygSettingsLoadPromise=(async function(){
+    try{
+      var data=await driveReadJson(["Betyg"],"settings.json");
+      if(data){
+        if(data.mediaCatPresets&&data.mediaCatPresets.length)MEDIA_CAT_PRESETS=data.mediaCatPresets;
+        if(data.objCatPresets&&data.objCatPresets.length)OBJ_CAT_PRESETS=data.objCatPresets;
+        if(data.platsCatPresets&&data.platsCatPresets.length)PLATS_CAT_PRESETS=data.platsCatPresets;
+      }
+      if(document.getElementById("body")&&view==="utvarderingar")renderUtvContent();
+    }catch(e){
+      betygSettingsLoadPromise=null; // tillåt nytt försök nästa gång fliken öppnas
+      showBetygDriveError("Kunde inte läsa Betyg-inställningar",e);
+    }
+  })();
+  return betygSettingsLoadPromise;
+}
+
+async function saveBetygSettings(){
+  if(!accessToken){showBetygDriveError("Kunde inte spara","Inte inloggad");return;}
+  try{
+    await driveWriteJson(["Betyg"],"settings.json",{
+      mediaCatPresets:MEDIA_CAT_PRESETS,
+      objCatPresets:OBJ_CAT_PRESETS,
+      platsCatPresets:PLATS_CAT_PRESETS
+    });
+  }catch(e){
+    showBetygDriveError("Kunde inte spara Betyg-inställningar",e);
+  }
+}
+
+// ---- Emoji-väljare för Betyg (egen, fristående kopia - samma mönster som Notering/Aktivitet,
+// rör inte core.js's downloadEmojiRef eller andra flikars egna kopior) ----
+var BETYG_EMOJI_GROUPS=[
+  ["Media","📚 📖 🎵 🎬 📺 🎙️ 📹 🎮 🎨 🎭 🎼 🎸 🎹 🥁 📀 💿 📼 🖼 🃏 🎲"],
+  ["Föremål","👕 👗 👟 👜 💍 ⌚ 📱 💻 🖥 📷 🚗 🚲 🏠 🪑 🛋 🛏 🍽 🔧 🔨 ⚙️ 🎁 🧸 🖊 📓 🕯 🏺"],
+  ["Platser","🏠 🏡 🏢 🏥 🏦 🏨 🏪 🏫 🏬 🏭 🏯 🏰 ⛪ 🕌 🗼 🗽 🌁 🏞 🏝 🏖 🏜 🏟 🎪 ⛺ 🏕 🌉 🌆 🌇"],
+  ["Ansikten & känslor","😀 😃 😄 😁 😊 😍 🥰 😎 🤩 🥳 😌 🙂 🙃 😉 😋 🤓"],
+  ["Natur & övrigt","🌟 ⭐ 💫 ✨ 🔥 🌈 ☀️ 🌙 🍀 🌸 🌺 🌻 💧 🎉 🎊 📌"]
+];
+function openBetygEmojiPicker(onSelect){
+  var ov=document.createElement("div");
+  ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:10002;display:flex;align-items:center;justify-content:center;padding:24px 16px";
+  ov.innerHTML="<div style='background:#161616;border-radius:20px;width:100%;max-width:460px;max-height:75vh;display:flex;flex-direction:column'>"
+    +"<div style='padding:14px 18px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between;flex-shrink:0'>"
+    +"<div style='font-size:15px;font-weight:600;color:#f2f2f2'>Välj emoji</div>"
+    +"<button id='bep-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1'>✕</button>"
+    +"</div>"
+    +"<div style='padding:14px 18px;overflow-y:auto'>"
+    +BETYG_EMOJI_GROUPS.map(function(g){
+      return "<div style='font-size:11px;color:#5c5c5c;font-weight:600;margin:10px 0 6px;text-transform:uppercase;letter-spacing:.5px'>"+g[0]+"</div>"
+        +"<div style='display:flex;flex-wrap:wrap;gap:4px'>"
+        +g[1].split(" ").map(function(e){
+          return "<button data-betyg-emoji-pick='"+e+"' style='background:none;border:none;font-size:24px;padding:5px;border-radius:8px;cursor:pointer;line-height:1'>"+e+"</button>";
+        }).join("")
+        +"</div>";
+    }).join("")
+    +"</div>"
+    +"</div>";
+  document.body.appendChild(ov);
+  ov.querySelector("#bep-close").onclick=function(){ov.remove();};
+  ov.addEventListener("mousedown",function(e){if(e.target===ov)ov.remove();});
+  ov.querySelectorAll("[data-betyg-emoji-pick]").forEach(function(btn){
+    btn.onclick=function(){
+      if(onSelect)onSelect(btn.dataset.betygEmojiPick);
+      ov.remove();
+    };
+  });
+}
+
+// ---- ⚙️ Inställningar — Betyg (en gemensam panel för hela fliken, mönster från Notering/Aktivitet) ----
+// Tre kategori-grupper (Media/Föremål/Plats) - enkla strängar med emoji inbakat i texten,
+// precis som MEDIA_CAT_PRESETS m.fl. redan lagras.
+function showBetygSettings(){
+  var wMedia=MEDIA_CAT_PRESETS.slice();
+  var wObj=OBJ_CAT_PRESETS.slice();
+  var wPlats=PLATS_CAT_PRESETS.slice();
+  var editMediaIdx=null, editObjIdx=null, editPlatsIdx=null;
+
+  var ov=document.createElement("div");
+  ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto";
+
+  function simpleChipsHtml(arr,editIdx,prefix,emptyMsg){
+    if(!arr.length)return "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>"+emptyMsg+"</div>";
+    return "<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px'>"
+      +arr.map(function(label,i){
+        if(i===editIdx){
+          return "<span style='display:inline-flex;align-items:center;gap:4px;background:#1c3c5a;border:1px solid #4fa8ff;border-radius:8px;padding:4px 4px 4px 6px'>"
+            +"<input id='"+prefix+"-edit-label' value='"+esc(label)+"' style='width:110px;background:none;border:none;color:#f2f2f2;font-size:13px;padding:2px 0'/>"
+            +"<button id='"+prefix+"-edit-emoji' type='button' title='Välj emoji' style='background:none;border:none;color:#f2f2f2;cursor:pointer;font-size:15px;padding:2px'>😀</button>"
+            +"<button id='"+prefix+"-edit-confirm' title='Klar' style='background:none;border:none;color:#4fa8ff;cursor:pointer;font-size:14px;padding:2px'>✓</button>"
+            +"</span>";
+        }
+        return "<span draggable='true' data-"+prefix+"-chip-idx='"+i+"' style='display:inline-flex;align-items:center;gap:6px;background:#131313;border:1px solid #2a2a2a;border-radius:8px;padding:6px 6px 6px 10px;cursor:grab;font-size:13px;color:#f2f2f2'>"
+          +"<span style='color:#5c5c5c;font-size:11px'>⠿</span>"
+          +esc(label)
+          +"<button data-"+prefix+"-remove-idx='"+i+"' title='Ta bort' style='background:none;border:none;color:#d97a83;cursor:pointer;font-size:13px;padding:0 2px;line-height:1'>×</button>"
+          +"</span>";
+      }).join("")
+      +"</div>";
+  }
+
+  function groupHtml(title,arr,editIdx,prefix){
+    return "<div style='display:flex;align-items:center;justify-content:space-between;margin-top:18px;margin-bottom:4px'>"
+      +"<div class='lbl' style='margin-bottom:0'>"+title+"</div>"
+      +"<button id='"+prefix+"-sort' class='sec ghost' style='width:auto;margin:0;padding:4px 10px;font-size:11px'>Sortera A-Ö</button>"
+      +"</div>"
+      +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:8px'>Tryck för att ändra namn, × för att ta bort, dra ⠿ för att ändra ordning.</div>"
+      +simpleChipsHtml(arr,editIdx,prefix,"Inga kategorier kvar - lägg till minst en nedan.")
+      +"<div style='display:flex;gap:6px;margin-bottom:4px'>"
+      +"<input class='inp' id='"+prefix+"-new-label' placeholder='Ny kategori...' style='flex:1;padding:7px 10px;font-size:13px'/>"
+      +"<button class='chip' id='"+prefix+"-new-emoji' type='button' title='Välj emoji' style='flex-shrink:0;padding:7px 10px;font-size:15px'>😀</button>"
+      +"<button class='chip' id='"+prefix+"-new-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
+      +"</div>";
+  }
+
+  function panelHtml(){
+    return "<div style='background:#161616;border-radius:20px;width:100%;max-width:420px;overflow:hidden'>"
+      +"<div style='padding:16px 20px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between'>"
+      +"<div style='font-size:16px;font-weight:600;color:#f2f2f2'>⚙️ Inställningar — Betyg</div>"
+      +"<button id='bs-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1'>✕</button>"
+      +"</div>"
+      +"<div style='padding:20px;max-height:70vh;overflow-y:auto'>"
+      +groupHtml("Media-kategorier",wMedia,editMediaIdx,"bm")
+      +groupHtml("Föremål-kategorier",wObj,editObjIdx,"bo")
+      +groupHtml("Plats-kategorier",wPlats,editPlatsIdx,"bp")
+      +"<div class='lbl' style='margin-top:18px'>Data & backup</div>"
+      // OBS: "Data & backup" ska alltid ligga SIST i panelen, precis som i Aktivitets mönster.
+      +"<button id='bs-json-editor' class='sec ghost' style='width:100%'>📝 Öppna/redigera JSON-filer</button>"
+      +"</div>"
+      +"<div style='padding:16px 20px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
+      +"<button id='bs-cancel' class='sec ghost' style='flex:1'>Avbryt</button>"
+      +"<button id='bs-save' class='cta-log' style='flex:1'>Spara</button>"
+      +"</div>"
+      +"</div>";
+  }
+
+  function commit(getEditIdx,setEditIdx,arr,inputSel){
+    var idx=getEditIdx();
+    if(idx===null)return;
+    var lEl=ov.querySelector(inputSel);
+    if(lEl&&arr[idx]!==undefined)arr[idx]=lEl.value.trim()||arr[idx];
+    setEditIdx(null);
+  }
+
+  function bindChipDragReorder(selector,arr,idxAttr){
+    var dragIdx=null;
+    ov.querySelectorAll(selector).forEach(function(chip){
+      chip.addEventListener("dragstart",function(e){
+        dragIdx=Number(chip.dataset[idxAttr]);
+        e.dataTransfer.effectAllowed="move";
+        chip.style.opacity="0.4";
+      });
+      chip.addEventListener("dragend",function(){chip.style.opacity="1";});
+      chip.addEventListener("dragover",function(e){e.preventDefault();});
+      chip.addEventListener("drop",function(e){
+        e.preventDefault();
+        var dropIdx=Number(chip.dataset[idxAttr]);
+        if(dragIdx===null||dragIdx===dropIdx)return;
+        var moved=arr.splice(dragIdx,1)[0];
+        arr.splice(dropIdx,0,moved);
+        dragIdx=null;
+        rerender();
+      });
+    });
+  }
+
+  function bindSimpleChipGroup(prefix,arr,getEditIdx,setEditIdx){
+    bindChipDragReorder("[data-"+prefix+"-chip-idx]",arr,prefix+"ChipIdx");
+    ov.querySelectorAll("[data-"+prefix+"-chip-idx]").forEach(function(chip){
+      chip.onclick=function(e){
+        if(e.target.closest("[data-"+prefix+"-remove-idx]"))return;
+        commit(getEditIdx,setEditIdx,arr,"#"+prefix+"-edit-label");
+        setEditIdx(Number(chip.dataset[prefix+"ChipIdx"]));
+        rerender();
+        var lEl=ov.querySelector("#"+prefix+"-edit-label");
+        if(lEl){lEl.focus();lEl.select();}
+      };
+    });
+    ov.querySelectorAll("[data-"+prefix+"-remove-idx]").forEach(function(btn){
+      btn.onclick=function(e){
+        e.stopPropagation();
+        var i=Number(btn.dataset[prefix+"RemoveIdx"]);
+        if(arr[i]===undefined)return;
+        arr.splice(i,1);
+        var idx=getEditIdx();
+        if(idx===i)setEditIdx(null);else if(idx!==null&&idx>i)setEditIdx(idx-1);
+        rerender();
+      };
+    });
+    var confirmBtn=ov.querySelector("#"+prefix+"-edit-confirm");
+    if(confirmBtn)confirmBtn.onclick=function(){
+      commit(getEditIdx,setEditIdx,arr,"#"+prefix+"-edit-label");
+      rerender();
+    };
+    var emojiBtn=ov.querySelector("#"+prefix+"-edit-emoji");
+    if(emojiBtn)emojiBtn.onclick=function(){
+      openBetygEmojiPicker(function(emoji){
+        var lEl=ov.querySelector("#"+prefix+"-edit-label");
+        if(!lEl)return;
+        var pos=lEl.selectionStart!=null?lEl.selectionStart:lEl.value.length;
+        lEl.value=lEl.value.slice(0,pos)+emoji+" "+lEl.value.slice(pos);
+        lEl.focus();
+      });
+    };
+    var editLabelEl=ov.querySelector("#"+prefix+"-edit-label");
+    if(editLabelEl)editLabelEl.onkeydown=function(e){
+      if(e.key==="Enter"){
+        commit(getEditIdx,setEditIdx,arr,"#"+prefix+"-edit-label");
+        rerender();
+      }
+    };
+  }
+
+  function bindGroup(prefix,arr,getEditIdx,setEditIdx){
+    ov.querySelector("#"+prefix+"-sort").onclick=function(){
+      arr.sort(function(a,b){return a.localeCompare(b,"sv");});
+      rerender();
+    };
+    bindSimpleChipGroup(prefix,arr,getEditIdx,setEditIdx);
+    ov.querySelector("#"+prefix+"-new-label").onkeydown=function(e){if(e.key==="Enter")ov.querySelector("#"+prefix+"-new-add").click();};
+    ov.querySelector("#"+prefix+"-new-emoji").onclick=function(){
+      openBetygEmojiPicker(function(emoji){
+        var inp=ov.querySelector("#"+prefix+"-new-label");
+        if(inp){inp.value=emoji+" "+inp.value;inp.focus();}
+      });
+    };
+    ov.querySelector("#"+prefix+"-new-add").onclick=function(){
+      var labelInp=ov.querySelector("#"+prefix+"-new-label");
+      var label=labelInp.value.trim();
+      if(!label||arr.indexOf(label)>-1)return;
+      arr.push(label);
+      rerender();
+    };
+  }
+
+  function bindPanel(){
+    ov.querySelector("#bs-close").onclick=function(){ov.remove();};
+    ov.querySelector("#bs-cancel").onclick=function(){ov.remove();};
+    bindGroup("bm",wMedia,function(){return editMediaIdx;},function(v){editMediaIdx=v;});
+    bindGroup("bo",wObj,function(){return editObjIdx;},function(v){editObjIdx=v;});
+    bindGroup("bp",wPlats,function(){return editPlatsIdx;},function(v){editPlatsIdx=v;});
+    ov.querySelector("#bs-json-editor").onclick=function(){openBetygJsonEditor();};
+    ov.querySelector("#bs-save").onclick=function(){
+      if(!wMedia.length){alert("Du måste ha minst en Media-kategori kvar.");return;}
+      if(!wObj.length){alert("Du måste ha minst en Föremål-kategori kvar.");return;}
+      if(!wPlats.length){alert("Du måste ha minst en Plats-kategori kvar.");return;}
+      MEDIA_CAT_PRESETS=wMedia;
+      OBJ_CAT_PRESETS=wObj;
+      PLATS_CAT_PRESETS=wPlats;
+      saveBetygSettings();
+      ov.remove();
+      renderUtvContent();
+    };
+  }
+
+  function rerender(){
+    ov.innerHTML=panelHtml();
+    bindPanel();
+  }
+
+  rerender();
+  document.body.appendChild(ov);
+}
+
+// ---- Data & backup: JSON-redigerare för Betyg (samma säkerhetsmönster som Aktivitet/Notering) ----
+function openBetygJsonEditor(){
+  var current="media";
+  var ov2=document.createElement("div");
+  ov2.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px";
+
+  function dataFor(key){
+    if(key==="media")return {mediaList:mediaList,mediaFardig:mediaFardig};
+    if(key==="foremal")return {objList:objList,objFardig:objFardig};
+    if(key==="plats")return {platsList:platsList,platsFardig:platsFardig};
+    return {mediaCatPresets:MEDIA_CAT_PRESETS,objCatPresets:OBJ_CAT_PRESETS,platsCatPresets:PLATS_CAT_PRESETS};
+  }
+  var BETYG_JSON_TARGETS=[
+    {key:"media",label:"Media (media.json)",folder:"Betyg",filename:"media.json"},
+    {key:"foremal",label:"Föremål (föremål.json)",folder:"Betyg",filename:"föremål.json"},
+    {key:"plats",label:"Plats (plats.json)",folder:"Betyg",filename:"plats.json"},
+    {key:"installningar",label:"Kategorier (settings.json)",folder:"Betyg",filename:"settings.json"}
+  ];
+  function driveTargetFor(key){return BETYG_JSON_TARGETS.find(function(t){return t.key===key;});}
+
+  async function findDriveFileIdReadOnly(folderName,filename){
+    var q="name='"+folderName+"' and '"+FOLDER_ID+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
+    var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    var d=await r.json();
+    if(!(d.files&&d.files.length))return null;
+    var folderId=d.files[0].id;
+    var q2="name='"+filename+"' and '"+folderId+"' in parents and trashed=false";
+    var r2=await fetch(DRIVE_API+"?q="+encodeURIComponent(q2)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r2.ok)throw new Error("HTTP "+r2.status);
+    var d2=await r2.json();
+    return (d2.files&&d2.files.length)?d2.files[0].id:null;
+  }
+
+  var missingChecked=false,missingList=null;
+  function renderMissingList(statusEl,missing){
+    statusEl.innerHTML="";
+    if(!missing.length)return;
+    statusEl.style.color="#d97a83";
+    var msg=document.createElement("div");
+    msg.textContent="⚠️ Dessa filer finns inte i Drive ännu:";
+    statusEl.appendChild(msg);
+    missing.forEach(function(target){
+      var row=document.createElement("div");
+      row.style.cssText="display:flex;align-items:center;gap:6px;margin-top:4px";
+      var label=document.createElement("span");
+      label.textContent=target.label;
+      label.style.flex="1";
+      var createBtn=document.createElement("button");
+      createBtn.textContent="Skapa";
+      createBtn.className="sec ghost";
+      createBtn.style.cssText="padding:3px 10px;font-size:11px;flex-shrink:0";
+      createBtn.onclick=function(){
+        createMissingFile(target,row,createBtn).then(function(){
+          missingList=missingList.filter(function(t){return t.key!==target.key;});
+        });
+      };
+      row.appendChild(label);
+      row.appendChild(createBtn);
+      statusEl.appendChild(row);
+    });
+  }
+  function checkFileExists(){
+    var statusEl=ov2.querySelector("#bje-status");
+    if(!statusEl)return;
+    if(!accessToken){statusEl.innerHTML="";return;}
+    if(missingChecked){renderMissingList(statusEl,missingList);return;}
+    statusEl.style.color="#5c5c5c";
+    statusEl.textContent="Kontrollerar vilka filer som finns i Drive...";
+    Promise.all(BETYG_JSON_TARGETS.map(function(t){
+      return findDriveFileIdReadOnly(t.folder,t.filename).then(function(id){return {target:t,found:!!id};});
+    })).then(function(results){
+      if(!statusEl.isConnected)return;
+      missingChecked=true;
+      missingList=results.filter(function(r){return !r.found;}).map(function(r){return r.target;});
+      renderMissingList(statusEl,missingList);
+    }).catch(function(e){
+      if(!statusEl.isConnected)return;
+      statusEl.style.color="#d97a83";
+      statusEl.textContent="Kunde inte kontrollera Drive: "+e.message;
+    });
+  }
+  // Skapar ALDRIG en PATCH/overwrite - bara POST av en helt ny fil, och kollar en sista gång
+  // precis innan att filen fortfarande saknas (skyddar mot dubbletter, se HANDOFF_own_your_data.md).
+  async function createMissingFile(target,rowEl,createBtn){
+    createBtn.disabled=true;createBtn.textContent="Skapar...";
+    try{
+      var stillMissing=!(await findDriveFileIdReadOnly(target.folder,target.filename));
+      if(!stillMissing){
+        rowEl.textContent=target.label+": fanns redan (skapades av något annat under tiden) - inget skrevs över.";
+        rowEl.style.color="#5c5c5c";
+        return;
+      }
+      var folderId=await driveMkdir(target.folder,FOLDER_ID);
+      if(!folderId)throw new Error("Kunde inte skapa/hitta mappen "+target.folder);
+      var form=new FormData();
+      form.append("metadata",new Blob([JSON.stringify({name:target.filename,parents:[folderId],mimeType:"application/json"})],{type:"application/json"}));
+      form.append("file",new Blob([JSON.stringify(dataFor(target.key),null,2)],{type:"application/json"}));
+      var cr=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
+      if(!cr.ok)throw new Error("HTTP "+cr.status);
+      var cd=await cr.json();
+      if(!cd.id)throw new Error("Drive returnerade inget fil-id");
+      rowEl.textContent="✓ "+target.label+" skapad.";
+      rowEl.style.color="#4fa8ff";
+    }catch(e){
+      rowEl.style.color="#d97a83";
+      rowEl.textContent=target.label+": kunde inte skapas - "+e.message;
+      createBtn.disabled=false;createBtn.textContent="Skapa";
+      rowEl.appendChild(createBtn);
+    }
+  }
+
+  function render(){
+    ov2.innerHTML="<div style='background:#161616;border-radius:16px;width:100%;max-width:520px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden'>"
+      +"<div style='padding:14px 18px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap'>"
+      +"<select id='bje-select' style='background:#131313;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:6px 8px;flex:1;min-width:110px'>"
+      +"<option value='media'"+(current==="media"?" selected":"")+">Media</option>"
+      +"<option value='foremal'"+(current==="foremal"?" selected":"")+">Föremål</option>"
+      +"<option value='plats'"+(current==="plats"?" selected":"")+">Plats</option>"
+      +"<option value='installningar'"+(current==="installningar"?" selected":"")+">Kategorier</option>"
+      +"</select>"
+      +"<button id='bje-open-drive' title='Öppna filen i Google Drive' style='background:none;border:1px solid #2a2a2a;border-radius:8px;color:#4fa8ff;font-size:12px;padding:6px 10px;cursor:pointer;white-space:nowrap;flex-shrink:0'>🔗 Öppna i Drive</button>"
+      +"<button id='bje-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1;flex-shrink:0'>✕</button>"
+      +"</div>"
+      +"<div id='bje-status' style='padding:8px 18px 0;font-size:11px'></div>"
+      +"<textarea id='bje-text' spellcheck='false' style='flex:1;background:#0a0a0a;color:#f2f2f2;border:none;padding:14px;font-family:monospace;font-size:12px;min-height:300px;resize:vertical'>"+esc(JSON.stringify(dataFor(current),null,2))+"</textarea>"
+      +"<div id='bje-warning' style='padding:0 18px 8px;font-size:11px;color:#d97a83'></div>"
+      +"<div style='padding:14px 18px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
+      +"<button id='bje-cancel' class='sec ghost' style='flex:1'>Avbryt</button>"
+      +"<button id='bje-save' class='cta-log' style='flex:1'>Spara ändringar</button>"
+      +"</div>"
+      +"</div>";
+    ov2.querySelector("#bje-close").onclick=function(){ov2.remove();};
+    ov2.querySelector("#bje-cancel").onclick=function(){ov2.remove();};
+    ov2.querySelector("#bje-select").onchange=function(){current=ov2.querySelector("#bje-select").value;render();};
+    checkFileExists();
+    ov2.querySelector("#bje-open-drive").onclick=function(){
+      var warn=ov2.querySelector("#bje-warning");
+      if(!accessToken){warn.style.color="#d97a83";warn.textContent="Logga in för att öppna filen i Drive.";return;}
+      warn.style.color="#5c5c5c";warn.textContent="Söker filen i Drive...";
+      var target=driveTargetFor(current);
+      findDriveFileIdReadOnly(target.folder,target.filename).then(function(fileId){
+        if(!fileId){warn.style.color="#d97a83";warn.textContent="Filen finns inte i Drive ännu (har inte sparats dit).";return;}
+        warn.textContent="";
+        window.open("https://drive.google.com/file/d/"+fileId+"/view","_blank");
+      }).catch(function(e){
+        warn.style.color="#d97a83";warn.textContent="Kunde inte hitta filen: "+e.message;
+      });
+    };
+    ov2.querySelector("#bje-save").onclick=function(){
+      var txt=ov2.querySelector("#bje-text").value;
+      var warn=ov2.querySelector("#bje-warning");
+      var parsed;
+      try{parsed=JSON.parse(txt);}catch(e){warn.textContent="Ogiltig JSON: "+e.message;return;}
+      if(current==="media"){
+        if(!parsed.mediaList||typeof parsed.mediaList!=="object"){warn.textContent="Förväntade ett 'mediaList'-fält (objekt).";return;}
+        mediaList=parsed.mediaList;
+        mediaFardig=Array.isArray(parsed.mediaFardig)?parsed.mediaFardig:mediaFardig;
+        saveBetygMedia();
+      }else if(current==="foremal"){
+        if(!parsed.objList||typeof parsed.objList!=="object"){warn.textContent="Förväntade ett 'objList'-fält (objekt).";return;}
+        objList=parsed.objList;
+        objFardig=Array.isArray(parsed.objFardig)?parsed.objFardig:objFardig;
+        saveBetygForemal();
+      }else if(current==="plats"){
+        if(!parsed.platsList||typeof parsed.platsList!=="object"){warn.textContent="Förväntade ett 'platsList'-fält (objekt).";return;}
+        platsList=parsed.platsList;
+        platsFardig=Array.isArray(parsed.platsFardig)?parsed.platsFardig:platsFardig;
+        saveBetygPlats();
+      }else{
+        if(!Array.isArray(parsed.mediaCatPresets)||!parsed.mediaCatPresets.length){warn.textContent="Förväntade ett 'mediaCatPresets'-fält med minst en kategori.";return;}
+        if(!Array.isArray(parsed.objCatPresets)||!parsed.objCatPresets.length){warn.textContent="Förväntade ett 'objCatPresets'-fält med minst en kategori.";return;}
+        if(!Array.isArray(parsed.platsCatPresets)||!parsed.platsCatPresets.length){warn.textContent="Förväntade ett 'platsCatPresets'-fält med minst en kategori.";return;}
+        MEDIA_CAT_PRESETS=parsed.mediaCatPresets;
+        OBJ_CAT_PRESETS=parsed.objCatPresets;
+        PLATS_CAT_PRESETS=parsed.platsCatPresets;
+        saveBetygSettings();
+      }
+      ov2.remove();
+      renderUtvContent();
+    };
+  }
+  render();
+  document.body.appendChild(ov2);
 }
 
 
@@ -374,7 +903,7 @@ function renderLogMedia(){
     mediaList[targetCat].push(newItem);
     inp.value="";if(creatorInp)creatorInp.value="";if(anteckningInp)anteckningInp.value="";
     mediaGenreSelected.length=0;
-    saveAndSync("media");
+    saveBetygMedia();
     var st=c.querySelector("#media-status");
     if(st){st.innerHTML="<div class='ok-toast'>Sparat!</div>";setTimeout(function(){if(st)st.innerHTML="";},2000);}
     renderLogMedia();
@@ -395,7 +924,7 @@ function renderLogMedia(){
       var title=item?mediaItemTitle(item):"";
       confirmDelete("Vill du ta bort \""+esc(title)+"\"?",function(){
         if(mediaList[mediaCat])mediaList[mediaCat].splice(idx,1);
-        saveAndSync("media");renderLogMedia();
+        saveBetygMedia();renderLogMedia();
       });
     };
   });
@@ -425,7 +954,7 @@ function renderLogMedia(){
       var title=item?mediaItemTitle(item):"";
       confirmDelete("Vill du ta bort \""+esc(title)+"\"?",function(){
         if(mediaList[cat])mediaList[cat].splice(idx,1);
-        saveAndSync("media");renderLogMedia();
+        saveBetygMedia();renderLogMedia();
       });
     };
   });
@@ -572,7 +1101,7 @@ function renderObj(){
     if(!objList[targetCat])objList[targetCat]=[];
     objList[targetCat].push({title:v,tillverkare:tv,anteckning:an,timestamp:new Date().toISOString()});
     inp.value="";if(tillverkareInp)tillverkareInp.value="";if(anteckningInp)anteckningInp.value="";
-    saveAndSync("objekt");
+    saveBetygForemal();
     var st=c.querySelector("#obj-status");
     if(st){st.innerHTML="<div class='ok-toast'>Sparat!</div>";setTimeout(function(){if(st)st.innerHTML="";},2000);}
     renderObj();
@@ -593,7 +1122,7 @@ function renderObj(){
       var title=item?objItemTitle(item):"";
       confirmDelete("Vill du ta bort \""+esc(title)+"\"?",function(){
         if(objList[objCat])objList[objCat].splice(idx,1);
-        saveAndSync("objekt");renderObj();
+        saveBetygForemal();renderObj();
       });
     };
   });
@@ -622,7 +1151,7 @@ function renderObj(){
       var title=item?objItemTitle(item):"";
       confirmDelete("Vill du ta bort \""+esc(title)+"\"?",function(){
         if(objList[cat])objList[cat].splice(idx,1);
-        saveAndSync("objekt");renderObj();
+        saveBetygForemal();renderObj();
       });
     };
   });
@@ -754,7 +1283,7 @@ function editPendingObjItem(cat,idx,onSaved){
         if(!objList[newCat])objList[newCat]=[];
         objList[newCat].push(updated);
       }
-      saveAndSync("objekt");
+      saveBetygForemal();
       overlay.remove();
       if(onSaved)onSaved();
     }
@@ -811,7 +1340,7 @@ function editObjFardigEntry(entry,onSaved){
     entry.cat=overlay.querySelector("#eof-cat").value||entry.cat;
     entry.rating=selectedRating;
     entry.comment=overlay.querySelector("#eof-comment").value.trim();
-    saveAndSync("objekt");
+    saveBetygForemal();
     overlay.remove();
     if(onSaved)onSaved();
   };
@@ -859,7 +1388,7 @@ function showHistObjModal(title,idx,cat,tillverkare,anteckning){
     var comment=overlay.querySelector("#ho-comment").value.trim();
     objFardig.push({title:title,cat:cat,tillverkare:tillverkare||"",anteckning:anteckning||"",rating:selectedRating,comment:comment,timestamp:new Date().toISOString()});
     if(objList[cat])objList[cat].splice(idx,1);
-    saveAndSync("objekt");
+    saveBetygForemal();
     overlay.remove();
     renderHistory();
   };
@@ -990,7 +1519,7 @@ function renderPlats(){
     if(!platsList[targetCat])platsList[targetCat]=[];
     platsList[targetCat].push({title:v,kommun:kv,anteckning:an,timestamp:new Date().toISOString()});
     inp.value="";if(kommunInp)kommunInp.value="";if(anteckningInp)anteckningInp.value="";
-    saveAndSync("plats");
+    saveBetygPlats();
     var st=c.querySelector("#plats-status");
     if(st){st.innerHTML="<div class='ok-toast'>Sparat!</div>";setTimeout(function(){if(st)st.innerHTML="";},2000);}
     renderPlats();
@@ -1011,7 +1540,7 @@ function renderPlats(){
       var title=item?platsItemTitle(item):"";
       confirmDelete("Vill du ta bort \""+esc(title)+"\"?",function(){
         if(platsList[platsCat])platsList[platsCat].splice(idx,1);
-        saveAndSync("plats");renderPlats();
+        saveBetygPlats();renderPlats();
       });
     };
   });
@@ -1040,7 +1569,7 @@ function renderPlats(){
       var title=item?platsItemTitle(item):"";
       confirmDelete("Vill du ta bort \""+esc(title)+"\"?",function(){
         if(platsList[cat])platsList[cat].splice(idx,1);
-        saveAndSync("plats");renderPlats();
+        saveBetygPlats();renderPlats();
       });
     };
   });
@@ -1172,7 +1701,7 @@ function editPendingPlatsItem(cat,idx,onSaved){
         if(!platsList[newCat])platsList[newCat]=[];
         platsList[newCat].push(updated);
       }
-      saveAndSync("plats");
+      saveBetygPlats();
       overlay.remove();
       if(onSaved)onSaved();
     }
@@ -1229,7 +1758,7 @@ function editPlatsFardigEntry(entry,onSaved){
     entry.cat=overlay.querySelector("#epf-cat").value||entry.cat;
     entry.rating=selectedRating;
     entry.comment=overlay.querySelector("#epf-comment").value.trim();
-    saveAndSync("plats");
+    saveBetygPlats();
     overlay.remove();
     if(onSaved)onSaved();
   };
@@ -1277,7 +1806,7 @@ function showHistPlatsModal(title,idx,cat,kommun,anteckning){
     var comment=overlay.querySelector("#hp-comment").value.trim();
     platsFardig.push({title:title,cat:cat,kommun:kommun||"",anteckning:anteckning||"",rating:selectedRating,comment:comment,timestamp:new Date().toISOString()});
     if(platsList[cat])platsList[cat].splice(idx,1);
-    saveAndSync("plats");
+    saveBetygPlats();
     overlay.remove();
     renderHistory();
   };
@@ -1505,7 +2034,7 @@ function editPendingMediaItem(cat,idx,onSaved){
         if(!mediaList[newCat])mediaList[newCat]=[];
         mediaList[newCat].push(updated);
       }
-      saveAndSync("media");
+      saveBetygMedia();
       overlay.remove();
       if(onSaved)onSaved();
     }
@@ -1570,7 +2099,7 @@ function editMediaFardigEntry(entry,onSaved){
     entry.cat=overlay.querySelector("#emf-cat").value||entry.cat;
     entry.rating=selectedRating;
     entry.comment=overlay.querySelector("#emf-comment").value.trim();
-    saveAndSync("media");
+    saveBetygMedia();
     overlay.remove();
     if(onSaved)onSaved();
   };
@@ -1612,7 +2141,7 @@ function showMediaModal(title,idx){
     var comment=overlay.querySelector("#media-comment").value.trim();
     mediaFardig.push({title:title,cat:mediaCat,rating:selectedRating,comment:comment,timestamp:new Date().toISOString()});
     if(mediaList[mediaCat])mediaList[mediaCat].splice(idx,1);
-    saveAndSync("media");
+    saveBetygMedia();
     overlay.remove();
     renderLogMedia();
   };
