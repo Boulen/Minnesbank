@@ -552,8 +552,33 @@ function openNoteringJsonEditor(){
 var fundDraft="", editingFundId=null;
 var fundCatSelect="", fundReadCat="", fundReadActive=false, editingFundKeyLog=null;
 var funderingarSubview="anteckning";
-var fundNotisbokActive=false;
-var anteckningNotisbokActive=false;
+var notisbokActive=false; // delad mellan Fundering/Anteckning - byte av underflik ska inte stänga Notisbok
+
+// ---- "Senaste inlägg" med oändlig scroll (nyaste överst, äldre laddas in vid scrollning) ----
+var NOTERING_PAGE_SIZE=20;
+var fundVisibleCount=NOTERING_PAGE_SIZE;
+var anteckningVisibleCount=NOTERING_PAGE_SIZE;
+var noteringScrollHandler=null;
+function bindNoteringInfiniteScroll(loadMoreFn){
+  if(noteringScrollHandler)window.removeEventListener("scroll",noteringScrollHandler);
+  var loading=false;
+  noteringScrollHandler=function(){
+    if(loading)return;
+    var scrollBottom=window.innerHeight+window.scrollY;
+    var docHeight=document.documentElement.scrollHeight;
+    if(scrollBottom>=docHeight-300){
+      loading=true;
+      var hasMore=loadMoreFn();
+      loading=false;
+      if(!hasMore&&noteringScrollHandler){
+        window.removeEventListener("scroll",noteringScrollHandler);
+        noteringScrollHandler=null;
+      }
+    }
+  };
+  window.addEventListener("scroll",noteringScrollHandler);
+}
+
 // Lärdom (Vokabulär/Kunskap) är borttaget helt ur appen - ska aldrig användas igen.
 var anteckningHist=[], anteckningDraft="", anteckningRubrikDraft="", anteckningReadRubrikSearch="";
 var anteckningCatSelect="", anteckningReadCat="", anteckningReadSubcat="", anteckningReadExcludeSubcat="", anteckningReadActive=false, editingAnteckningKeyLog=null;
@@ -572,6 +597,16 @@ function showNoteringDriveError(context,e){
   el.textContent="⚠️ "+context+": "+(e&&e.message?e.message:String(e));
   document.body.appendChild(el);
   setTimeout(function(){el.remove();},6000);
+}
+
+// Kort, positiv bekräftelse (t.ex. vid pinning) - separat från felrutan ovan eftersom den
+// inte ska se ut som ett fel. Försvinner av sig själv.
+function showNoteringToast(text){
+  var el=document.createElement("div");
+  el.style.cssText="position:fixed;bottom:16px;left:16px;right:16px;max-width:420px;margin:0 auto;background:#132e1c;border:1px solid #4fd97a;color:#4fd97a;padding:10px 14px;border-radius:10px;font-size:12px;z-index:10001;text-align:center";
+  el.textContent=text;
+  document.body.appendChild(el);
+  setTimeout(function(){el.remove();},1500);
 }
 
 // Returnerar SAMMA pågående inläsning till alla som anropar samtidigt (inte bara en flagga) -
@@ -696,6 +731,7 @@ function fundRow(f,prefix){
     +"<div class='etitle' style='white-space:pre-wrap;font-weight:400;line-height:1.5'>"+esc(f.text)+"</div>"
     +"<div class='etime'>"+fd(f.timestamp)+"</div>"
     +"</div>"
+    +"<button class='delbtn' data-pinfundlog='"+f.id+"' title='"+(f.pinned?"Ta bort pin":"Pinna")+"' style='color:"+(f.pinned?"#4fa8ff":"#5c5c5c")+";font-size:14px;padding:2px 6px'>📌</button>"
     +"<button class='delbtn' data-editfundlog='"+prefix+":"+f.id+"' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>✏️</button>"
     +"<button class='delbtn' data-delfundlog='"+f.id+"'>x</button>"
     +"</div>";
@@ -721,6 +757,7 @@ function anteckningRow(f,prefix){
     +"<div class='etitle' style='white-space:pre-wrap;font-weight:400;line-height:1.5'>"+esc(f.text)+"</div>"
     +"<div class='etime'>"+fd(f.timestamp)+"</div>"
     +"</div>"
+    +"<button class='delbtn' data-pinanteckninglog='"+f.id+"' title='"+(f.pinned?"Ta bort pin":"Pinna")+"' style='color:"+(f.pinned?"#4fa8ff":"#5c5c5c")+";font-size:14px;padding:2px 6px'>📌</button>"
     +"<button class='delbtn' data-editanteckninglog='"+prefix+":"+f.id+"' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>✏️</button>"
     +"<button class='delbtn' data-delanteckninglog='"+f.id+"'>x</button>"
     +"</div>";
@@ -745,7 +782,6 @@ function renderLogFunderingar(){
   var c=document.getElementById("body");
   ensureNoteringSettingsLoaded();
   ensureNoteringDataLoaded();
-  var notisbokActive=funderingarSubview==="anteckning"?anteckningNotisbokActive:fundNotisbokActive;
   var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:6px'>"
     +"<div style='flex:1;display:grid;grid-template-columns:1fr 1fr;gap:6px'>"
     +"<button class='mode-btn"+(funderingarSubview==="anteckning"?" on":"")+"' data-fundsub='anteckning' style='font-size:12px'>Anteckning</button>"
@@ -756,7 +792,7 @@ function renderLogFunderingar(){
     +(notisbokActive?"":"<button class='sec ghost' id='notering-notisbok-btn' type='button' style='width:100%;margin-bottom:14px'>📓 Notisbok</button>");
   c.innerHTML=subTabs+"<div id='fundering-content'></div>";
   c.querySelectorAll("[data-fundsub]").forEach(function(btn){
-    btn.onclick=function(){funderingarSubview=btn.dataset.fundsub;fundNotisbokActive=false;anteckningNotisbokActive=false;renderLogFunderingar();};
+    btn.onclick=function(){funderingarSubview=btn.dataset.fundsub;fundVisibleCount=NOTERING_PAGE_SIZE;anteckningVisibleCount=NOTERING_PAGE_SIZE;renderLogFunderingar();};
   });
   var settingsBtn=c.querySelector("#notering-settings-btn");
   if(settingsBtn)settingsBtn.onclick=async function(){
@@ -767,15 +803,14 @@ function renderLogFunderingar(){
   };
   var notisbokBtn=c.querySelector("#notering-notisbok-btn");
   if(notisbokBtn)notisbokBtn.onclick=function(){
-    if(funderingarSubview==="anteckning")anteckningNotisbokActive=true;
-    else fundNotisbokActive=true;
+    notisbokActive=true;
     renderLogFunderingar();
   };
   if(funderingarSubview==="anteckning"){
-    if(anteckningNotisbokActive)renderAnteckningNotisbok();
+    if(notisbokActive)renderAnteckningNotisbok();
     else renderAnteckning();
   }else{
-    if(fundNotisbokActive)renderFunderingNotisbok();
+    if(notisbokActive)renderFunderingNotisbok();
     else renderFunderingHome();
   }
 }
@@ -783,23 +818,23 @@ function renderLogFunderingar(){
 function renderFunderingHome(){
   var c=document.getElementById("fundering-content");
   if(!c)return;
-  var todayStart=new Date();todayStart.setHours(0,0,0,0);
-  var todayEnd=new Date();todayEnd.setHours(23,59,59,999);
-  var todayFund=fundHist.filter(function(f){var t=new Date(f.timestamp);return t>=todayStart&&t<=todayEnd;});
 
   var catOptions="<option value=''>Ingen kategori</option>"
     +FUND_CAT_PRESETS.map(function(cat){return "<option value='"+esc(cat)+"'"+(cat===fundCatSelect?" selected":"")+">"+esc(cat)+"</option>";}).join("");
 
-  var todayList=todayFund.length?todayFund.map(function(f){
-    return editingFundKeyLog==="today:"+f.id?fundEditRow(f,"today"):fundRow(f,"today");
-  }).join(""):"<div style='font-size:13px;color:#5c5c5c;margin-top:10px;text-align:center'>Inga funderingar idag annu.</div>";
+  var sortedFund=fundHist.slice().sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
+  function fundRowsHtml(items){
+    return items.length?items.map(function(f){
+      return editingFundKeyLog==="latest:"+f.id?fundEditRow(f,"latest"):fundRow(f,"latest");
+    }).join(""):"<div style='font-size:13px;color:#5c5c5c;margin-top:10px;text-align:center'>Inga funderingar annu.</div>";
+  }
 
   c.innerHTML="<div style='font-size:13px;color:#5c5c5c;margin-bottom:16px;line-height:1.5'>Skriv ner tankar, ideer eller funderingar - en enkel dagbok bara for dig.</div>"
     +"<div class='lbl'>Kategori</div>"
     +"<select id='fundcat-select' style='width:100%;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:14px;padding:10px 12px;cursor:pointer;font-family:inherit;margin-bottom:10px'>"+catOptions+"</select>"
     +"<textarea class='ta' id='fundin' placeholder='Vad funderar du pa?'>"+esc(fundDraft)+"</textarea>"
     +"<button class='sec' id='fundadd' style='width:100%'>Spara fundering</button>"
-    +"<div class='mt20'><div class='lbl'>Dagens funderingar</div>"+todayList+"</div>";
+    +"<div class='mt20'><div class='lbl'>Senaste inlägg</div><div id='fund-latest-list'>"+fundRowsHtml(sortedFund.slice(0,fundVisibleCount))+"</div></div>";
 
   var catSel=c.querySelector("#fundcat-select");
   if(catSel)catSel.onchange=function(){fundCatSelect=catSel.value;};
@@ -815,29 +850,53 @@ function renderFunderingHome(){
     fundDraft="";saveNoteringFundering();renderLogFunderingar();
   };
 
-  c.querySelectorAll("[data-delfundlog]").forEach(function(btn){
-    btn.onclick=function(){
-      fundHist=fundHist.filter(function(f){return f.id!==Number(btn.dataset.delfundlog);});
-      editingFundKeyLog=null;saveNoteringFundering();renderLogFunderingar();
-    };
-  });
-  c.querySelectorAll("[data-editfundlog]").forEach(function(btn){
-    btn.onclick=function(){editingFundKeyLog=btn.dataset.editfundlog;renderLogFunderingar();};
-  });
-  c.querySelectorAll("[data-savefundlog]").forEach(function(btn){
-    btn.onclick=function(){
-      var parts=btn.dataset.savefundlog.split(":");
-      var prefix=parts[0],fid=Number(parts[1]);
-      var f=fundHist.find(function(x){return x.id===fid;});
-      var inp=c.querySelector("#editfundlog-"+prefix+"-"+fid);
-      var catSel=c.querySelector("#editfundcatlog-"+prefix+"-"+fid);
-      if(f&&inp&&inp.value.trim())f.text=inp.value.trim();
-      if(f&&catSel)f.category=catSel.value||undefined;
-      editingFundKeyLog=null;saveNoteringFundering();renderLogFunderingar();
-    };
-  });
-  c.querySelectorAll("[data-cancelfundlog]").forEach(function(btn){
-    btn.onclick=function(){editingFundKeyLog=null;renderLogFunderingar();};
+  function bindFundRowActions(){
+    c.querySelectorAll("[data-pinfundlog]").forEach(function(btn){
+      btn.onclick=function(){
+        var f=fundHist.find(function(x){return x.id===Number(btn.dataset.pinfundlog);});
+        if(f){
+          f.pinned=!f.pinned;
+          saveNoteringFundering();
+          showNoteringToast(f.pinned?"📌 Pinnad":"Pin borttagen");
+        }
+        renderLogFunderingar();
+      };
+    });
+    c.querySelectorAll("[data-delfundlog]").forEach(function(btn){
+      btn.onclick=function(){
+        fundHist=fundHist.filter(function(f){return f.id!==Number(btn.dataset.delfundlog);});
+        editingFundKeyLog=null;saveNoteringFundering();renderLogFunderingar();
+      };
+    });
+    c.querySelectorAll("[data-editfundlog]").forEach(function(btn){
+      btn.onclick=function(){editingFundKeyLog=btn.dataset.editfundlog;renderLogFunderingar();};
+    });
+    c.querySelectorAll("[data-savefundlog]").forEach(function(btn){
+      btn.onclick=function(){
+        var parts=btn.dataset.savefundlog.split(":");
+        var prefix=parts[0],fid=Number(parts[1]);
+        var f=fundHist.find(function(x){return x.id===fid;});
+        var inp=c.querySelector("#editfundlog-"+prefix+"-"+fid);
+        var catSel2=c.querySelector("#editfundcatlog-"+prefix+"-"+fid);
+        if(f&&inp&&inp.value.trim())f.text=inp.value.trim();
+        if(f&&catSel2)f.category=catSel2.value||undefined;
+        editingFundKeyLog=null;saveNoteringFundering();renderLogFunderingar();
+      };
+    });
+    c.querySelectorAll("[data-cancelfundlog]").forEach(function(btn){
+      btn.onclick=function(){editingFundKeyLog=null;renderLogFunderingar();};
+    });
+  }
+  bindFundRowActions();
+
+  bindNoteringInfiniteScroll(function(){
+    var listEl=document.getElementById("fund-latest-list");
+    if(!listEl||fundVisibleCount>=sortedFund.length)return false;
+    var nextItems=sortedFund.slice(fundVisibleCount,fundVisibleCount+NOTERING_PAGE_SIZE);
+    fundVisibleCount+=NOTERING_PAGE_SIZE;
+    listEl.insertAdjacentHTML("beforeend",fundRowsHtml(nextItems));
+    bindFundRowActions();
+    return fundVisibleCount<sortedFund.length;
   });
 }
 
@@ -859,15 +918,30 @@ function renderFunderingNotisbok(){
       +"</div>";
   }
 
+  // Pinnade funderingar visas bara i utgångsläget - försvinner så fort en kategori läses (fundReadActive).
+  var pinnedSection="";
+  if(!fundReadActive){
+    var pinnedFund=fundHist.filter(function(f){return f.pinned;});
+    pinnedFund.sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
+    if(pinnedFund.length){
+      pinnedSection="<div class='mt20'><div class='lbl'>📌 Pinnade</div>"
+        +pinnedFund.map(function(f){
+          return editingFundKeyLog==="pinned:"+f.id?fundEditRow(f,"pinned"):fundRow(f,"pinned");
+        }).join("")
+        +"</div>";
+    }
+  }
+
   c.innerHTML="<button class='sec ghost' id='fundnotisbok-back' type='button' style='margin-bottom:14px'>← Tillbaka</button>"
     +"<div class='lbl'>Läs funderingar per kategori</div>"
     +"<div style='display:flex;gap:8px'>"
     +"<select id='fundread-select' style='flex:1;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;padding:0 10px;cursor:pointer;font-family:inherit'>"+readCatOptions+"</select>"
     +"<button id='fundread-btn' class='sec ghost' style='padding:0 18px'>Läs</button>"
     +"</div>"
+    +pinnedSection
     +readSection;
 
-  c.querySelector("#fundnotisbok-back").onclick=function(){fundNotisbokActive=false;renderLogFunderingar();};
+  c.querySelector("#fundnotisbok-back").onclick=function(){notisbokActive=false;renderLogFunderingar();};
 
   var readSel=c.querySelector("#fundread-select");
   if(readSel)readSel.onchange=function(){fundReadCat=readSel.value;};
@@ -877,6 +951,17 @@ function renderFunderingNotisbok(){
     fundReadActive=true;renderLogFunderingar();
   };
 
+  c.querySelectorAll("[data-pinfundlog]").forEach(function(btn){
+    btn.onclick=function(){
+      var f=fundHist.find(function(x){return x.id===Number(btn.dataset.pinfundlog);});
+      if(f){
+        f.pinned=!f.pinned;
+        saveNoteringFundering();
+        showNoteringToast(f.pinned?"📌 Pinnad":"Pin borttagen");
+      }
+      renderLogFunderingar();
+    };
+  });
   c.querySelectorAll("[data-delfundlog]").forEach(function(btn){
     btn.onclick=function(){
       fundHist=fundHist.filter(function(f){return f.id!==Number(btn.dataset.delfundlog);});
@@ -906,16 +991,16 @@ function renderFunderingNotisbok(){
 function renderAnteckning(){
   var c=document.getElementById("fundering-content");
   if(!c)return;
-  var todayStart=new Date();todayStart.setHours(0,0,0,0);
-  var todayEnd=new Date();todayEnd.setHours(23,59,59,999);
-  var todayTt=anteckningHist.filter(function(f){var t=new Date(f.timestamp);return t>=todayStart&&t<=todayEnd;});
 
   var catOptions="<option value=''>Ingen kategori</option>"
     +ANTECKNING_CAT_PRESETS.map(function(cat){return "<option value='"+esc(cat)+"'"+(cat===anteckningCatSelect?" selected":"")+">"+esc(cat)+"</option>";}).join("");
 
-  var todayList=todayTt.length?todayTt.map(function(f){
-    return editingAnteckningKeyLog==="today:"+f.id?anteckningEditRow(f,"today"):anteckningRow(f,"today");
-  }).join(""):"<div style='font-size:13px;color:#5c5c5c;margin-top:10px;text-align:center'>Inga anteckningar idag annu.</div>";
+  var sortedTt=anteckningHist.slice().sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
+  function anteckningRowsHtml(items){
+    return items.length?items.map(function(f){
+      return editingAnteckningKeyLog==="latest:"+f.id?anteckningEditRow(f,"latest"):anteckningRow(f,"latest");
+    }).join(""):"<div style='font-size:13px;color:#5c5c5c;margin-top:10px;text-align:center'>Inga anteckningar annu.</div>";
+  }
 
   c.innerHTML="<div style='font-size:13px;color:#5c5c5c;margin-bottom:16px;line-height:1.5'>Samla anteckningar - sorterat efter kategori.</div>"
     +"<div class='lbl'>Kategori</div>"
@@ -926,7 +1011,7 @@ function renderAnteckning(){
     +"<input class='inp w100' id='anteckningrubrik' placeholder='Rubrik...' style='margin-bottom:10px' value='"+esc(anteckningRubrikDraft)+"'/>"
     +"<textarea class='ta' id='anteckningin' placeholder='En anteckning...'>"+esc(anteckningDraft)+"</textarea>"
     +"<button class='sec' id='anteckningadd' style='width:100%'>Spara anteckning</button>"
-    +"<div class='mt20'><div class='lbl'>Dagens anteckningar</div>"+todayList+"</div>";
+    +"<div class='mt20'><div class='lbl'>Senaste inlägg</div><div id='anteckning-latest-list'>"+anteckningRowsHtml(sortedTt.slice(0,anteckningVisibleCount))+"</div></div>";
 
   var anteckningEditSubPicker=null;
 
@@ -964,7 +1049,7 @@ function renderAnteckning(){
     var editParts=editingAnteckningKeyLog.split(":");
     var editPrefix=editParts[0],editFid=Number(editParts[1]);
     var editEntry=anteckningHist.find(function(x){return x.id===editFid;});
-    if(editEntry&&editPrefix==="today"){
+    if(editEntry&&editPrefix==="latest"){
       var editIdPrefix="editanteckningsub-"+editPrefix+"-"+editFid;
       var editSelected=(editEntry.subcategories||(editEntry.subcategory?[editEntry.subcategory]:[])).slice();
       var editCatSelEl=c.querySelector("#editanteckningcatlog-"+editPrefix+"-"+editFid);
@@ -972,38 +1057,62 @@ function renderAnteckning(){
     }
   }
 
-  c.querySelectorAll("[data-delanteckninglog]").forEach(function(btn){
-    btn.onclick=function(){
-      confirmDelete("Vill du ta bort anteckningen?",function(){
-        anteckningHist=anteckningHist.filter(function(f){return f.id!==Number(btn.dataset.delanteckninglog);});
+  function bindAnteckningRowActions(){
+    c.querySelectorAll("[data-pinanteckninglog]").forEach(function(btn){
+      btn.onclick=function(){
+        var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.pinanteckninglog);});
+        if(f){
+          f.pinned=!f.pinned;
+          saveNoteringAnteckning();
+          showNoteringToast(f.pinned?"📌 Pinnad":"Pin borttagen");
+        }
+        renderLogFunderingar();
+      };
+    });
+    c.querySelectorAll("[data-delanteckninglog]").forEach(function(btn){
+      btn.onclick=function(){
+        confirmDelete("Vill du ta bort anteckningen?",function(){
+          anteckningHist=anteckningHist.filter(function(f){return f.id!==Number(btn.dataset.delanteckninglog);});
+          editingAnteckningKeyLog=null;saveNoteringAnteckning();renderLogFunderingar();
+        });
+      };
+    });
+    c.querySelectorAll("[data-editanteckninglog]").forEach(function(btn){
+      btn.onclick=function(){editingAnteckningKeyLog=btn.dataset.editanteckninglog;renderLogFunderingar();};
+    });
+    c.querySelectorAll("[data-saveanteckninglog]").forEach(function(btn){
+      btn.onclick=function(){
+        var parts=btn.dataset.saveanteckninglog.split(":");
+        var prefix=parts[0],fid=Number(parts[1]);
+        var f=anteckningHist.find(function(x){return x.id===fid;});
+        var inp=c.querySelector("#editanteckninglog-"+prefix+"-"+fid);
+        var catSel2=c.querySelector("#editanteckningcatlog-"+prefix+"-"+fid);
+        var rubrikInp2=c.querySelector("#editanteckningrubrik-"+prefix+"-"+fid);
+        if(f&&inp&&inp.value.trim())f.text=inp.value.trim();
+        if(f&&catSel2)f.category=catSel2.value||undefined;
+        if(f&&rubrikInp2)f.rubrik=rubrikInp2.value.trim()||undefined;
+        if(f&&anteckningEditSubPicker){
+          var subVals2=anteckningEditSubPicker.getSelected();
+          f.subcategories=subVals2.length?subVals2:undefined;
+          delete f.subcategory;
+        }
         editingAnteckningKeyLog=null;saveNoteringAnteckning();renderLogFunderingar();
-      });
-    };
-  });
-  c.querySelectorAll("[data-editanteckninglog]").forEach(function(btn){
-    btn.onclick=function(){editingAnteckningKeyLog=btn.dataset.editanteckninglog;renderLogFunderingar();};
-  });
-  c.querySelectorAll("[data-saveanteckninglog]").forEach(function(btn){
-    btn.onclick=function(){
-      var parts=btn.dataset.saveanteckninglog.split(":");
-      var prefix=parts[0],fid=Number(parts[1]);
-      var f=anteckningHist.find(function(x){return x.id===fid;});
-      var inp=c.querySelector("#editanteckninglog-"+prefix+"-"+fid);
-      var catSel2=c.querySelector("#editanteckningcatlog-"+prefix+"-"+fid);
-      var rubrikInp2=c.querySelector("#editanteckningrubrik-"+prefix+"-"+fid);
-      if(f&&inp&&inp.value.trim())f.text=inp.value.trim();
-      if(f&&catSel2)f.category=catSel2.value||undefined;
-      if(f&&rubrikInp2)f.rubrik=rubrikInp2.value.trim()||undefined;
-      if(f&&anteckningEditSubPicker){
-        var subVals2=anteckningEditSubPicker.getSelected();
-        f.subcategories=subVals2.length?subVals2:undefined;
-        delete f.subcategory;
-      }
-      editingAnteckningKeyLog=null;saveNoteringAnteckning();renderLogFunderingar();
-    };
-  });
-  c.querySelectorAll("[data-cancelanteckninglog]").forEach(function(btn){
-    btn.onclick=function(){editingAnteckningKeyLog=null;renderLogFunderingar();};
+      };
+    });
+    c.querySelectorAll("[data-cancelanteckninglog]").forEach(function(btn){
+      btn.onclick=function(){editingAnteckningKeyLog=null;renderLogFunderingar();};
+    });
+  }
+  bindAnteckningRowActions();
+
+  bindNoteringInfiniteScroll(function(){
+    var listEl=document.getElementById("anteckning-latest-list");
+    if(!listEl||anteckningVisibleCount>=sortedTt.length)return false;
+    var nextItems=sortedTt.slice(anteckningVisibleCount,anteckningVisibleCount+NOTERING_PAGE_SIZE);
+    anteckningVisibleCount+=NOTERING_PAGE_SIZE;
+    listEl.insertAdjacentHTML("beforeend",anteckningRowsHtml(nextItems));
+    bindAnteckningRowActions();
+    return anteckningVisibleCount<sortedTt.length;
   });
 }
 
@@ -1031,6 +1140,7 @@ function renderAnteckningNotisbok(){
     +"<div class='lbl'>Läs anteckningar per kategori</div>"
     +"<input class='inp w100' id='anteckningread-rubriksearch' placeholder='Sök i rubrik, kategori eller subkategori...' style='margin-bottom:10px' value='"+esc(anteckningReadRubrikSearch)+"'/>"
     +"<div id='anteckningrubriksearch-results'></div>"
+    +"<div id='anteckningpinned-results'></div>"
     +"<div style='display:flex;gap:6px;flex-wrap:wrap;margin-top:10px'>"
     +"<select id='anteckningread-select' style='flex:1 1 90px;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:12px;padding:0 6px;cursor:pointer;font-family:inherit'>"+readCatOptions+"</select>"
     +"<select id='anteckningread-subselect' style='flex:1 1 90px;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:12px;padding:0 6px;cursor:pointer;font-family:inherit'>"+readSubOptions+"</select>"
@@ -1038,7 +1148,7 @@ function renderAnteckningNotisbok(){
     +"</div>"
     +readSection;
 
-  c.querySelector("#anteckningnotisbok-back").onclick=function(){anteckningNotisbokActive=false;renderLogFunderingar();};
+  c.querySelector("#anteckningnotisbok-back").onclick=function(){notisbokActive=false;renderLogFunderingar();};
 
   var anteckningEditSubPicker=null;
 
@@ -1087,6 +1197,17 @@ function renderAnteckningNotisbok(){
     bindTtReadResultActions(resultsEl,"rubriksearch");
   }
   function bindTtReadResultActions(resultsEl,prefix){
+    resultsEl.querySelectorAll("[data-pinanteckninglog]").forEach(function(btn){
+      btn.onclick=function(){
+        var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.pinanteckninglog);});
+        if(f){
+          f.pinned=!f.pinned;
+          saveNoteringAnteckning();
+          showNoteringToast(f.pinned?"📌 Pinnad":"Pin borttagen");
+        }
+        renderLogFunderingar();
+      };
+    });
     resultsEl.querySelectorAll("[data-delanteckninglog]").forEach(function(btn){
       btn.onclick=function(){
         confirmDelete("Vill du ta bort anteckningen?",function(){
@@ -1130,11 +1251,28 @@ function renderAnteckningNotisbok(){
       }
     }
   }
+  // Pinnade anteckningar visas bara i utgångsläget (ingen sökning, ingen kategori vald) -
+  // försvinner så fort man söker eller väljer kategori, per Blås önskemål.
+  function renderTtPinnedResults(){
+    var resultsEl=document.getElementById("anteckningpinned-results");
+    if(!resultsEl)return;
+    if(anteckningReadRubrikSearch.trim()||anteckningReadCat){resultsEl.innerHTML="";return;}
+    var pinned=anteckningHist.filter(function(f){return f.pinned;});
+    pinned.sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
+    if(!pinned.length){resultsEl.innerHTML="";return;}
+    resultsEl.innerHTML="<div class='lbl' style='margin-top:0'>📌 Pinnade</div>"
+      +pinned.map(function(f){
+        return editingAnteckningKeyLog==="pinned:"+f.id?anteckningEditRow(f,"pinned"):anteckningRow(f,"pinned");
+      }).join("");
+    bindTtReadResultActions(resultsEl,"pinned");
+  }
   var rubrikSearchInp=c.querySelector("#anteckningread-rubriksearch");
   if(rubrikSearchInp)rubrikSearchInp.oninput=function(){
     anteckningReadRubrikSearch=rubrikSearchInp.value;
     renderTtRubrikSearchResults();
+    renderTtPinnedResults();
   };
   renderTtRubrikSearchResults();
+  renderTtPinnedResults();
   if(anteckningReadActive&&anteckningReadCat)renderTtReadResults();
 }

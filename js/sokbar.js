@@ -156,7 +156,16 @@ var LASHJALP_CSS = ""
     +'<input type="text" id="dictInput" placeholder="Sök">'
     +'<button class="action-btn" id="dictSpellBtn" type="button" title="Stavningskontroll">🔤</button>'
     +'</div>'
-    +'<div class="dict-input-row dict-row-small" style="flex:0 1 170px;min-width:130px">'
+    // NYTT (2026-09-02): krympordningen var omvänd mot vad Blå ville ha — Sök-rutan
+    // krympte till sitt minimum FÖRE Ord-rutan (Ord hade förvisso en högre flex-basis
+    // men samma flex-shrink:1 som Sök, så när utrymmet blev knappt förlorade Sök
+    // proportionellt sett lika mycket redan direkt, och fortsatte krympa långt efter
+    // att Ord fastnat på sin min-width:130px). Löst genom att ge Ord en mycket högre
+    // flex-shrink (25 mot Sök:s 1) så Ord tar nästan all krympning själv tills den når
+    // sin nya, mindre min-width — uppmätt (canvas measureText på "Ord" + knappens
+    // faktiska bredd + gap) till ca 107px, ~108px med liten marginal. Först när Ord är
+    // nere på det måttet börjar Sök krympa på riktigt.
+    +'<div class="dict-input-row dict-row-small" style="flex:0 25 170px;min-width:108px">'
     +'<input type="text" id="synInput" placeholder="Ord">'
     +'<div class="lashjalp-dropup" id="lashjalpDropupWrap">'
     +'<button class="action-btn" id="lashjalpDropupToggleBtn" type="button" title="Läshjälp / Sparade sökningar" aria-haspopup="true" aria-expanded="false" style="padding:6px 12px;font-size:11.5px;flex:0 0 auto">📖 ▾</button>'
