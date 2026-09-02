@@ -152,20 +152,30 @@ var LASHJALP_CSS = ""
     +'<div class="dict-input-row dict-row-ai" style="flex:0 0 auto;margin-right:10px">'
     +'<button class="action-btn" id="aiChatBtn" type="button" title="AI-chat: ha en konversation med AI, bifoga bild eller fil">🤖</button>'
     +'</div>'
-    +'<div class="dict-input-row dict-row-main" style="flex:1 1 60px">'
+    // NYTT (2026-09-02, tredje försöket): de två tidigare fixarna löste bara KRYMPNINGEN
+    // när utrymmet redan blivit för litet - men rörde aldrig grundstorlekarna (basis).
+    // Ord hade fortfarande en högre flex-basis (170px) än Sök (140px eller ursprungligen
+    // 60px), så även på breda skärmar där ingen egentlig krympning sker alls ser Ord
+    // större ut än Sök - vilket är exakt vad Blå fortsatte se i dev-selen, orört av
+    // shrink-fixen. Löst genom att helt enkelt vända på grundstorlekarna: Sök (huvud-
+    // rutan, "dict-row-main") får nu den STÖRRE basis (170px, samma tal Ord hade innan),
+    // Ord får en mindre, till sitt innehåll bättre anpassad basis (130px - fortfarande
+    // gott om plats att skriva ett ord i, men inte konstigt stor). Krymp-prioriteten
+    // (Ord:s flex-shrink:25 mot Söks 1, se kommentaren vid Ord-rutan) är oförändrad och
+    // gör fortfarande att Ord ger vika FÖRST när utrymmet blir för litet, ända ner till
+    // sin min-width (108px, ca bredden av placeholder-texten "Ord" + knappen) - därefter
+    // är det Sök som krymper.
+    +'<div class="dict-input-row dict-row-main" style="flex:1 1 170px">'
     +'<input type="text" id="dictInput" placeholder="Sök">'
     +'<button class="action-btn" id="dictSpellBtn" type="button" title="Stavningskontroll">🔤</button>'
     +'</div>'
-    // NYTT (2026-09-02): krympordningen var omvänd mot vad Blå ville ha — Sök-rutan
-    // krympte till sitt minimum FÖRE Ord-rutan (Ord hade förvisso en högre flex-basis
-    // men samma flex-shrink:1 som Sök, så när utrymmet blev knappt förlorade Sök
-    // proportionellt sett lika mycket redan direkt, och fortsatte krympa långt efter
-    // att Ord fastnat på sin min-width:130px). Löst genom att ge Ord en mycket högre
-    // flex-shrink (25 mot Sök:s 1) så Ord tar nästan all krympning själv tills den når
-    // sin nya, mindre min-width — uppmätt (canvas measureText på "Ord" + knappens
-    // faktiska bredd + gap) till ca 107px, ~108px med liten marginal. Först när Ord är
-    // nere på det måttet börjar Sök krympa på riktigt.
-    +'<div class="dict-input-row dict-row-small" style="flex:0 25 170px;min-width:108px">'
+    // NYTT (2026-09-02): krympordningen var omvänd mot vad Blå ville ha — Ord-rutan
+    // skulle krympa i bredd FÖRST (tills den bara rymmer texten "Ord"), och SEN skulle
+    // Sök börja krympa. Löst genom att ge Ord en mycket högre flex-shrink (25 mot Söks 1)
+    // så Ord tar nästan all krympning själv tills den når sin min-width — uppmätt (canvas
+    // measureText på "Ord" + knappens faktiska bredd + gap) till ca 107px, ~108px med
+    // liten marginal. Först när Ord är nere på det måttet börjar Sök krympa på riktigt.
+    +'<div class="dict-input-row dict-row-small" style="flex:0 25 130px;min-width:108px">'
     +'<input type="text" id="synInput" placeholder="Ord">'
     +'<div class="lashjalp-dropup" id="lashjalpDropupWrap">'
     +'<button class="action-btn" id="lashjalpDropupToggleBtn" type="button" title="Läshjälp / Sparade sökningar" aria-haspopup="true" aria-expanded="false" style="padding:6px 12px;font-size:11.5px;flex:0 0 auto">📖 ▾</button>'
@@ -340,18 +350,46 @@ function sokbarParseJsonReply(rawText){
 // ---- Pinnat/sparat innehåll från Sök/Ord/Översättning, eget Drive-utrymme ----
 // (2026-08-30, enligt Blås önskemål + HANDOFF_own_your_data.md/HANDOFF om
 // inställningsmönstret från Aktivitet). Tre separata filer, en per källa, i en egen
-// mapp "Sokruta" i den app-ägda rotmappen (samma mapp Blå länkade till - bekräftat
+// mapp "Sokbar" i den app-ägda rotmappen (samma mapp Blå länkade till - bekräftat
 // tidigare att FOLDER_ID redan pekar dit). Byggt direkt på core.js:s generiska
 // driveReadJson/driveWriteJson (INTE en egen hopskriven fetch-variant) - de skapar
 // filen automatiskt om den saknas när man sparar, så ingen separat "Skapa fil"-knapp
 // behövs för själva pin-flödet (däremot finns filstatus synlig i inställningspanelen,
 // se lashjalpCheckFiles()).
-var LASHJALP_FOLDER=["Sokruta"];
+// NYTT (2026-09-02): mappen hette tidigare "Sokruta" (troligen en kvarleva/felskrivning
+// från ett tidigt namnförslag) - bytt till "Sokbar" för att matcha filens/funktionens
+// namn, enligt Blås direkta begäran. Följer mappnamn-regeln (byt Drive-mappnamn när ett
+// ägt namn ändras) via lashjalpMigrateSokrutaFolderOnce() nedan, som kör en riktig
+// mappomdöpning (driveRenameFolder, samma id/innehåll, inget kopieras/flyttas).
+var LASHJALP_FOLDER=["Sokbar"];
 // ai.json bytte syfte 2026-09-01: låg tidigare kvar oanvänt i produktion (aldrig faktiskt
 // skapat i Drive - filnamnet var ledigt) för en pinna-hela-AI-konversationen-funktion som
 // togs bort igen på Blås begäran. Används nu istället som cache för AI-chattens
 // bakgrundskontext - se "AI-chat: bakgrundskontext"-blocket längre ner.
 var LASHJALP_FILES={sok:"sok.json",ord:"ord.json",oversattning:"oversattning.json",ai:"ai.json"};
+
+// NYTT (2026-09-02): engångsmigrering - byter namn på den befintliga Drive-mappen
+// "Sokruta" till "Sokbar" (samma id/innehåll, bara namnet ändras - driveRenameFolder
+// är en ren PATCH mot Drive-API:et, ingen flytt/kopiering av filerna i den). Körs en
+// gång per webbläsare (localStorage-flagga, samma mönster som core.js:s egna
+// MIGRATIONS_VERSION-migreringar, men fristående härifrån eftersom LASHJALP_FOLDER
+// är min egen struktur och inte del av core.js:s DRIVE_STRUCTURE). Om mappen redan
+// döpts om (eller aldrig fanns, t.ex. första körningen för en ny användare) görs
+// ingenting - säkert att köra flera gånger även om flaggan av någon anledning saknas.
+async function lashjalpMigrateSokrutaFolderOnce(){
+  if(localStorage.getItem("mb_sokbar_folder_renamed")==="1")return;
+  try{
+    var oldId=await driveFindFolder("Sokruta",FOLDER_ID);
+    if(oldId){
+      await driveRenameFolder(oldId,"Sokbar");
+      console.log("Mappen Sokruta har döpts om till Sokbar.");
+    }
+    localStorage.setItem("mb_sokbar_folder_renamed","1");
+  }catch(e){
+    // Inget localStorage-flagg sätts vid fel - migreringen försöker igen nästa session.
+    console.error("Kunde inte döpa om Sokruta->Sokbar:",e);
+  }
+}
 
 // Delad pin-funktion: lägger till en post FÖRST i listan i angiven fil och sparar hela
 // listan tillbaka. btnEl (valfri) får en tydlig text-bekräftelse ("✓ Sparat"/"⚠ Fel")
@@ -818,7 +856,7 @@ async function saveLashjalpSettingsFile(){
   if(!ok)console.error("sokbar: kunde inte spara "+fileName+" via inställningspanelen");
   if(ok)lashjalpCheckFiles();
 }
-// Kollar (utan att skapa) om alla tre filerna redan finns i Sokruta-mappen, och visar
+// Kollar (utan att skapa) om alla tre filerna redan finns i Sokbar-mappen, och visar
 // det som en kort statusrad - motsvarar "listar de som saknas" i Aktivitets mönster,
 // fast utan egna Skapa-knappar (se kommentar ovanför openLashjalpSettings).
 async function lashjalpCheckFiles(){
@@ -1763,6 +1801,7 @@ function initDictBar(){
 
   initLashjalp();
   initAiChat();
+  lashjalpMigrateSokrutaFolderOnce();
 
   // Klick utanför sökresultatet (Sök/Ordråd) stänger ner rutan, som ett alternativ till x-knappen.
   document.addEventListener("mousedown",function(e){

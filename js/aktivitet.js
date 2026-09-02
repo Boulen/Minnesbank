@@ -32,39 +32,74 @@ function bindShiftEnterSubmit(el,submitFn){
   });
 }
 
+// ---- Senaste inlägg: oändlig scroll med skärmfyllning ----
+// Mönster från Notering-fliken (se HANDOFF_oandlig_scroll_fran_notering.md). Ersätter
+// den gamla "Händelser" (idag-filtrerad) + "Senaste"-fallback-strukturen helt - visar nu
+// bara EN lista, "Senaste inlägg", med alla loggade aktiviteter i kronologisk ordning,
+// laddad i omgångar om 5 när man scrollar nära botten.
+var AKTIVITET_PAGE_SIZE=5;
+var aktivitetVisibleCount=AKTIVITET_PAGE_SIZE;
+var aktivitetScrollHandler=null;
+
+function bindAktivitetInfiniteScroll(loadMoreFn){
+  if(aktivitetScrollHandler)window.removeEventListener("scroll",aktivitetScrollHandler);
+  var loading=false;
+  aktivitetScrollHandler=function(){
+    if(loading)return;
+    var scrollBottom=window.innerHeight+window.scrollY;
+    var docHeight=document.documentElement.scrollHeight;
+    if(scrollBottom>=docHeight-300){
+      loading=true;
+      var hasMore=loadMoreFn();
+      loading=false;
+      if(!hasMore&&aktivitetScrollHandler){
+        window.removeEventListener("scroll",aktivitetScrollHandler);
+        aktivitetScrollHandler=null;
+      }
+    }
+  };
+  window.addEventListener("scroll",aktivitetScrollHandler);
+
+  // Fyll skärmen direkt om första batchen är för liten för att göra sidan scrollbar.
+  var fillGuard=0;
+  while(document.documentElement.scrollHeight<=window.innerHeight&&fillGuard<50){
+    fillGuard++;
+    if(!loadMoreFn()){
+      if(aktivitetScrollHandler){window.removeEventListener("scroll",aktivitetScrollHandler);aktivitetScrollHandler=null;}
+      break;
+    }
+  }
+}
+
 function updateHandelser(c){
+  renderAktivitetSenaste();
+}
+
+function renderAktivitetSenaste(){
   var wrap=document.getElementById("handelser-wrap");
   if(!wrap)return;
-  wrap.innerHTML="<div class='mt20'>"+buildHandelser()+"</div>";
-  window._handelserHtml=wrap.innerHTML;
-  bindLogEntryActions(wrap,function(){updateHandelser(null);});
-}
-
-function showHandelserLoading(){
-  var wrap=document.getElementById("handelser-wrap");
-  if(wrap)wrap.innerHTML="<div class='mt20'><div style='padding:20px;text-align:center;color:#5c5c5c;font-size:13px'>⏳ Laddar...</div></div>";
-}
-
-// Händelser visar bara Aktivitet (ingen typ-växlare). Om dagens lista har färre än 5
-// poster fylls det ut med de senaste tidigare aktiviteterna under en "Senaste"-rubrik.
-function buildHandelser(){
-  var wr=getTodayRange();
   var nyastForst=AKTIVITET_BETEENDE.handelserSortering!=="aldst";
-  var todayLogs=logs.filter(function(l){var t=new Date(l.timestamp);return t>=wr.start&&t<=wr.end;}).sort(function(a,b){var diff=new Date(b.timestamp)-new Date(a.timestamp);return nyastForst?diff:-diff;});
-  var html="<div class='lbl'>Handelser</div>";
-  if(!todayLogs.length){html+="<div class='empty' style='padding:20px 0'>Inga aktiviteter idag.</div>";}
-  else{html+=todayLogs.map(function(l){return logEntry(l);}).join("");}
-  var todayLogIds={};todayLogs.forEach(function(l){todayLogIds[l.id]=true;});
-  var remainingLogs=Math.max(0,5-todayLogs.length);
-  var recentLogs=remainingLogs>0
-    ?logs.filter(function(l){return !todayLogIds[l.id];}).sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);}).slice(0,remainingLogs)
-    :[];
-  if(recentLogs.length){
-    html+="<div class='mt20'><div class='lbl' style='font-size:12px'>Senaste</div>"
-      +recentLogs.map(function(l){return logEntry(l);}).join("")
-      +"</div>";
+  var sorted=logs.slice().sort(function(a,b){var diff=new Date(b.timestamp)-new Date(a.timestamp);return nyastForst?diff:-diff;});
+
+  function rowsHtml(items){
+    return items.map(function(l){return logEntry(l);}).join("");
   }
-  return html;
+
+  wrap.innerHTML="<div class='mt20'><div class='lbl'>Senaste inlägg</div>"
+    +(sorted.length?"":"<div class='empty' style='padding:20px 0'>Inga aktiviteter loggade ännu.</div>")
+    +"<div id='aktivitet-senaste-list'>"+rowsHtml(sorted.slice(0,aktivitetVisibleCount))+"</div>"
+    +"</div>";
+  bindLogEntryActions(wrap,function(){renderAktivitetSenaste();});
+
+  bindAktivitetInfiniteScroll(function(){
+    var listEl=document.getElementById("aktivitet-senaste-list");
+    if(!listEl||aktivitetVisibleCount>=sorted.length)return false;
+    var nextItems=sorted.slice(aktivitetVisibleCount,aktivitetVisibleCount+AKTIVITET_PAGE_SIZE);
+    aktivitetVisibleCount+=AKTIVITET_PAGE_SIZE;
+    listEl.insertAdjacentHTML("beforeend",rowsHtml(nextItems));
+    bindLogEntryActions(wrap,function(){renderAktivitetSenaste();});
+    return aktivitetVisibleCount<sorted.length;
+  });
 }
 
 function showClockOverlayFor(initH,initM,onSet){
@@ -465,6 +500,7 @@ function bindAktivitetSubtabNav(c){
     btn.onclick=function(){
       stopAktivitetCamera();
       aktivitetSubtab=btn.dataset.subtab;
+      aktivitetVisibleCount=AKTIVITET_PAGE_SIZE; // börja om från de senaste vid flikbyte
       renderLogAktivitet();
     };
   });
@@ -996,8 +1032,6 @@ function bindAktivitetPresetDropdown(inputEl,toggleBtn,dropdownEl,addBtn,getDict
 }
 
 function renderAktivitetLoggaTab(c){
-  // Save current Händelser content before overwriting
-  var savedHandelser=window._handelserHtml||"";
   var catChips=CATS.map(function(ct){return "<button class='chip"+(ct.id===cat?" on":"")+"' data-cat='"+ct.id+"'>"+ct.e+" "+ct.label+"</button>";}).join("");
   if(!cat&&AKTIVITET_BETEENDE.standardKategori)cat=AKTIVITET_BETEENDE.standardKategori;
 
@@ -1049,16 +1083,7 @@ function renderAktivitetLoggaTab(c){
     +"<button id='addbtn' class='cta-log'><span class='cta-log-text'>Logga</span><span class='cta-log-plus'>+</span></button>"
     +"<div id='fz'></div>"
     +"<div id='handelser-wrap'></div>";
-  // Restore or init Händelser
-  var wrap=document.getElementById("handelser-wrap");
-  if(wrap){
-    if(savedHandelser){
-      wrap.innerHTML=savedHandelser;
-      bindLogEntryActions(wrap,function(){updateHandelser(null);});
-    } else {
-      showHandelserLoading();
-    }
-  }
+  renderAktivitetSenaste();
   var catPresetSel=c.querySelector("#cat-preset");
   if(catPresetSel){catPresetSel.value=cat||"";catPresetSel.onchange=function(){
     if(!catPresetSel.value)return;
