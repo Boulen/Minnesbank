@@ -555,7 +555,7 @@ var funderingarSubview="anteckning";
 var notisbokActive=false; // delad mellan Fundering/Anteckning - byte av underflik ska inte stänga Notisbok
 
 // ---- "Senaste inlägg" med oändlig scroll (nyaste överst, äldre laddas in vid scrollning) ----
-var NOTERING_PAGE_SIZE=20;
+var NOTERING_PAGE_SIZE=5;
 var fundVisibleCount=NOTERING_PAGE_SIZE;
 var anteckningVisibleCount=NOTERING_PAGE_SIZE;
 var noteringScrollHandler=null;
@@ -577,6 +577,19 @@ function bindNoteringInfiniteScroll(loadMoreFn){
     }
   };
   window.addEventListener("scroll",noteringScrollHandler);
+
+  // Fyll skärmen direkt om första batchen är för liten för att göra sidan scrollbar - annars
+  // triggas scroll-eventet aldrig och resten av datan laddas aldrig in (t.ex. på höga skärmar).
+  // Anpassar sig efter verklig radhöjd (korta funderingar vs långa anteckningar) istället för
+  // att bara gissa utifrån skärmupplösning.
+  var fillGuard=0;
+  while(document.documentElement.scrollHeight<=window.innerHeight&&fillGuard<50){
+    fillGuard++;
+    if(!loadMoreFn()){
+      if(noteringScrollHandler){window.removeEventListener("scroll",noteringScrollHandler);noteringScrollHandler=null;}
+      break;
+    }
+  }
 }
 
 // Lärdom (Vokabulär/Kunskap) är borttaget helt ur appen - ska aldrig användas igen.
