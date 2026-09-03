@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Minnesbank</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAxMDAgMTAwJz48cmVjdCB3aWR0aD0nMTAwJyBoZWlnaHQ9JzEwMCcgcng9JzE4JyBmaWxsPScjMGEwYTBhJy8+PGcgZmlsbD0nIzRmYThmZicgdHJhbnNmb3JtPSd0cmFuc2xhdGUoNCwxMCkgc2NhbGUoMC45MiknPjxwb2x5Z29uIHBvaW50cz0nNTAsMyA5NSwzNCA1LDM0Jy8+PHJlY3QgeD0nOScgeT0nMzQnIHdpZHRoPSc4MicgaGVpZ2h0PSc3Jy8+PHJlY3QgeD0nMTYnIHk9JzQ1JyB3aWR0aD0nOCcgaGVpZ2h0PScyOScvPjxyZWN0IHg9JzMxJyB5PSc0NScgd2lkdGg9JzgnIGhlaWdodD0nMjknLz48cmVjdCB4PSc0NicgeT0nNDUnIHdpZHRoPSc4JyBoZWlnaHQ9JzI5Jy8+PHJlY3QgeD0nNjEnIHk9JzQ1JyB3aWR0aD0nOCcgaGVpZ2h0PScyOScvPjxyZWN0IHg9Jzc2JyB5PSc0NScgd2lkdGg9JzgnIGhlaWdodD0nMjknLz48cmVjdCB4PSc1JyB5PSc3NCcgd2lkdGg9JzkwJyBoZWlnaHQ9JzgnLz48L2c+PC9zdmc+">
+
+<!-- PWA / "Lägg till på hemskärmen"-stöd -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0a0a0a">
+<!-- iOS-specifikt: Android läser theme-color+manifest ovan, men iOS Safari kräver dessa separat -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Minnesbank">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+
 <script>
 (function(){
   var p=new URLSearchParams(location.search);
