@@ -186,8 +186,31 @@ function showClockOverlayFor(initH,initM,onSet){
   canvas.addEventListener("click",pickFromEvent);
   canvas.addEventListener("touchend",function(e){e.preventDefault();pickFromEvent({clientX:e.changedTouches[0].clientX,clientY:e.changedTouches[0].clientY});},{passive:false});
   ov.querySelector("#cl-clear").onclick=function(){lh=0;lm=0;drawClock();};
-  ov.querySelector("#cl-cancel").onclick=function(){ov.remove();};
-  ov.querySelector("#cl-set").onclick=function(){ov.remove();if(onSet)onSet(lh,lm);};
+  ov.querySelector("#cl-cancel").onclick=function(){close();};
+  ov.querySelector("#cl-set").onclick=function(){close();if(onSet)onSet(lh,lm);};
+
+  // Tangentbordsstöd: pil upp/ner ändrar värdet i aktuellt läge, vänster/höger byter
+  // mellan Timmar/Minuter, Enter väljer, Escape avbryter. Canvas-klockan är i sig inte
+  // tangentbordsstyrd (musberoende ritning), så det här är den fullständiga
+  // tangentbordsersättningen.
+  function close(){
+    document.removeEventListener("keydown",keyHandler);
+    ov.remove();
+  }
+  function keyHandler(e){
+    if(e.key==="Escape"){e.preventDefault();close();return;}
+    if(e.key==="Enter"){e.preventDefault();close();if(onSet)onSet(lh,lm);return;}
+    if(e.key==="ArrowLeft"||e.key==="ArrowRight"){e.preventDefault();setMode(lmode==="h"?"m":"h");return;}
+    if(e.key==="ArrowUp"||e.key==="ArrowDown"){
+      e.preventDefault();
+      var dir=e.key==="ArrowUp"?1:-1;
+      if(lmode==="h")lh=(lh+dir+24)%24;
+      else lm=(lm+dir+60)%60;
+      drawClock();
+    }
+  }
+  document.addEventListener("keydown",keyHandler);
+  ov.setAttribute("tabindex","-1");
 }
 
 function refreshCatDropdown(){
@@ -460,6 +483,13 @@ function openEmojiPicker(onSelect){
 
 // ---- Subtab-navigering: Logga / Bilder / (inställningar-kugghjul) ----
 var aktivitetSubtab="logga";
+// Tidpunkt/Tidslängd hålls som modul-nivå-variabler (inte lokala i renderfunktionen) så att
+// både renderAktivitetLoggaTab och resetLogForm() kan läsa/skriva samma tillstånd - annars
+// tappas det direkt efter varje loggning eftersom resetLogForm ligger utanför render-closuren.
+var aktivitetTidpunktH=new Date().getHours();
+var aktivitetTidpunktM=new Date().getMinutes();
+var aktivitetTidslangdH=0;
+var aktivitetTidslangdM=0;
 
 // Håller koll på en ev. aktiv kamera-stream i Bilder-fliken oavsett var i koden den startades,
 // så den kan stängas av när man lämnar fliken (byter underflik, byter till en helt annan flik i
@@ -1031,6 +1061,20 @@ function bindAktivitetPresetDropdown(inputEl,toggleBtn,dropdownEl,addBtn,getDict
   };
 }
 
+function pinnedCatsChipsHtml(){
+  var pinned=(AKTIVITET_BETEENDE.pinnedCats||[]).map(function(id){return CATS.find(function(c){return c.id===id;});}).filter(Boolean);
+  if(!pinned.length)return "";
+  return "<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px'>"
+    +pinned.map(function(ct){
+      var isCurrent=ct.id===cat;
+      return "<span style='display:inline-flex;align-items:center;background:"+(isCurrent?"#1c3c5a":"#131313")+";border:1px solid "+(isCurrent?"#4fa8ff":"#2a2a2a")+";border-radius:8px;overflow:hidden'>"
+        +"<button type='button' data-pinned-cat='"+ct.id+"' style='background:none;border:none;color:#f2f2f2;font-size:13px;padding:6px 4px 6px 10px;cursor:pointer;font-family:inherit'>"+ct.e+" "+esc(ct.label)+"</button>"
+        +"<button type='button' data-unpin-cat='"+ct.id+"' title='Ta bort snabbval' style='background:none;border:none;color:#d97a83;cursor:pointer;font-size:13px;padding:6px 8px 6px 2px;line-height:1;font-family:inherit'>×</button>"
+        +"</span>";
+    }).join("")
+    +"</div>";
+}
+
 function renderAktivitetLoggaTab(c){
   var catChips=CATS.map(function(ct){return "<button class='chip"+(ct.id===cat?" on":"")+"' data-cat='"+ct.id+"'>"+ct.e+" "+ct.label+"</button>";}).join("");
   if(!cat&&AKTIVITET_BETEENDE.standardKategori)cat=AKTIVITET_BETEENDE.standardKategori;
@@ -1046,7 +1090,7 @@ function renderAktivitetLoggaTab(c){
   var anteckningHtml=!AKTIVITET_FALT.anteckning?"":(
     "<div class='lbl'>Anteckning (valfritt)</div>"
     +"<div style='display:flex;gap:6px;margin-bottom:10px'>"
-    +"<div class='ac-wrap' style='flex:1'><textarea class='inp w100' id='ni' placeholder='Egna tankar eller kommentarer...' rows='1' style='resize:none;overflow:hidden;min-height:44px;line-height:1.4;font-family:inherit'></textarea><div class='ac-dropdown' id='ni-ac'></div></div>"
+    +"<div class='ac-wrap' style='flex:1'><textarea class='inp w100' id='ni' placeholder='Egna tankar eller kommentarer... (Enter = ny rad, Shift+Enter = logga)' rows='1' style='resize:none;overflow:hidden;min-height:44px;line-height:1.5;font-family:inherit;background:#161616;border:1px solid #3a5a7a;box-shadow:0 0 0 1px rgba(79,168,255,0.15) inset'></textarea><div class='ac-dropdown' id='ni-ac'></div></div>"
     +"<button class='chip' id='ni-add-btn' type='button' style='flex-shrink:0;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;padding:11px 14px;cursor:pointer;font-family:inherit;line-height:1'>+</button>"
     +"</div>"
   );
@@ -1054,10 +1098,14 @@ function renderAktivitetLoggaTab(c){
 
   c.innerHTML=aktivitetSubtabNavHtml()
     +"<div class='lbl'>Kategori</div>"
-    +"<select id='cat-preset' style='width:100%;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:14px;padding:10px 12px;cursor:pointer;font-family:inherit;margin-bottom:10px'>"
+    +pinnedCatsChipsHtml()
+    +"<div style='display:flex;gap:6px;margin-bottom:10px'>"
+    +"<select id='cat-preset' style='flex:1;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:14px;padding:10px 12px;cursor:pointer;font-family:inherit'>"
     +"<option value=''>"+(cat?"":"Välj Kategori")+"</option>"
     +CATS.map(function(ct){return "<option value='"+esc(ct.id)+"'"+(ct.id===cat?" selected":"")+">"+esc(ct.e)+" "+esc(ct.label)+"</option>";}).join("")
     +"</select>"
+    +"<button id='cat-pin-btn' class='chip' type='button' title='Lägg till som snabbval ovanför' style='flex-shrink:0;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:14px;padding:10px 14px;cursor:pointer;font-family:inherit'>+</button>"
+    +"</div>"
     +"<div class='lbl'>Aktivitet</div>"
     +"<div class='row'>"
     +"<div class='ac-wrap' style='flex-shrink:0'><button class='chip' id='ci-preset-toggle' type='button' style='background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:13px;padding:11px 12px;cursor:pointer;font-family:inherit;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1'>Snabbval ▾</button><div class='ac-dropdown' id='ci-preset-dd' style='min-width:200px'></div></div>"
@@ -1067,13 +1115,12 @@ function renderAktivitetLoggaTab(c){
     +"<div style='display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px'>"
     +"<div>"
     +"<div class='lbl'>Tidpunkt</div>"
-    +"<button id='aktivtid-btn' style='width:100%;padding:9px;border-radius:10px;background:#131313;border:1px solid #2a2a2a;color:#f2f2f2;font-size:13px;cursor:pointer;font-family:inherit;margin-bottom:6px'>⏱ Aktiv Tid</button>"
-    +"<input class='inp w100' id='tidpunkt-inp' placeholder='HH:MM' maxlength='5' style='text-align:center;font-size:16px;font-weight:600;letter-spacing:2px'/>"
+    +"<button id='tidpunkt-btn' type='button' style='width:100%;padding:9px;border-radius:10px;background:#131313;border:1px solid #2a2a2a;color:#f2f2f2;font-size:16px;font-weight:600;letter-spacing:1px;cursor:pointer;font-family:inherit'>⏱ "+String(aktivitetTidpunktH).padStart(2,"0")+":"+String(aktivitetTidpunktM).padStart(2,"0")+"</button>"
+    +"<input type='hidden' id='tidpunkt-inp' value='"+String(aktivitetTidpunktH).padStart(2,"0")+":"+String(aktivitetTidpunktM).padStart(2,"0")+"'/>"
     +"</div>"
     +"<div>"
     +"<div class='lbl'>Tidslängd</div>"
-    +"<button id='open-clock-btn' style='width:100%;padding:9px;border-radius:10px;background:#131313;border:1px solid #2a2a2a;color:#f2f2f2;font-size:13px;cursor:pointer;font-family:inherit;margin-bottom:6px'>⏰ Välj tid</button>"
-    +"<input class='inp w100' id='tidslangd-inp' placeholder='t.ex. 1h 30m' style='text-align:center;font-size:14px;font-weight:600'/>"
+    +"<button id='open-clock-btn' type='button' style='width:100%;padding:9px;border-radius:10px;background:#131313;border:1px solid #2a2a2a;color:#f2f2f2;font-size:13px;cursor:pointer;font-family:inherit'>"+((aktivitetTidslangdH>0||aktivitetTidslangdM>0)?"⏰ "+String(aktivitetTidslangdH).padStart(2,"0")+":"+String(aktivitetTidslangdM).padStart(2,"0"):"⏰ Välj tid")+"</button>"
     +"</div>"
     +"</div>"
     +"<input type='hidden' id='ti' value=''>"
@@ -1089,7 +1136,42 @@ function renderAktivitetLoggaTab(c){
     if(!catPresetSel.value)return;
     cat=catPresetSel.value;
     renderLogAktivitet();
+    // Sidan ritas om helt (nya DOM-element) - utan detta hamnar fokus på <body> och
+    // tabbningen måste börja om från toppen. Lägg fokus tillbaka på samma fält.
+    var freshSel=document.getElementById("cat-preset");
+    if(freshSel)freshSel.focus();
   };}
+  var catPinBtn=c.querySelector("#cat-pin-btn");
+  if(catPinBtn)catPinBtn.onclick=function(){
+    if(!cat)return;
+    if(!AKTIVITET_BETEENDE.pinnedCats)AKTIVITET_BETEENDE.pinnedCats=[];
+    if(AKTIVITET_BETEENDE.pinnedCats.indexOf(cat)<0){
+      AKTIVITET_BETEENDE.pinnedCats.push(cat);
+      saveAktivitetSettings();
+      renderLogAktivitet();
+      var freshPin=document.getElementById("cat-pin-btn");
+      if(freshPin)freshPin.focus();
+    }
+  };
+  c.querySelectorAll("[data-pinned-cat]").forEach(function(chip){
+    chip.onclick=function(e){
+      if(e.target.closest("[data-unpin-cat]"))return;
+      cat=chip.dataset.pinnedCat;
+      renderLogAktivitet();
+      var freshSel=document.getElementById("cat-preset");
+      if(freshSel)freshSel.focus();
+    };
+  });
+  c.querySelectorAll("[data-unpin-cat]").forEach(function(btn){
+    btn.onclick=function(e){
+      e.stopPropagation();
+      AKTIVITET_BETEENDE.pinnedCats=(AKTIVITET_BETEENDE.pinnedCats||[]).filter(function(id){return id!==btn.dataset.unpinCat;});
+      saveAktivitetSettings();
+      renderLogAktivitet();
+      var freshSel=document.getElementById("cat-preset");
+      if(freshSel)freshSel.focus();
+    };
+  });
   var selectedTid='';
   c.querySelectorAll("[data-tid]").forEach(function(btn){
     btn.onclick=function(){
@@ -1111,8 +1193,9 @@ function renderAktivitetLoggaTab(c){
     ni.addEventListener("input",function(){autoResizeTextarea(ni);});
     autoResizeTextarea(ni);
     bindShiftEnterSubmit(ni,logOrSaveImageOnly);
+    // Vanlig Enter gör en radbrytning (default textarea-beteende) - INGEN egen
+    // onkeydown-hanterare läggs på här, bara Shift+Enter (ovan) loggar.
   }
-  if(ni)ni.onkeydown=function(e){if(e.key==="Enter"){e.preventDefault();logOrSaveImageOnly();}};
   // Kategori-specifika snabbval (varje kategori har sin egen lista, med X för att ta bort).
   // Egen implementation - sparar till Aktivitet/settings.json, inte till den delade
   // "inmatningar"/shared-domänen. Tangentbord (piltangenter/Enter/Escape) inbyggt.
@@ -1136,6 +1219,25 @@ function renderAktivitetLoggaTab(c){
     }
     piNav.handleKey(e);
   };
+  // Fokus hamnar på "Snabbval ▾"-knappen (inte textfältet) om man öppnar dropdownen med
+  // musen eller tabbar dit - piltangenterna måste därför lyssnas på HÄR också, annars
+  // funkar tangentbordsnavigering bara om fokus råkar ligga kvar i textfältet.
+  var ciToggleBtn=c.querySelector("#ci-preset-toggle");
+  if(ciToggleBtn)ciToggleBtn.onkeydown=function(e){
+    if(e.key==="Enter"){
+      if(ciNav.handleEnter())e.preventDefault(); // annars: låt knappens vanliga öppna/stäng ske
+    }else{
+      ciNav.handleKey(e);
+    }
+  };
+  var piToggleBtn=c.querySelector("#pi-preset-toggle");
+  if(piToggleBtn)piToggleBtn.onkeydown=function(e){
+    if(e.key==="Enter"){
+      if(piNav.handleEnter())e.preventDefault();
+    }else{
+      piNav.handleKey(e);
+    }
+  };
   // Kategori-specifika förslag för Anteckning
   bindAutocomplete(c.querySelector("#ni"),c.querySelector("#ni-ac"),function(){return ANTECKNING_BY_CAT[cat]||[];},function(v){if(ANTECKNING_BY_CAT[cat])ANTECKNING_BY_CAT[cat]=ANTECKNING_BY_CAT[cat].filter(function(x){return x!==v;});saveAndSync("inmatningar");},function(v){if(ci.value.trim())addAct(ci.value.trim());});
   var niAddBtn=c.querySelector("#ni-add-btn");
@@ -1147,67 +1249,37 @@ function renderAktivitetLoggaTab(c){
     ANTECKNING_BY_CAT[cat]=pushInmatningHistory(ANTECKNING_BY_CAT[cat],v);
     saveAndSync("inmatningar");
   };
-  // Aktiv Tid button
-  var aktivTidBtn=c.querySelector("#aktivtid-btn");
-  var tidpunktInp=c.querySelector("#tidpunkt-inp");
-  if(aktivTidBtn)aktivTidBtn.onclick=function(){
-    var now=new Date();
-    var hh=String(now.getHours()).padStart(2,"0");
-    var mm=String(now.getMinutes()).padStart(2,"0");
-    if(tidpunktInp)tidpunktInp.value=hh+":"+mm;
-    updateTidFromInputs();
-  };
-  if(tidpunktInp)tidpunktInp.oninput=function(){updateTidFromInputs();};
-  bindTidpunktInp(tidpunktInp);
-  bindShiftEnterSubmit(tidpunktInp,logOrSaveImageOnly);
-
-  // Clock overlay for Tidslängd
-  var clockH=0,clockM=0,clockMode="h"; // h=hours, m=minutes
-  function parseTidslangd(str){
-    var h=0,m=0;
-    var hm=str.match(/(\d+)\s*h/i);var mm=str.match(/(\d+)\s*m/i);
-    if(hm)h=parseInt(hm[1]);
-    if(mm)m=parseInt(mm[1]);
-    if(!hm&&!mm){var col=str.match(/^(\d+):(\d+)$/);if(col){h=parseInt(col[1]);m=parseInt(col[2]);}}
-    return {h:h,m:m};
-  }
-
+  // Tidpunkt: ren knapp, förifylld med aktuell tid, klick öppnar samma klockväljare som
+  // Tidslängd (h-läge = timme 0-23, precis som en 24-timmarsklocka).
+  var tidpunktInp=c.querySelector("#tidpunkt-inp"); // dold - håller "HH:MM" åt addAct()
   function updateTidFromInputs(){
     var hi=c.querySelector("#ti");
-    var tp=tidpunktInp?tidpunktInp.value.trim():"";
-    var dur=(clockH>0||clockM>0)?(clockH+"h "+clockM+"m").trim():"";
-    var parts=[];
-    if(tp)parts.push(tp);
+    var tp=String(aktivitetTidpunktH).padStart(2,"0")+":"+String(aktivitetTidpunktM).padStart(2,"0");
+    if(tidpunktInp)tidpunktInp.value=tp;
+    var dur=(aktivitetTidslangdH>0||aktivitetTidslangdM>0)?(aktivitetTidslangdH+"h "+aktivitetTidslangdM+"m"):"";
+    var parts=[tp];
     if(dur)parts.push(dur);
     if(hi)hi.value=parts.join(" | ");
-    var tinp=c.querySelector("#tidslangd-inp");
-    if(tinp&&(clockH>0||clockM>0))tinp.value=clockH+"h "+clockM+"m";
-    var btn=c.querySelector("#open-clock-btn");
-    if(btn)btn.textContent=(clockH>0||clockM>0)?"⏰ "+String(clockH).padStart(2,"0")+":"+String(clockM).padStart(2,"0"):"⏰ Välj tid";
+    var tpBtn=c.querySelector("#tidpunkt-btn");
+    if(tpBtn)tpBtn.textContent="⏱ "+tp;
+    var durBtn=c.querySelector("#open-clock-btn");
+    if(durBtn)durBtn.textContent=dur?"⏰ "+String(aktivitetTidslangdH).padStart(2,"0")+":"+String(aktivitetTidslangdM).padStart(2,"0"):"⏰ Välj tid";
   }
+  updateTidFromInputs(); // synka det dolda fältet direkt vid render
 
-  var tidslangdInp=c.querySelector("#tidslangd-inp");
-  if(tidslangdInp){
-    tidslangdInp.oninput=function(){
-      var parsed=parseTidslangd(tidslangdInp.value);
-      clockH=parsed.h;clockM=parsed.m;
-      var hi=c.querySelector("#ti");
-      var tp=tidpunktInp?tidpunktInp.value.trim():"";
-      var dur=(clockH>0||clockM>0)?(clockH+"h "+clockM+"m"):"";
-      var parts=[];if(tp)parts.push(tp);if(dur)parts.push(dur);
-      if(hi)hi.value=parts.join(" | ");
-      var btn=c.querySelector("#open-clock-btn");
-      if(btn)btn.textContent=(clockH>0||clockM>0)?"⏰ "+String(clockH).padStart(2,"0")+":"+String(clockM).padStart(2,"0"):"⏰ Välj tid";
-    };
-    bindShiftEnterSubmit(tidslangdInp,logOrSaveImageOnly);
-  }
+  var tidpunktBtn=c.querySelector("#tidpunkt-btn");
+  if(tidpunktBtn)tidpunktBtn.onclick=function(){
+    showClockOverlayFor(aktivitetTidpunktH,aktivitetTidpunktM,function(h,m){
+      aktivitetTidpunktH=h;aktivitetTidpunktM=m;
+      updateTidFromInputs();
+    });
+  };
 
   var openClockBtn=c.querySelector("#open-clock-btn");
   if(openClockBtn)openClockBtn.onclick=function(){
-    showClockOverlayFor(clockH,clockM,function(h,m){
-      clockH=h;clockM=m;updateTidFromInputs();
-      var tinp=c.querySelector("#tidslangd-inp");
-      if(tinp)tinp.value=clockH>0||clockM>0?clockH+"h "+clockM+"m":"";
+    showClockOverlayFor(aktivitetTidslangdH,aktivitetTidslangdM,function(h,m){
+      aktivitetTidslangdH=h;aktivitetTidslangdM=m;
+      updateTidFromInputs();
     });
   };
 
@@ -1820,10 +1892,21 @@ function addAct(activity){
 function resetLogForm(){
   var ci=document.getElementById("ci");if(ci)ci.value="";
   var ti=document.getElementById("ti");if(ti)ti.value="";
-  var tidpunkt=document.getElementById("tidpunkt-inp");if(tidpunkt)tidpunkt.value="";
-  var tidslangd=document.getElementById("tidslangd-inp");if(tidslangd)tidslangd.value="";
+  // Tidpunkt återställs till NU (inte tom) - fältet är alltid förifyllt per design.
+  var now=new Date();
+  aktivitetTidpunktH=now.getHours();aktivitetTidpunktM=now.getMinutes();
+  aktivitetTidslangdH=0;aktivitetTidslangdM=0;
+  var tidpunkt=document.getElementById("tidpunkt-inp");
+  if(tidpunkt)tidpunkt.value=String(aktivitetTidpunktH).padStart(2,"0")+":"+String(aktivitetTidpunktM).padStart(2,"0");
+  var tidpunktBtn=document.getElementById("tidpunkt-btn");
+  if(tidpunktBtn)tidpunktBtn.textContent="⏱ "+String(aktivitetTidpunktH).padStart(2,"0")+":"+String(aktivitetTidpunktM).padStart(2,"0");
+  var durBtn=document.getElementById("open-clock-btn");
+  if(durBtn)durBtn.textContent="⏰ Välj tid";
   var pi=document.getElementById("pi");if(pi)pi.value="";
   var ni=document.getElementById("ni");if(ni){ni.value="";autoResizeTextarea(ni);}
+  // Fokus tillbaka på Aktivitet-fältet så man kan logga nästa sak direkt via
+  // tangentbordet, utan att behöva klicka/tabba dit igen.
+  if(ci)ci.focus();
 }
 
 

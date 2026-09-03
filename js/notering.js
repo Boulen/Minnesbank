@@ -740,8 +740,8 @@ function openNoteringEmojiPicker(onSelect){
 function fundRow(f,prefix){
   return "<div class='entry'>"
     +"<div style='flex:1'>"
-    +(f.category?"<div style='font-size:11px;color:#5c5c5c;margin-bottom:2px'>"+esc(f.category)+"</div>":"")
-    +"<div class='etitle' style='white-space:pre-wrap;font-weight:400;line-height:1.5'>"+esc(f.text)+"</div>"
+    +(f.category?"<div style='font-size:11px;color:#5c5c5c;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid #2a2a2a'>"+esc(f.category)+"</div>":"")
+    +"<div style='white-space:pre-wrap;font-weight:400;line-height:1.45;font-size:13px;color:#cfcfcf'>"+esc(f.text)+"</div>"
     +"<div class='etime'>"+fd(f.timestamp)+"</div>"
     +"</div>"
     +"<button class='delbtn' data-pinfundlog='"+f.id+"' title='"+(f.pinned?"Ta bort pin":"Pinna")+"' style='color:"+(f.pinned?"#4fa8ff":"#5c5c5c")+";font-size:14px;padding:2px 6px'>📌</button>"
@@ -763,11 +763,14 @@ function fundEditRow(f,prefix){
 
 function anteckningRow(f,prefix){
   var subs=f.subcategories||(f.subcategory?[f.subcategory]:[]);
+  var catText=[f.category,subs.join(", ")].filter(Boolean).join(" \u00b7 ");
+  var hasRubrik=!!f.rubrik;
+  var catStyle="font-size:11px;color:#5c5c5c;margin-bottom:"+(hasRubrik?"2px":"4px")+(hasRubrik?"":";padding-bottom:4px;border-bottom:1px solid #2a2a2a");
   return "<div class='entry'>"
     +"<div style='flex:1'>"
-    +((f.category||subs.length)?"<div style='font-size:11px;color:#5c5c5c;margin-bottom:2px'>"+esc([f.category,subs.join(", ")].filter(Boolean).join(" \u00b7 "))+"</div>":"")
-    +(f.rubrik?"<div style='font-size:14px;color:#f2f2f2;font-weight:600;margin-bottom:2px'>"+esc(f.rubrik)+"</div>":"")
-    +"<div class='etitle' style='white-space:pre-wrap;font-weight:400;line-height:1.5'>"+esc(f.text)+"</div>"
+    +(catText?"<div style='"+catStyle+"'>"+esc(catText)+"</div>":"")
+    +(hasRubrik?"<div style='font-size:14px;color:#4fa8ff;font-weight:700;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid #2a2a2a;letter-spacing:.2px'>"+esc(f.rubrik)+"</div>":"")
+    +"<div style='white-space:pre-wrap;font-weight:400;line-height:1.45;font-size:13px;color:#cfcfcf'>"+esc(f.text)+"</div>"
     +"<div class='etime'>"+fd(f.timestamp)+"</div>"
     +"</div>"
     +"<button class='delbtn' data-pinanteckninglog='"+f.id+"' title='"+(f.pinned?"Ta bort pin":"Pinna")+"' style='color:"+(f.pinned?"#4fa8ff":"#5c5c5c")+";font-size:14px;padding:2px 6px'>📌</button>"
@@ -1041,7 +1044,15 @@ function renderAnteckning(){
   };
 
   var ta=c.querySelector("#anteckningin");
-  if(ta)ta.oninput=function(){anteckningDraft=ta.value;};
+  if(ta){
+    ta.oninput=function(){anteckningDraft=ta.value;};
+    ta.onkeydown=function(e){
+      if(e.key==="Enter"&&e.shiftKey){
+        e.preventDefault(); // vanlig Enter ska fortfarande bara ge radbrytning i texten
+        c.querySelector("#anteckningadd").click();
+      }
+    };
+  }
   var rubrikInp=c.querySelector("#anteckningrubrik");
   if(rubrikInp)rubrikInp.oninput=function(){anteckningRubrikDraft=rubrikInp.value;};
 
