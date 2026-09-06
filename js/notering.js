@@ -681,6 +681,8 @@ async function saveNoteringAnteckning(){
 var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank" (under OneNote)
 var OBSIDIAN_VAULT_NAME="Minnesbank"; // Obsidian-valvets namn
 var OBSIDIAN_VAULT_RELATIVE_PREFIX="OneNote/Minnesbank"; // sökväg till skriv-mappen, relativt valv-roten
+var OBSIDIAN_ONENOTE_FOLDER_ID="1aCOTvfa4SHYBk9WreIKo6fubToRlFBqo"; // "OneNote"-mappen (en nivå ovanför Minnesbank) - används för "Alla filer"-listan
+var obsidianFilesViewActive=false;
 var OBSIDIAN_UNCATEGORIZED_FOLDER_NAME="Övrigt";
 var obsidianTypeRootFolderIds={};
 var obsidianTypeRootFolderPromises={};
@@ -746,6 +748,43 @@ function obsidianUriFor(entry,type){
   var segments=OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/").concat([typeName,catName,filenameNoExt]);
   var encodedPath=segments.map(encodeURIComponent).join("/");
   return "obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"&file="+encodedPath;
+}
+
+// Bygger en obsidian://-länk utifrån en sökväg RELATIV TILL "OneNote"-mappen (som "Alla
+// filer"-listan samlar in) - t.ex. "Minnesbank/Anteckning/Arbete/Pall storlek.md".
+function obsidianUriForOneNotePath(relativePath){
+  var fullPath="OneNote/"+relativePath;
+  var noExt=fullPath.replace(/\.md$/i,"");
+  var encoded=noExt.split("/").map(encodeURIComponent).join("/");
+  return "obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"&file="+encoded;
+}
+
+// Går igenom "OneNote"-mappen rekursivt och samlar in ALLA .md-filer, oavsett hur djupt
+// nedgrävda eller vilken undermapp de ligger i (inte bara Minnesbank/Anteckning|Fundering -
+// även andra mappar som redan låg i valvet sen tidigare, t.ex. från en OneNote-migrering).
+async function listAllMarkdownFilesRecursive(folderId,pathPrefix){
+  var results=[];
+  var children=[];
+  var pageToken=null;
+  do{
+    var url=DRIVE_API+"?q="+encodeURIComponent("'"+folderId+"' in parents and trashed=false")+"&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100"+(pageToken?"&pageToken="+encodeURIComponent(pageToken):"");
+    var r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)throw new Error("HTTP "+r.status+" vid listning av \""+pathPrefix+"\"");
+    var d=await r.json();
+    children=children.concat(d.files||[]);
+    pageToken=d.nextPageToken||null;
+  }while(pageToken);
+
+  for(var i=0;i<children.length;i++){
+    var f=children[i];
+    if(f.mimeType==="application/vnd.google-apps.folder"){
+      var sub=await listAllMarkdownFilesRecursive(f.id,pathPrefix+f.name+"/");
+      results=results.concat(sub);
+    }else if(/\.md$/i.test(f.name)){
+      results.push({id:f.id,name:f.name,path:pathPrefix+f.name,modifiedTime:f.modifiedTime});
+    }
+  }
+  return results;
 }
 
 // Egen find-or-create för mappar, oberoende av core.js's driveMkdir - den fungerar inte
@@ -822,14 +861,23 @@ async function syncEntryToObsidian(entry,type,saveFn){
 
     if(entry.obsidianFileId){
       try{
-        var pr=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
-          method:"PATCH",
-          headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
-          body:content
-        });
-        if(pr.ok){
-          if(!entry.obsidianFilename){entry.obsidianFilename=filename;if(saveFn)saveFn();}
-          return;
+        var metaR=await fetch(DRIVE_API+"/"+entry.obsidianFileId+"?fields=trashed",{headers:{Authorization:"Bearer "+accessToken}});
+        if(metaR.ok){
+          var metaD=await metaR.json();
+          if(!metaD.trashed){
+            var pr=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
+              method:"PATCH",
+              headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
+              body:content
+            });
+            if(pr.ok){
+              if(!entry.obsidianFilename){entry.obsidianFilename=filename;if(saveFn)saveFn();}
+              return;
+            }
+          }
+          // Filen ligger i papperskorgen (borttagen för hand) - Drive tillåter ändå att
+          // skriva innehåll till den utan fel, vilket tidigare fick koden att tro att allt
+          // gick bra fast filen var osynlig/borta. Faller nu igenom till sök-eller-skapa.
         }
       }catch(patchErr){
         // Nätverksfel vid uppdatering av befintlig fil - faller igenom till sök-eller-skapa
@@ -1038,6 +1086,7 @@ function renderLogFunderingar(){
   // "settings.json" + "settings (1).json"). Grundfixen ligger i core.js, detta minskar risken
   // från Noterings sida i väntan på den.
   ensureNoteringSettingsLoaded().then(function(){return ensureNoteringDataLoaded();});
+  var hideTopButtons=notisbokActive||obsidianFilesViewActive;
   var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:6px'>"
     +"<div style='flex:1;display:grid;grid-template-columns:1fr 1fr;gap:6px'>"
     +"<button class='mode-btn"+(funderingarSubview==="anteckning"?" on":"")+"' data-fundsub='anteckning' style='font-size:12px'>Anteckning</button>"
@@ -1045,8 +1094,11 @@ function renderLogFunderingar(){
     +"</div>"
     +"<button id='notering-settings-btn' type='button' title='Inställningar' style='background:none;border:none;color:#6b6880;font-size:20px;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0'>⚙️</button>"
     +"</div>"
-    +(notisbokActive?"":"<button class='sec ghost' id='notering-notisbok-btn' type='button' style='width:100%;margin-bottom:8px'>📓 Notisbok</button>"
-      +"<button class='sec ghost' id='notering-open-obsidian-btn' type='button' style='width:100%;margin-bottom:14px'>🔗 Obsidian</button>");
+    +(hideTopButtons?"":"<button class='sec ghost' id='notering-notisbok-btn' type='button' style='width:100%;margin-bottom:8px'>📓 Notisbok</button>"
+      +"<div style='display:flex;gap:6px;margin-bottom:14px'>"
+      +"<button class='sec ghost' id='notering-open-obsidian-btn' type='button' style='flex:1'>Obsidian</button>"
+      +"<button class='sec ghost' id='notering-obsidian-files-btn' type='button' style='flex:1'>Obsibok</button>"
+      +"</div>");
   c.innerHTML=subTabs+"<div id='fundering-content'></div>";
   c.querySelectorAll("[data-fundsub]").forEach(function(btn){
     btn.onclick=function(){funderingarSubview=btn.dataset.fundsub;fundVisibleCount=NOTERING_PAGE_SIZE;anteckningVisibleCount=NOTERING_PAGE_SIZE;renderLogFunderingar();};
@@ -1067,7 +1119,14 @@ function renderLogFunderingar(){
   if(openObsidianBtn)openObsidianBtn.onclick=function(){
     window.open("obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME));
   };
-  if(funderingarSubview==="anteckning"){
+  var obsidianFilesBtn=c.querySelector("#notering-obsidian-files-btn");
+  if(obsidianFilesBtn)obsidianFilesBtn.onclick=function(){
+    obsidianFilesViewActive=true;
+    renderLogFunderingar();
+  };
+  if(obsidianFilesViewActive){
+    renderObsidianFilesPage();
+  }else if(funderingarSubview==="anteckning"){
     if(notisbokActive)renderAnteckningNotisbok();
     else renderAnteckning();
   }else{
@@ -1169,6 +1228,52 @@ function renderFunderingHome(){
 }
 
 // ---- Notisbok (Fundering): "Läs funderingar per kategori", flyttad hit bakom Notisbok-knappen ----
+// ---- "Alla filer": lista alla .md-filer i hela OneNote-mappen (inte bara appens egna) ----
+async function renderObsidianFilesPage(){
+  var c=document.getElementById("fundering-content");
+  if(!c)return;
+  c.innerHTML="<button class='sec ghost' id='obsidianfiles-back' type='button' style='margin-bottom:14px'>← Tillbaka</button>"
+    +"<div class='lbl'>Alla Obsidian-filer</div>"
+    +"<div id='obsidianfiles-list' style='font-size:13px;color:#5c5c5c;text-align:center;margin-top:14px'>Laddar...</div>";
+  c.querySelector("#obsidianfiles-back").onclick=function(){obsidianFilesViewActive=false;renderLogFunderingar();};
+
+  var listEl=c.querySelector("#obsidianfiles-list");
+  if(!accessToken){
+    if(listEl)listEl.textContent="Logga in för att se filerna.";
+    return;
+  }
+
+  try{
+    var files=await listAllMarkdownFilesRecursive(OBSIDIAN_ONENOTE_FOLDER_ID,"");
+    listEl=document.getElementById("obsidianfiles-list"); // användaren kan ha navigerat om under tiden
+    if(!listEl)return;
+    if(!files.length){listEl.textContent="Inga markdown-filer hittades.";return;}
+    files.sort(function(a,b){return new Date(b.modifiedTime)-new Date(a.modifiedTime);});
+    listEl.style.textAlign="left";
+    listEl.style.color="";
+    listEl.innerHTML=files.map(function(f,i){
+      var folderPath=f.path.slice(0,f.path.length-f.name.length-1);
+      return "<div class='entry' data-obsidianfileopen='"+i+"' style='cursor:pointer'>"
+        +"<div style='flex:1'>"
+        +(folderPath?"<div style='font-size:11px;color:#5c5c5c;margin-bottom:2px'>"+esc(folderPath)+"</div>":"")
+        +"<div style='font-size:13px;color:#cfcfcf'>"+esc(f.name.replace(/\.md$/i,""))+"</div>"
+        +"</div>"
+        +"<span style='color:#5c5c5c;font-size:14px'>🔗</span>"
+        +"</div>";
+    }).join("");
+    listEl.querySelectorAll("[data-obsidianfileopen]").forEach(function(el){
+      el.onclick=function(){
+        var f=files[Number(el.dataset.obsidianfileopen)];
+        window.open(obsidianUriForOneNotePath(f.path));
+      };
+    });
+  }catch(e){
+    showNoteringDriveError("Kunde inte lista Obsidian-filer",e);
+    listEl=document.getElementById("obsidianfiles-list");
+    if(listEl){listEl.textContent="Kunde inte hämta filer.";}
+  }
+}
+
 function renderFunderingNotisbok(){
   var c=document.getElementById("fundering-content");
   if(!c)return;
