@@ -633,6 +633,7 @@ function ensureNoteringDataLoaded(){
     try{
       var fundData=await driveReadJson(["Notering"],"fundering.json");
       if(fundData&&fundData.fundHist)fundHist=fundData.fundHist;
+      if(fundData&&fundData.fundObsidianMigrated)fundObsidianMigrated=fundData.fundObsidianMigrated;
       var antData=await driveReadJson(["Notering"],"anteckning.json");
       if(antData&&antData.anteckningHist)anteckningHist=antData.anteckningHist;
       if(antData&&antData.anteckningObsidianMigrated)anteckningObsidianMigrated=antData.anteckningObsidianMigrated;
@@ -648,7 +649,7 @@ function ensureNoteringDataLoaded(){
 async function saveNoteringFundering(){
   if(!accessToken)return;
   try{
-    await driveWriteJson(["Notering"],"fundering.json",{fundHist:fundHist});
+    await driveWriteJson(["Notering"],"fundering.json",{fundHist:fundHist,fundObsidianMigrated:fundObsidianMigrated});
   }catch(e){
     showNoteringDriveError("Kunde inte spara Fundering",e);
   }
@@ -664,14 +665,55 @@ async function saveNoteringAnteckning(){
 }
 
 // ---- Obsidian-synk (envägs, app -> Obsidian, automatisk vid varje spara) ----
-// Skriver varje Fundering/Anteckning-post som en egen .md-fil i användarens Obsidian-valv
-// (mappen "Minnesbank" under "OneNote" i valvet). ANTI-DUBBLETT-PRINCIP: varje posts
-// Drive-fil-id sparas på posten själv (entry.obsidianFileId) så att en uppdatering ALLTID
-// går till exakt den filen via PATCH - aldrig via namn-sökning. En namn-sökning görs bara
-// EN gång, som sista skyddsnät om obsidianFileId av någon anledning saknas men filen ändå
-// redan finns (t.ex. ett tidigare avbrutet försök) - annars skapas en helt ny fil (POST).
-var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank" (under OneNote-mappen i valvet)
-var obsidianSubfolderIds={}; // cache: {"Fundering":"...","Anteckning":"..."} - en driveMkdir per undermapp och session räcker
+// Gäller BÅDE Fundering och Anteckning. Struktur i valvet:
+//   Minnesbank/Anteckning/<kategori>/...
+//   Minnesbank/Fundering/<kategori>/...
+// Poster utan kategori hamnar i "Övrigt" under respektive typ-mapp.
+// Subkategorier (finns bara på Anteckning) läggs in som Obsidians "aliases" i frontmatter,
+// inte som taggar - kategorin är taggen.
+//
+// ANTI-DUBBLETT-PRINCIP: varje posts Drive-fil-id sparas på posten själv (obsidianFileId).
+// En uppdatering går ALLTID till exakt den filen via PATCH - aldrig en namn-sökning. En
+// namn-sökning görs bara EN gång, som sista skyddsnät om obsidianFileId saknas men filen
+// ändå redan finns (t.ex. ett tidigare avbrutet försök) - annars skapas en helt ny fil.
+//
+// SÄKER BORTTAGNINGSKONTROLL: körs en gång per sidladdning per typ. Om en posts fil saknas
+// i Obsidian TVÅ gånger i rad (kollas vid varje sidladdning) tas posten bort i appen också.
+// Skydd: full paginering vid fillistning, mapp-hittas-inte/API-fel -> rör ingenting (tolkas
+// ALDRIG som "allt borttaget"), bara redan synkade poster kollas, två-i-rad-krav mot
+// enstaka glitchar, tydlig 5-sekunders bekräftelse när något faktiskt tas bort.
+var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank" (mappen vi skriver till, under OneNote)
+var OBSIDIAN_VAULT_NAME="Minnesbank"; // Obsidian-valvets namn (valv-rotens mappnamn i Drive)
+var OBSIDIAN_VAULT_RELATIVE_PREFIX="OneNote/Minnesbank"; // sökväg till skriv-mappen, relativt valv-roten
+var OBSIDIAN_UNCATEGORIZED_FOLDER_NAME="Övrigt";
+var obsidianTypeRootFolderIds={}; // {"Anteckning":"...", "Fundering":"..."}
+var obsidianTypeRootFolderPromises={};
+var obsidianCategoryFolderIds={}; // key: "Anteckning|Arbete" -> folderId
+var obsidianCategoryFolderPromises={};
+var anteckningObsidianMigrated=false; // sparas i anteckning.json
+var fundObsidianMigrated=false; // sparas i fundering.json
+var anteckningObsidianDeleteCheckDone=false; // en gång per sidladdning/session
+var fundObsidianDeleteCheckDone=false;
+var obsidianFoldersEmojiStripped=false; // sparas i settings.json - engångskörning
+var obsidianFilenameBackfillDone=false; // sparas i settings.json - engångskörning
+
+function obsidianTypeFolderName(type){return type==="fundering"?"Fundering":"Anteckning";}
+
+// Tar bort emoji ur kategorinamnet innan det används som MAPPNAMN (kategorin i sig, som
+// tagg/frontmatter, behåller sitt emoji som vanligt - det är bara mappnamnen som ska vara rena).
+function stripEmojiForFolderName(text){
+  return (text||"")
+    .replace(/\p{Extended_Pictographic}/gu,"")
+    .replace(/[\uFE0F\u200D]/g,"")
+    .replace(/\s+/g," ")
+    .trim();
+}
+
+function obsidianFolderNameForCategory(category){
+  var trimmed=category&&category.trim()?category.trim():"";
+  var stripped=stripEmojiForFolderName(trimmed);
+  return stripped||OBSIDIAN_UNCATEGORIZED_FOLDER_NAME;
+}
 
 function slugifyForObsidianFilename(text){
   return (text||"").replace(/[\\\/:*?"<>|#^\[\]]/g,"").trim().slice(0,60);
@@ -686,124 +728,10 @@ function obsidianFilenameFor(entry,type){
 }
 
 function obsidianMarkdownFor(entry,type){
-  var tags=[];
-  if(entry.category)tags.push(entry.category.replace(/\s+/g,"-"));
-  (entry.subcategories||[]).forEach(function(s){tags.push(s.replace(/\s+/g,"-"));});
   var lines=["---"];
   lines.push("id: "+entry.id);
   lines.push("timestamp: "+entry.timestamp);
   lines.push("type: "+type);
-  if(entry.category)lines.push("category: \""+entry.category+"\"");
-  if(entry.subcategories&&entry.subcategories.length){
-    lines.push("subcategories:");
-    entry.subcategories.forEach(function(s){lines.push("  - \""+s+"\"");});
-  }
-  if(entry.rubrik)lines.push("rubrik: \""+entry.rubrik+"\"");
-  if(tags.length)lines.push("tags: ["+tags.join(", ")+"]");
-  lines.push("---");
-  lines.push("");
-  if(entry.rubrik)lines.push("# "+entry.rubrik);
-  lines.push("");
-  lines.push(entry.text);
-  return lines.join("\n");
-}
-
-var obsidianSubfolderPromises={}; // in-flight-skydd - samma princip som fixen för Notering-mappen
-function ensureObsidianSubfolder(type){
-  var name=type==="fundering"?"Fundering":"Anteckning";
-  if(obsidianSubfolderIds[name])return Promise.resolve(obsidianSubfolderIds[name]);
-  if(obsidianSubfolderPromises[name])return obsidianSubfolderPromises[name];
-  obsidianSubfolderPromises[name]=(async function(){
-    var folderId=await driveMkdir(name,OBSIDIAN_VAULT_FOLDER_ID);
-    if(folderId)obsidianSubfolderIds[name]=folderId;
-    obsidianSubfolderPromises[name]=null;
-    return folderId;
-  })();
-  return obsidianSubfolderPromises[name];
-}
-
-// saveFn = saveNoteringFundering/saveNoteringAnteckning - anropas igen efter en NY fil skapats
-// så att det nya obsidianFileId:t sparas ner i fundering.json/anteckning.json permanent.
-async function syncEntryToObsidian(entry,type,saveFn){
-  if(!accessToken||!entry)return;
-  try{
-    var folderId=await ensureObsidianSubfolder(type);
-    if(!folderId)throw new Error("Kunde inte hitta/skapa undermappen i Obsidian-valvet");
-    var content=obsidianMarkdownFor(entry,type);
-    var filename=obsidianFilenameFor(entry,type);
-
-    if(entry.obsidianFileId){
-      var pr=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
-        method:"PATCH",
-        headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
-        body:content
-      });
-      if(pr.ok)return;
-      // Filen kan ha tagits bort/flyttats manuellt i Obsidian - faller igenom till nedan.
-    }
-
-    var q="name='"+filename.replace(/'/g,"\\'")+"' and '"+folderId+"' in parents and trashed=false";
-    var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
-    var d=await r.json();
-    if(d.files&&d.files.length){
-      entry.obsidianFileId=d.files[0].id;
-      await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
-        method:"PATCH",
-        headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
-        body:content
-      });
-      if(saveFn)saveFn();
-      return;
-    }
-
-    var form=new FormData();
-    form.append("metadata",new Blob([JSON.stringify({name:filename,parents:[folderId],mimeType:"text/markdown"})],{type:"application/json"}));
-    form.append("file",new Blob([content],{type:"text/markdown"}));
-    var cr=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
-    if(!cr.ok)throw new Error("HTTP "+cr.status);
-    var cd=await cr.json();
-    if(cd.id){
-      entry.obsidianFileId=cd.id;
-      if(saveFn)saveFn();
-    }
-  }catch(e){
-    showNoteringDriveError("Kunde inte synka till Obsidian",e);
-  }
-}
-
-// ---- Obsidian-synk för Anteckning: kategori-mappar + aliases + säker borttagningskontroll ----
-// Gäller BARA Anteckning (inte Fundering, som fortsätter använda den enklare, platta
-// mappstrukturen ovan via syncEntryToObsidian/ensureObsidianSubfolder - orört).
-// Varje kategori får sin egen mapp under Minnesbank (t.ex. "Minnesbank/🛠 Arbete/"), och
-// subkategorier läggs in som Obsidians "aliases" i frontmatter (inte som taggar).
-var OBSIDIAN_UNCATEGORIZED_FOLDER_NAME="Övrigt";
-var obsidianCategoryFolderIds={};
-var obsidianCategoryFolderPromises={};
-var anteckningObsidianMigrated=false; // sparas i anteckning.json - körs bara en gång totalt
-var anteckningObsidianDeleteCheckDone=false; // en gång per sidladdning/session
-
-function obsidianFolderNameForCategory(category){
-  return (category&&category.trim())?category.trim():OBSIDIAN_UNCATEGORIZED_FOLDER_NAME;
-}
-
-function ensureObsidianCategoryFolder(category){
-  var name=obsidianFolderNameForCategory(category);
-  if(obsidianCategoryFolderIds[name])return Promise.resolve(obsidianCategoryFolderIds[name]);
-  if(obsidianCategoryFolderPromises[name])return obsidianCategoryFolderPromises[name];
-  obsidianCategoryFolderPromises[name]=(async function(){
-    var folderId=await driveMkdir(name,OBSIDIAN_VAULT_FOLDER_ID);
-    if(folderId)obsidianCategoryFolderIds[name]=folderId;
-    obsidianCategoryFolderPromises[name]=null;
-    return folderId;
-  })();
-  return obsidianCategoryFolderPromises[name];
-}
-
-function obsidianMarkdownForAnteckning(entry){
-  var lines=["---"];
-  lines.push("id: "+entry.id);
-  lines.push("timestamp: "+entry.timestamp);
-  lines.push("type: anteckning");
   if(entry.category)lines.push("category: \""+entry.category+"\"");
   if(entry.rubrik)lines.push("rubrik: \""+entry.rubrik+"\"");
   if(entry.subcategories&&entry.subcategories.length){
@@ -819,15 +747,89 @@ function obsidianMarkdownForAnteckning(entry){
   return lines.join("\n");
 }
 
-// Skapar/uppdaterar EN anteckning i rätt kategori-mapp. Samma anti-dubblett-princip som ovan:
-// obsidianFileId sparas på posten, en befintlig fil uppdateras ALLTID via PATCH på det id:t.
-async function syncAnteckningToObsidian(entry,saveFn){
+// Bygger en obsidian://-länk till en post. Kräver att posten redan synkats och har sitt
+// riktiga filnamn sparat (entry.obsidianFilename) - annars finns ingen fil att länka till.
+function obsidianUriFor(entry,type){
+  if(!entry.obsidianFileId||!entry.obsidianFilename)return null;
+  var typeName=obsidianTypeFolderName(type);
+  var catName=obsidianFolderNameForCategory(entry.category);
+  var filenameNoExt=entry.obsidianFilename.replace(/\.md$/i,"");
+  var segments=OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/").concat([typeName,catName,filenameNoExt]);
+  var encodedPath=segments.map(encodeURIComponent).join("/");
+  return "obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"&file="+encodedPath;
+}
+
+function ensureObsidianTypeRootFolder(type){
+  var name=obsidianTypeFolderName(type);
+  if(obsidianTypeRootFolderIds[name])return Promise.resolve(obsidianTypeRootFolderIds[name]);
+  if(obsidianTypeRootFolderPromises[name])return obsidianTypeRootFolderPromises[name];
+  obsidianTypeRootFolderPromises[name]=(async function(){
+    var folderId=await driveMkdir(name,OBSIDIAN_VAULT_FOLDER_ID);
+    if(folderId)obsidianTypeRootFolderIds[name]=folderId;
+    obsidianTypeRootFolderPromises[name]=null;
+    return folderId;
+  })();
+  return obsidianTypeRootFolderPromises[name];
+}
+
+// Döper om en äldre mapp (t.ex. "🛠 Arbete") till det nya emoji-fria namnet ("Arbete") OM en
+// sådan äldre mapp redan finns - annars returneras null och en helt ny mapp skapas som vanligt.
+// Skapar ALDRIG en dubblett: hittas ingen äldre mapp görs bara det vanliga driveMkdir-anropet.
+async function renameObsidianFolderIfExists(parentId,oldName,newName){
+  try{
+    var q="name='"+oldName.replace(/'/g,"\\'")+"' and '"+parentId+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
+    var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)return null;
+    var d=await r.json();
+    if(!(d.files&&d.files.length))return null;
+    var folderId=d.files[0].id;
+    var pr=await fetch(DRIVE_API+"/"+folderId,{
+      method:"PATCH",
+      headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},
+      body:JSON.stringify({name:newName})
+    });
+    if(!pr.ok)return null;
+    return folderId;
+  }catch(e){
+    return null; // kan inte avgöra - faller igenom till vanlig driveMkdir (skapar ny om det behövs)
+  }
+}
+
+function ensureObsidianCategoryFolder(type,category){
+  var typeName=obsidianTypeFolderName(type);
+  var catName=obsidianFolderNameForCategory(category);
+  var key=typeName+"|"+catName;
+  if(obsidianCategoryFolderIds[key])return Promise.resolve(obsidianCategoryFolderIds[key]);
+  if(obsidianCategoryFolderPromises[key])return obsidianCategoryFolderPromises[key];
+  obsidianCategoryFolderPromises[key]=(async function(){
+    var rootId=await ensureObsidianTypeRootFolder(type);
+    if(!rootId){obsidianCategoryFolderPromises[key]=null;return null;}
+    var originalName=category&&category.trim()?category.trim():null;
+    if(originalName&&originalName!==catName){
+      var renamedId=await renameObsidianFolderIfExists(rootId,originalName,catName);
+      if(renamedId){
+        obsidianCategoryFolderIds[key]=renamedId;
+        obsidianCategoryFolderPromises[key]=null;
+        return renamedId;
+      }
+    }
+    var folderId=await driveMkdir(catName,rootId);
+    if(folderId)obsidianCategoryFolderIds[key]=folderId;
+    obsidianCategoryFolderPromises[key]=null;
+    return folderId;
+  })();
+  return obsidianCategoryFolderPromises[key];
+}
+
+// saveFn = saveNoteringFundering/saveNoteringAnteckning - anropas igen efter en NY fil
+// skapats så att det nya obsidianFileId:t (och filnamnet) sparas ner permanent.
+async function syncEntryToObsidian(entry,type,saveFn){
   if(!accessToken||!entry)return;
   try{
-    var folderId=await ensureObsidianCategoryFolder(entry.category);
+    var folderId=await ensureObsidianCategoryFolder(type,entry.category);
     if(!folderId)throw new Error("Kunde inte hitta/skapa kategori-mappen i Obsidian-valvet");
-    var content=obsidianMarkdownForAnteckning(entry);
-    var filename=obsidianFilenameFor(entry,"anteckning");
+    var content=obsidianMarkdownFor(entry,type);
+    var filename=obsidianFilenameFor(entry,type);
 
     if(entry.obsidianFileId){
       var pr=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
@@ -835,7 +837,10 @@ async function syncAnteckningToObsidian(entry,saveFn){
         headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
         body:content
       });
-      if(pr.ok)return;
+      if(pr.ok){
+        if(!entry.obsidianFilename){entry.obsidianFilename=filename;if(saveFn)saveFn();}
+        return;
+      }
       // Filen kan ha tagits bort/flyttats manuellt i Obsidian - faller igenom till nedan.
     }
 
@@ -844,6 +849,7 @@ async function syncAnteckningToObsidian(entry,saveFn){
     var d=await r.json();
     if(d.files&&d.files.length){
       entry.obsidianFileId=d.files[0].id;
+      entry.obsidianFilename=filename;
       await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
         method:"PATCH",
         headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
@@ -861,21 +867,51 @@ async function syncAnteckningToObsidian(entry,saveFn){
     var cd=await cr.json();
     if(cd.id){
       entry.obsidianFileId=cd.id;
+      entry.obsidianFilename=filename;
       if(saveFn)saveFn();
     }
   }catch(e){
-    showNoteringDriveError("Kunde inte synka anteckning till Obsidian",e);
+    showNoteringDriveError("Kunde inte synka till Obsidian",e);
   }
 }
 
-// Flyttar en redan synkad post till rätt kategori-mapp om den ligger fel (t.ex. gamla poster
-// som synkades innan kategori-mappar fanns). Flyttar filen på riktigt (addParents/removeParents)
-// - skapar ALDRIG en kopia och tar ALDRIG bort något, så ingen risk för dubbletter eller
-// dataförlust här.
-async function migrateAnteckningEntryFolder(entry){
+// Engångskörning: går igenom alla kända kategorier (från presets) för båda typerna och
+// döper om ev. gamla emoji-mappar. Behövs för att kategorier utan aktiva poster också ska
+// få sina mappar rensade direkt, inte bara nästa gång just den kategorin råkar användas.
+async function stripEmojiFromAllObsidianFolders(){
+  if(!accessToken)return;
+  var i;
+  for(i=0;i<ANTECKNING_CAT_PRESETS.length;i++)await ensureObsidianCategoryFolder("anteckning",ANTECKNING_CAT_PRESETS[i]);
+  for(i=0;i<FUND_CAT_PRESETS.length;i++)await ensureObsidianCategoryFolder("fundering",FUND_CAT_PRESETS[i]);
+}
+
+// Engångskörning: fyller i entry.obsidianFilename för poster som synkades innan filnamnet
+// började sparas (behövs för att "Öppna i Obsidian"-knappen ska kunna visas för dem).
+async function backfillObsidianFilenames(entries,saveFn){
+  if(!accessToken)return;
+  var changed=false;
+  for(var i=0;i<entries.length;i++){
+    var entry=entries[i];
+    if(entry.obsidianFileId&&!entry.obsidianFilename){
+      try{
+        var r=await fetch(DRIVE_API+"/"+entry.obsidianFileId+"?fields=name",{headers:{Authorization:"Bearer "+accessToken}});
+        if(r.ok){
+          var d=await r.json();
+          if(d.name){entry.obsidianFilename=d.name;changed=true;}
+        }
+      }catch(e){/* hoppa över just den posten, försök igen nästa gång */}
+    }
+  }
+  if(changed&&saveFn)saveFn();
+}
+
+// Flyttar en redan synkad post till rätt typ/kategori-mapp om den ligger fel (t.ex. poster
+// synkade innan den här mappstrukturen fanns). Flyttar filen på riktigt (addParents/
+// removeParents) - skapar ALDRIG en kopia och tar ALDRIG bort något.
+async function migrateEntryObsidianFolder(entry,type){
   if(!entry.obsidianFileId)return;
   try{
-    var targetFolderId=await ensureObsidianCategoryFolder(entry.category);
+    var targetFolderId=await ensureObsidianCategoryFolder(type,entry.category);
     if(!targetFolderId)return;
     var r=await fetch(DRIVE_API+"/"+entry.obsidianFileId+"?fields=parents",{headers:{Authorization:"Bearer "+accessToken}});
     if(!r.ok)return; // kan inte avgöra just nu - rör ingenting, försök igen nästa gång
@@ -886,29 +922,29 @@ async function migrateAnteckningEntryFolder(entry){
     await fetch(DRIVE_API+"/"+entry.obsidianFileId+"?addParents="+targetFolderId+(removeParents?"&removeParents="+removeParents:""),{
       method:"PATCH",headers:{Authorization:"Bearer "+accessToken}
     });
-    var content=obsidianMarkdownForAnteckning(entry);
+    var content=obsidianMarkdownFor(entry,type);
     await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
       method:"PATCH",
       headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
       body:content
     });
   }catch(e){
-    showNoteringDriveError("Kunde inte flytta en anteckning till rätt Obsidian-mapp",e);
+    showNoteringDriveError("Kunde inte flytta en post till rätt Obsidian-mapp",e);
   }
 }
 
-// Engångskörning: lägger in alla BEFINTLIGA anteckningar i Obsidian (de som aldrig synkats),
-// och flyttar de som redan synkats till rätt kategori-mapp. Körs bara en gång totalt (styrs av
-// anteckningObsidianMigrated, sparad i anteckning.json) - nya/redigerade poster hanteras redan
+// Engångskörning per typ: lägger in alla BEFINTLIGA poster i Obsidian (de som aldrig
+// synkats), och flyttar de som redan synkats till rätt typ/kategori-mapp. Styrs av
+// anteckningObsidianMigrated/fundObsidianMigrated - nya/redigerade poster hanteras redan
 // löpande av de vanliga spara-anropen.
-async function backfillAnteckningToObsidian(){
+async function backfillEntriesToObsidian(entries,type,saveFn){
   if(!accessToken)return;
-  for(var i=0;i<anteckningHist.length;i++){
-    var entry=anteckningHist[i];
-    if(entry.obsidianFileId)await migrateAnteckningEntryFolder(entry);
-    else await syncAnteckningToObsidian(entry);
+  for(var i=0;i<entries.length;i++){
+    var entry=entries[i];
+    if(entry.obsidianFileId)await migrateEntryObsidianFolder(entry,type);
+    else await syncEntryToObsidian(entry,type,saveFn);
   }
-  saveNoteringAnteckning();
+  if(saveFn)saveFn();
 }
 
 function showNoteringToastLong(text){
@@ -933,56 +969,51 @@ async function listAllFilesInObsidianFolder(folderId){
   return files;
 }
 
-// Säker borttagningskontroll: om en anteckning saknas i Obsidian (filen borttagen där) TVÅ
-// gånger i rad (kollas en gång per sidladdning) tas motsvarande post bort i appen också.
-// Skydd mot buggar:
-// - Full paginering (annars kan en mapp med >100 filer felaktigt se "tom" ut för resten).
-// - Om mappen inte kan hittas eller API-anropet misslyckas: rör ingenting för den mappen -
-//   tolkas ALDRIG som "allt borttaget".
-// - Bara poster som redan HAR ett obsidianFileId kollas (osynkade poster rörs aldrig).
-// - Två-i-rad-krav: en enda glipa (tillfälligt fel, race, etc) kan aldrig radera något direkt.
-async function checkAnteckningObsidianDeletions(){
+// entries muteras på plats (length=0 + push) så att den fungerar oavsett om den anropas med
+// fundHist eller anteckningHist direkt - anropande kod behöver inte skriva om referensen.
+async function checkObsidianDeletions(entries,type,saveFn){
   if(!accessToken)return;
   var byCategory={};
-  anteckningHist.forEach(function(entry){
+  entries.forEach(function(entry){
     if(!entry.obsidianFileId)return;
-    var folderName=obsidianFolderNameForCategory(entry.category);
-    if(!byCategory[folderName])byCategory[folderName]=[];
-    byCategory[folderName].push(entry);
+    var catName=obsidianFolderNameForCategory(entry.category);
+    if(!byCategory[catName])byCategory[catName]=[];
+    byCategory[catName].push(entry);
   });
 
   var removedAny=false;
   var changedAny=false;
-  for(var folderName in byCategory){
-    var entries=byCategory[folderName];
+  var removedIds={};
+  for(var catName in byCategory){
+    var catEntries=byCategory[catName];
     var folderId;
     try{
-      folderId=await ensureObsidianCategoryFolder(entries[0].category);
+      folderId=await ensureObsidianCategoryFolder(type,catEntries[0].category);
     }catch(e){
-      showNoteringDriveError("Kunde inte kontrollera Obsidian-mappen \""+folderName+"\" - hoppar över",e);
+      showNoteringDriveError("Kunde inte kontrollera Obsidian-mappen \""+catName+"\" - hoppar över",e);
       continue;
     }
     if(!folderId){
-      showNoteringDriveError("Hittade inte Obsidian-mappen \""+folderName+"\" - hoppar över borttagningskontroll",null);
+      showNoteringDriveError("Hittade inte Obsidian-mappen \""+catName+"\" - hoppar över borttagningskontroll",null);
       continue;
     }
     var existingIds;
     try{
       existingIds=await listAllFilesInObsidianFolder(folderId);
     }catch(e){
-      showNoteringDriveError("Kunde inte lista filer i Obsidian-mappen \""+folderName+"\" - rör ingenting",e);
+      showNoteringDriveError("Kunde inte lista filer i Obsidian-mappen \""+catName+"\" - rör ingenting",e);
       continue;
     }
     var existingSet={};
     existingIds.forEach(function(id){existingSet[id]=true;});
 
-    entries.forEach(function(entry){
+    catEntries.forEach(function(entry){
       if(existingSet[entry.obsidianFileId]){
         if(entry.obsidianMissingSince){delete entry.obsidianMissingSince;changedAny=true;}
         return;
       }
       if(entry.obsidianMissingSince){
-        anteckningHist=anteckningHist.filter(function(x){return x!==entry;});
+        removedIds[entry.id]=true;
         showNoteringToastLong("🗑️ \""+(entry.rubrik||entry.text.slice(0,30))+"\" togs bort (saknades i Obsidian två gånger i rad)");
         removedAny=true;
       }else{
@@ -991,8 +1022,13 @@ async function checkAnteckningObsidianDeletions(){
       }
     });
   }
+  if(removedAny){
+    var filtered=entries.filter(function(e){return !removedIds[e.id];});
+    entries.length=0;
+    Array.prototype.push.apply(entries,filtered);
+  }
   if(removedAny||changedAny){
-    saveNoteringAnteckning();
+    if(saveFn)saveFn();
     if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
   }
 }
@@ -1007,6 +1043,8 @@ function ensureNoteringSettingsLoaded(){
         if(data.fundCatPresets&&data.fundCatPresets.length)FUND_CAT_PRESETS=data.fundCatPresets;
         if(data.anteckningCatPresets&&data.anteckningCatPresets.length)ANTECKNING_CAT_PRESETS=data.anteckningCatPresets;
         if(data.anteckningSubcatByCat)ANTECKNING_SUBCAT_BY_CAT=data.anteckningSubcatByCat;
+        if(data.obsidianFoldersEmojiStripped)obsidianFoldersEmojiStripped=data.obsidianFoldersEmojiStripped;
+        if(data.obsidianFilenameBackfillDone)obsidianFilenameBackfillDone=data.obsidianFilenameBackfillDone;
       }
       if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
     }catch(e){
@@ -1023,7 +1061,9 @@ async function saveNoteringSettings(){
     await driveWriteJson(["Notering"],"settings.json",{
       fundCatPresets:FUND_CAT_PRESETS,
       anteckningCatPresets:ANTECKNING_CAT_PRESETS,
-      anteckningSubcatByCat:ANTECKNING_SUBCAT_BY_CAT
+      anteckningSubcatByCat:ANTECKNING_SUBCAT_BY_CAT,
+      obsidianFoldersEmojiStripped:obsidianFoldersEmojiStripped,
+      obsidianFilenameBackfillDone:obsidianFilenameBackfillDone
     });
   }catch(e){
     showNoteringDriveError("Kunde inte spara Notering-inställningar",e);
@@ -1079,6 +1119,7 @@ function fundRow(f,prefix){
     +"<div style='white-space:pre-wrap;font-weight:400;line-height:1.45;font-size:13px;color:#cfcfcf'>"+esc(f.text)+"</div>"
     +"<div class='etime'>"+fd(f.timestamp)+"</div>"
     +"</div>"
+    +(f.obsidianFileId&&f.obsidianFilename?"<button class='delbtn' data-openobsidianfundlog='"+f.id+"' title='Öppna i Obsidian' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>🔗</button>":"")
     +"<button class='delbtn' data-pinfundlog='"+f.id+"' title='"+(f.pinned?"Ta bort pin":"Pinna")+"' style='color:"+(f.pinned?"#4fa8ff":"#5c5c5c")+";font-size:14px;padding:2px 6px'>📌</button>"
     +"<button class='delbtn' data-editfundlog='"+prefix+":"+f.id+"' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>✏️</button>"
     +"<button class='delbtn' data-delfundlog='"+f.id+"'>x</button>"
@@ -1108,6 +1149,7 @@ function anteckningRow(f,prefix){
     +"<div style='white-space:pre-wrap;font-weight:400;line-height:1.45;font-size:13px;color:#cfcfcf'>"+esc(f.text)+"</div>"
     +"<div class='etime'>"+fd(f.timestamp)+"</div>"
     +"</div>"
+    +(f.obsidianFileId&&f.obsidianFilename?"<button class='delbtn' data-openobsidiananteckninglog='"+f.id+"' title='Öppna i Obsidian' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>🔗</button>":"")
     +"<button class='delbtn' data-pinanteckninglog='"+f.id+"' title='"+(f.pinned?"Ta bort pin":"Pinna")+"' style='color:"+(f.pinned?"#4fa8ff":"#5c5c5c")+";font-size:14px;padding:2px 6px'>📌</button>"
     +"<button class='delbtn' data-editanteckninglog='"+prefix+":"+f.id+"' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>✏️</button>"
     +"<button class='delbtn' data-delanteckninglog='"+f.id+"'>x</button>"
@@ -1138,15 +1180,39 @@ function renderLogFunderingar(){
   ensureNoteringSettingsLoaded().then(function(){return ensureNoteringDataLoaded();}).then(function(){
     if(!accessToken)return;
     var chain=Promise.resolve();
+    if(!obsidianFoldersEmojiStripped){
+      chain=chain.then(function(){return stripEmojiFromAllObsidianFolders();}).then(function(){
+        obsidianFoldersEmojiStripped=true;
+        return saveNoteringSettings();
+      });
+    }
     if(!anteckningObsidianMigrated){
-      chain=chain.then(function(){return backfillAnteckningToObsidian();}).then(function(){
+      chain=chain.then(function(){return backfillEntriesToObsidian(anteckningHist,"anteckning",saveNoteringAnteckning);}).then(function(){
         anteckningObsidianMigrated=true;
         return saveNoteringAnteckning();
       });
     }
+    if(!fundObsidianMigrated){
+      chain=chain.then(function(){return backfillEntriesToObsidian(fundHist,"fundering",saveNoteringFundering);}).then(function(){
+        fundObsidianMigrated=true;
+        return saveNoteringFundering();
+      });
+    }
+    if(!obsidianFilenameBackfillDone){
+      chain=chain.then(function(){return backfillObsidianFilenames(anteckningHist,saveNoteringAnteckning);})
+        .then(function(){return backfillObsidianFilenames(fundHist,saveNoteringFundering);})
+        .then(function(){
+          obsidianFilenameBackfillDone=true;
+          return saveNoteringSettings();
+        });
+    }
     if(!anteckningObsidianDeleteCheckDone){
       anteckningObsidianDeleteCheckDone=true; // sätts direkt (inte i .then) så den aldrig kan hinna köras dubbelt
-      chain=chain.then(function(){return checkAnteckningObsidianDeletions();});
+      chain=chain.then(function(){return checkObsidianDeletions(anteckningHist,"anteckning",saveNoteringAnteckning);});
+    }
+    if(!fundObsidianDeleteCheckDone){
+      fundObsidianDeleteCheckDone=true;
+      chain=chain.then(function(){return checkObsidianDeletions(fundHist,"fundering",saveNoteringFundering);});
     }
     return chain;
   });
@@ -1219,6 +1285,13 @@ function renderFunderingHome(){
   };
 
   function bindFundRowActions(){
+    c.querySelectorAll("[data-openobsidianfundlog]").forEach(function(btn){
+      btn.onclick=function(){
+        var f=fundHist.find(function(x){return x.id===Number(btn.dataset.openobsidianfundlog);});
+        var uri=f?obsidianUriFor(f,"fundering"):null;
+        if(uri)window.open(uri);
+      };
+    });
     c.querySelectorAll("[data-pinfundlog]").forEach(function(btn){
       btn.onclick=function(){
         var f=fundHist.find(function(x){return x.id===Number(btn.dataset.pinfundlog);});
@@ -1319,6 +1392,13 @@ function renderFunderingNotisbok(){
     fundReadActive=true;renderLogFunderingar();
   };
 
+  c.querySelectorAll("[data-openobsidianfundlog]").forEach(function(btn){
+    btn.onclick=function(){
+      var f=fundHist.find(function(x){return x.id===Number(btn.dataset.openobsidianfundlog);});
+      var uri=f?obsidianUriFor(f,"fundering"):null;
+      if(uri)window.open(uri);
+    };
+  });
   c.querySelectorAll("[data-pinfundlog]").forEach(function(btn){
     btn.onclick=function(){
       var f=fundHist.find(function(x){return x.id===Number(btn.dataset.pinfundlog);});
@@ -1418,7 +1498,7 @@ function renderAnteckning(){
     var rubrikVal=c.querySelector("#anteckningrubrik").value.trim();
     if(rubrikVal)entry.rubrik=rubrikVal;
     anteckningHist.push(entry);
-    anteckningDraft="";anteckningRubrikDraft="";anteckningSubSelected.length=0;saveNoteringAnteckning();syncAnteckningToObsidian(entry,saveNoteringAnteckning);renderLogFunderingar();
+    anteckningDraft="";anteckningRubrikDraft="";anteckningSubSelected.length=0;saveNoteringAnteckning();syncEntryToObsidian(entry,"anteckning",saveNoteringAnteckning);renderLogFunderingar();
   };
 
   if(editingAnteckningKeyLog){
@@ -1434,6 +1514,13 @@ function renderAnteckning(){
   }
 
   function bindAnteckningRowActions(){
+    c.querySelectorAll("[data-openobsidiananteckninglog]").forEach(function(btn){
+      btn.onclick=function(){
+        var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.openobsidiananteckninglog);});
+        var uri=f?obsidianUriFor(f,"anteckning"):null;
+        if(uri)window.open(uri);
+      };
+    });
     c.querySelectorAll("[data-pinanteckninglog]").forEach(function(btn){
       btn.onclick=function(){
         var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.pinanteckninglog);});
@@ -1472,7 +1559,7 @@ function renderAnteckning(){
           f.subcategories=subVals2.length?subVals2:undefined;
           delete f.subcategory;
         }
-        editingAnteckningKeyLog=null;saveNoteringAnteckning();if(f)syncAnteckningToObsidian(f,saveNoteringAnteckning);renderLogFunderingar();
+        editingAnteckningKeyLog=null;saveNoteringAnteckning();if(f)syncEntryToObsidian(f,"anteckning",saveNoteringAnteckning);renderLogFunderingar();
       };
     });
     c.querySelectorAll("[data-cancelanteckninglog]").forEach(function(btn){
@@ -1573,6 +1660,13 @@ function renderAnteckningNotisbok(){
     bindTtReadResultActions(resultsEl,"rubriksearch");
   }
   function bindTtReadResultActions(resultsEl,prefix){
+    resultsEl.querySelectorAll("[data-openobsidiananteckninglog]").forEach(function(btn){
+      btn.onclick=function(){
+        var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.openobsidiananteckninglog);});
+        var uri=f?obsidianUriFor(f,"anteckning"):null;
+        if(uri)window.open(uri);
+      };
+    });
     resultsEl.querySelectorAll("[data-pinanteckninglog]").forEach(function(btn){
       btn.onclick=function(){
         var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.pinanteckninglog);});
@@ -1614,7 +1708,7 @@ function renderAnteckningNotisbok(){
           f.subcategories=subVals2.length?subVals2:undefined;
           delete f.subcategory;
         }
-        editingAnteckningKeyLog=null;saveNoteringAnteckning();if(f)syncAnteckningToObsidian(f,saveNoteringAnteckning);renderLogFunderingar();
+        editingAnteckningKeyLog=null;saveNoteringAnteckning();if(f)syncEntryToObsidian(f,"anteckning",saveNoteringAnteckning);renderLogFunderingar();
       };
     });
     if(editingAnteckningKeyLog&&editingAnteckningKeyLog.indexOf(prefix+":")===0){
