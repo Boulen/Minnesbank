@@ -1037,7 +1037,8 @@ function renderLogFunderingar(){
     +"</div>"
     +"<button id='notering-settings-btn' type='button' title='Inställningar' style='background:none;border:none;color:#6b6880;font-size:20px;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0'>⚙️</button>"
     +"</div>"
-    +(notisbokActive?"":"<button class='sec ghost' id='notering-notisbok-btn' type='button' style='width:100%;margin-bottom:14px'>📓 Notisbok</button>");
+    +(notisbokActive?"":"<button class='sec ghost' id='notering-notisbok-btn' type='button' style='width:100%;margin-bottom:8px'>📓 Notisbok</button>"
+      +"<button class='sec ghost' id='notering-open-obsidian-btn' type='button' style='width:100%;margin-bottom:14px'>🔗 Obsidian</button>");
   c.innerHTML=subTabs+"<div id='fundering-content'></div>";
   c.querySelectorAll("[data-fundsub]").forEach(function(btn){
     btn.onclick=function(){funderingarSubview=btn.dataset.fundsub;fundVisibleCount=NOTERING_PAGE_SIZE;anteckningVisibleCount=NOTERING_PAGE_SIZE;renderLogFunderingar();};
@@ -1053,6 +1054,10 @@ function renderLogFunderingar(){
   if(notisbokBtn)notisbokBtn.onclick=function(){
     notisbokActive=true;
     renderLogFunderingar();
+  };
+  var openObsidianBtn=c.querySelector("#notering-open-obsidian-btn");
+  if(openObsidianBtn)openObsidianBtn.onclick=function(){
+    window.open("obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME));
   };
   if(funderingarSubview==="anteckning"){
     if(notisbokActive)renderAnteckningNotisbok();
