@@ -768,14 +768,22 @@ async function listAllMarkdownFilesRecursive(folderId,pathPrefix){
   // hämtas även alla bilder (många per anteckning från OneNote-migreringen), vilket gjorde
   // att stora mappar (100+ objekt) tog för lång tid eller aldrig blev klara.
   var q="'"+folderId+"' in parents and trashed=false and (mimeType='application/vnd.google-apps.folder' or mimeType='text/markdown')";
-  do{
-    var url=DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100"+(pageToken?"&pageToken="+encodeURIComponent(pageToken):"");
-    var r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
-    if(!r.ok)throw new Error("HTTP "+r.status+" vid listning av \""+pathPrefix+"\"");
-    var d=await r.json();
-    children=children.concat(d.files||[]);
-    pageToken=d.nextPageToken||null;
-  }while(pageToken);
+  try{
+    do{
+      var url=DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100"+(pageToken?"&pageToken="+encodeURIComponent(pageToken):"");
+      var r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
+      if(!r.ok)throw new Error("HTTP "+r.status+" vid listning av \""+pathPrefix+"\"");
+      var d=await r.json();
+      children=children.concat(d.files||[]);
+      pageToken=d.nextPageToken||null;
+    }while(pageToken);
+  }catch(e){
+    // En enskild mapp som inte går att lista ska inte döda HELA skanningen - hoppa bara
+    // över just den grenen. (Tidigare bugg: Promise.all nedan gjorde att EN misslyckad
+    // mapp någonstans i hela OneNote-trädet kastade bort ALLA redan hittade filer.)
+    console.error("Kunde inte lista mappen",pathPrefix,e);
+    return [];
+  }
 
   var folders=children.filter(function(f){return f.mimeType==="application/vnd.google-apps.folder";});
   var files=children.filter(function(f){return f.mimeType!=="application/vnd.google-apps.folder"&&/\.md$/i.test(f.name);});
@@ -783,10 +791,14 @@ async function listAllMarkdownFilesRecursive(folderId,pathPrefix){
 
   // Går igenom syskonmappar PARALLELLT (inte en i taget) - stor hastighetsvinst när
   // OneNote-mappen har många grenar (Volvo, Surfplatta, Mobil, Dator, Minnesbank osv).
-  var subResults=await Promise.all(folders.map(function(f){
+  // allSettled istället för all - en gren som misslyckas ska inte ta bort resultaten från
+  // alla andra grenar.
+  var subResultsSettled=await Promise.allSettled(folders.map(function(f){
     return listAllMarkdownFilesRecursive(f.id,pathPrefix+f.name+"/");
   }));
-  subResults.forEach(function(sub){results=results.concat(sub);});
+  subResultsSettled.forEach(function(res){
+    if(res.status==="fulfilled")results=results.concat(res.value);
+  });
   return results;
 }
 
