@@ -708,11 +708,13 @@ function slugifyForObsidianFilename(text){
 }
 
 function obsidianFilenameFor(entry,type){
-  var d=new Date(entry.timestamp);
-  var pad=function(n){return (n<10?"0":"")+n;};
-  var stamp=d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+pad(d.getMinutes());
-  var namePart=entry.rubrik?slugifyForObsidianFilename(entry.rubrik):(type==="fundering"?"Fundering":"Anteckning");
-  return stamp+" - "+namePart+".md";
+  var namePart=entry.rubrik?slugifyForObsidianFilename(entry.rubrik):"";
+  if(!namePart){
+    var snippet=(entry.text||"").split("\n")[0].trim();
+    namePart=snippet?slugifyForObsidianFilename(snippet.slice(0,40)):"";
+  }
+  if(!namePart)namePart=type==="fundering"?"Fundering":"Anteckning";
+  return namePart+".md";
 }
 
 function obsidianMarkdownFor(entry,type){
@@ -723,10 +725,9 @@ function obsidianMarkdownFor(entry,type){
   if(entry.category)lines.push("category: \""+entry.category+"\"");
   if(entry.rubrik)lines.push("rubrik: \""+entry.rubrik+"\"");
   if(entry.subcategories&&entry.subcategories.length){
-    lines.push("aliases:");
-    entry.subcategories.forEach(function(s){lines.push("  - \""+s+"\"");});
+    var tags=entry.subcategories.map(function(s){return "\""+s.replace(/\s+/g,"-")+"\"";});
+    lines.push("tags: ["+tags.join(", ")+"]");
   }
-  if(entry.category)lines.push("tags: [\""+entry.category.replace(/\s+/g,"-")+"\"]");
   lines.push("---");
   lines.push("");
   if(entry.rubrik)lines.push("# "+entry.rubrik);
