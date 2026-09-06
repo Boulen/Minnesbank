@@ -763,11 +763,14 @@ function obsidianUriForOneNotePath(relativePath){
 // nedgrävda eller vilken undermapp de ligger i (inte bara Minnesbank/Anteckning|Fundering -
 // även andra mappar som redan låg i valvet sen tidigare, t.ex. från en OneNote-migrering).
 async function listAllMarkdownFilesRecursive(folderId,pathPrefix){
-  var results=[];
   var children=[];
   var pageToken=null;
+  // Filtrerar bort allt utom mappar och .md-filer redan i själva Drive-frågan - annars
+  // hämtas även alla bilder (många per anteckning från OneNote-migreringen), vilket gjorde
+  // att stora mappar (100+ objekt) tog för lång tid eller aldrig blev klara.
+  var q="'"+folderId+"' in parents and trashed=false and (mimeType='application/vnd.google-apps.folder' or mimeType='text/markdown')";
   do{
-    var url=DRIVE_API+"?q="+encodeURIComponent("'"+folderId+"' in parents and trashed=false")+"&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100"+(pageToken?"&pageToken="+encodeURIComponent(pageToken):"");
+    var url=DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100"+(pageToken?"&pageToken="+encodeURIComponent(pageToken):"");
     var r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
     if(!r.ok)throw new Error("HTTP "+r.status+" vid listning av \""+pathPrefix+"\"");
     var d=await r.json();
@@ -775,15 +778,16 @@ async function listAllMarkdownFilesRecursive(folderId,pathPrefix){
     pageToken=d.nextPageToken||null;
   }while(pageToken);
 
-  for(var i=0;i<children.length;i++){
-    var f=children[i];
-    if(f.mimeType==="application/vnd.google-apps.folder"){
-      var sub=await listAllMarkdownFilesRecursive(f.id,pathPrefix+f.name+"/");
-      results=results.concat(sub);
-    }else if(/\.md$/i.test(f.name)){
-      results.push({id:f.id,name:f.name,path:pathPrefix+f.name,modifiedTime:f.modifiedTime});
-    }
-  }
+  var folders=children.filter(function(f){return f.mimeType==="application/vnd.google-apps.folder";});
+  var files=children.filter(function(f){return f.mimeType!=="application/vnd.google-apps.folder"&&/\.md$/i.test(f.name);});
+  var results=files.map(function(f){return {id:f.id,name:f.name,path:pathPrefix+f.name,modifiedTime:f.modifiedTime};});
+
+  // Går igenom syskonmappar PARALLELLT (inte en i taget) - stor hastighetsvinst när
+  // OneNote-mappen har många grenar (Volvo, Surfplatta, Mobil, Dator, Minnesbank osv).
+  var subResults=await Promise.all(folders.map(function(f){
+    return listAllMarkdownFilesRecursive(f.id,pathPrefix+f.name+"/");
+  }));
+  subResults.forEach(function(sub){results=results.concat(sub);});
   return results;
 }
 
