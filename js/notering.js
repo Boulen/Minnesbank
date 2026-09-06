@@ -681,7 +681,7 @@ async function saveNoteringAnteckning(){
 var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank" (under OneNote)
 var OBSIDIAN_VAULT_NAME="Minnesbank"; // Obsidian-valvets namn
 var OBSIDIAN_VAULT_RELATIVE_PREFIX="OneNote/Minnesbank"; // sökväg till skriv-mappen, relativt valv-roten
-var OBSIDIAN_ONENOTE_FOLDER_ID="1aCOTvfa4SHYBk9WreIKo6fubToRlFBqo"; // "OneNote"-mappen (en nivå ovanför Minnesbank) - används för "Alla filer"-listan
+var OBSIDIAN_ONENOTE_FOLDER_ID="1aCOTvfa4SHYBk9WreIKo6fubToRlFBqo"; // "OneNote"-mappen (en nivå ovanför Minnesbank) - just nu oanvänd, Obsibok skannar bara Minnesbank
 var obsidianFilesViewActive=false;
 var OBSIDIAN_UNCATEGORIZED_FOLDER_NAME="Övrigt";
 var obsidianTypeRootFolderIds={};
@@ -722,10 +722,8 @@ function obsidianFilenameFor(entry,type){
 function obsidianMarkdownFor(entry,type){
   var lines=["---"];
   lines.push("id: "+entry.id);
-  lines.push("timestamp: "+entry.timestamp);
   lines.push("type: "+type);
   if(entry.category)lines.push("category: \""+entry.category+"\"");
-  if(entry.rubrik)lines.push("rubrik: \""+entry.rubrik+"\"");
   if(entry.subcategories&&entry.subcategories.length){
     var tags=entry.subcategories.map(function(s){return "\""+s.replace(/\s+/g,"-")+"\"";});
     lines.push("tags: ["+tags.join(", ")+"]");
@@ -1237,6 +1235,9 @@ function renderFunderingHome(){
 // kategori/subkategori/sök-navigering som Notisbok. Här räknas den FÖRSTA mappnivån under
 // OneNote (t.ex. "Minnesbank", "Volvo") som kategori, och alla mappnivåer DÄREFTER (t.ex.
 // "Anteckning"/"Arbete") som subkategorier - filtrerbara precis som i Notisbok.
+// ---- "Obsibok": lista Fundering/Anteckning-anteckningarna som redan skapats i Obsidian-
+// valvet (Minnesbank), med samma sök/mapp-navigering som Notisbok. Bara mappar och filnamn
+// visas/filtreras - ingen filläsning behövs, klick öppnar posten direkt i Obsidian.
 async function renderObsidianFilesPage(){
   var c=document.getElementById("fundering-content");
   if(!c)return;
@@ -1244,11 +1245,10 @@ async function renderObsidianFilesPage(){
     +"<div class='lbl'>Obsibok</div>"
     +"<div id='obsidianfiles-loading' style='font-size:13px;color:#5c5c5c;text-align:center;margin-top:14px'>Laddar...</div>"
     +"<div id='obsidianfiles-ui' style='display:none'>"
-    +"<input class='inp w100' id='obsidianfiles-search' placeholder='Sök i filnamn, kategori eller mapp...' style='margin-bottom:10px'/>"
+    +"<input class='inp w100' id='obsidianfiles-search' placeholder='Sök i titel eller mapp...' style='margin-bottom:10px'/>"
     +"<div style='display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px'>"
-    +"<select id='obsidianfiles-cat-select' style='flex:1 1 90px;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:12px;padding:9px 6px;cursor:pointer;font-family:inherit'></select>"
-    +"<select id='obsidianfiles-sub-select' style='flex:1 1 90px;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:12px;padding:9px 6px;cursor:pointer;font-family:inherit'></select>"
-    +"<select id='obsidianfiles-exclude-select' style='flex:1 1 90px;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:12px;padding:9px 6px;cursor:pointer;font-family:inherit'></select>"
+    +"<select id='obsidianfiles-sub-select' style='flex:1;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:12px;padding:9px 6px;cursor:pointer;font-family:inherit'></select>"
+    +"<select id='obsidianfiles-exclude-select' style='flex:1;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:12px;padding:9px 6px;cursor:pointer;font-family:inherit'></select>"
     +"</div>"
     +"<div id='obsidianfiles-results'></div>"
     +"</div>";
@@ -1262,7 +1262,10 @@ async function renderObsidianFilesPage(){
 
   var allFiles;
   try{
-    var rawFiles=await listAllMarkdownFilesRecursive(OBSIDIAN_ONENOTE_FOLDER_ID,"");
+    // Bara Minnesbank-mappen (dit era egna Fundering/Anteckning-filer skrivs) - inte hela
+    // OneNote-mappen, som även innehåller stora, orelaterade mappträd (Volvo, Surfplatta
+    // m.fl.) och gjorde skanningen onödigt tung.
+    var rawFiles=await listAllMarkdownFilesRecursive(OBSIDIAN_VAULT_FOLDER_ID,"");
     allFiles=rawFiles.map(function(f){
       var segments=f.path.split("/");
       return {
@@ -1270,8 +1273,7 @@ async function renderObsidianFilesPage(){
         name:f.name,
         path:f.path,
         modifiedTime:f.modifiedTime,
-        category:segments[0]||"",
-        subcategories:segments.slice(1,-1)
+        subcategories:segments.slice(0,-1)
       };
     });
   }catch(e){
@@ -1288,12 +1290,11 @@ async function renderObsidianFilesPage(){
   uiEl.style.display="";
 
   if(!allFiles.length){
-    uiEl.innerHTML="<div style='font-size:13px;color:#5c5c5c;text-align:center;margin-top:10px'>Inga markdown-filer hittades.</div>";
+    uiEl.innerHTML="<div style='font-size:13px;color:#5c5c5c;text-align:center;margin-top:10px'>Inga markdown-filer hittades än - tryck på \"Skapa Obsidian-filer\" i ⚙️-panelen först.</div>";
     return;
   }
 
-  var state={category:"",subcategory:"",exclude:"",search:""};
-  var catSelect=uiEl.querySelector("#obsidianfiles-cat-select");
+  var state={subcategory:"",exclude:"",search:""};
   var subSelect=uiEl.querySelector("#obsidianfiles-sub-select");
   var excludeSelect=uiEl.querySelector("#obsidianfiles-exclude-select");
   var searchInp=uiEl.querySelector("#obsidianfiles-search");
@@ -1307,14 +1308,8 @@ async function renderObsidianFilesPage(){
     return out;
   }
 
-  function renderCatOptions(){
-    var cats=uniqueSorted(allFiles.map(function(f){return f.category;}));
-    catSelect.innerHTML="<option value=''>Alla kategorier</option>"
-      +cats.map(function(cn){return "<option value='"+esc(cn)+"'"+(cn===state.category?" selected":"")+">"+esc(cn)+"</option>";}).join("");
-  }
   function renderSubOptions(){
-    var scoped=state.category?allFiles.filter(function(f){return f.category===state.category;}):allFiles;
-    var subs=uniqueSorted(scoped.reduce(function(acc,f){return acc.concat(f.subcategories);},[]));
+    var subs=uniqueSorted(allFiles.reduce(function(acc,f){return acc.concat(f.subcategories);},[]));
     subSelect.innerHTML="<option value=''>Alla mappar</option>"
       +subs.map(function(s){return "<option value='"+esc(s)+"'"+(s===state.subcategory?" selected":"")+">"+esc(s)+"</option>";}).join("");
     excludeSelect.innerHTML="<option value=''>Ingen exkludering</option>"
@@ -1323,11 +1318,10 @@ async function renderObsidianFilesPage(){
   function renderResults(){
     var q=state.search.trim().toLowerCase();
     var filtered=allFiles.filter(function(f){
-      if(state.category&&f.category!==state.category)return false;
       if(state.subcategory&&f.subcategories.indexOf(state.subcategory)<0)return false;
       if(state.exclude&&f.subcategories.indexOf(state.exclude)>=0)return false;
       if(q){
-        var hay=(f.name+" "+f.category+" "+f.subcategories.join(" ")).toLowerCase();
+        var hay=(f.name+" "+f.subcategories.join(" ")).toLowerCase();
         if(hay.indexOf(q)<0)return false;
       }
       return true;
@@ -1338,10 +1332,9 @@ async function renderObsidianFilesPage(){
       return;
     }
     resultsEl.innerHTML=filtered.map(function(f){
-      var folderPath=f.path.slice(0,f.path.length-f.name.length-1);
       return "<div class='entry' data-obsidianfileopen='"+esc(f.id)+"' style='cursor:pointer'>"
         +"<div style='flex:1'>"
-        +(folderPath?"<div style='font-size:11px;color:#5c5c5c;margin-bottom:2px'>"+esc(folderPath)+"</div>":"")
+        +"<div style='font-size:11px;color:#5c5c5c;margin-bottom:2px'>"+esc(f.subcategories.join(" \u00b7 "))+"</div>"
         +"<div style='font-size:13px;color:#cfcfcf'>"+esc(f.name.replace(/\.md$/i,""))+"</div>"
         +"</div>"
         +"<span style='color:#5c5c5c;font-size:14px'>🔗</span>"
@@ -1355,11 +1348,9 @@ async function renderObsidianFilesPage(){
     });
   }
 
-  renderCatOptions();
   renderSubOptions();
   renderResults();
 
-  catSelect.onchange=function(){state.category=catSelect.value;state.subcategory="";state.exclude="";renderSubOptions();renderResults();};
   subSelect.onchange=function(){state.subcategory=subSelect.value;renderResults();};
   excludeSelect.onchange=function(){state.exclude=excludeSelect.value;renderResults();};
   searchInp.oninput=function(){state.search=searchInp.value;renderResults();};
