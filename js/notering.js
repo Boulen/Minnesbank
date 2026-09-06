@@ -796,8 +796,11 @@ function anteckningEditRow(f,prefix){
 
 function renderLogFunderingar(){
   var c=document.getElementById("body");
-  ensureNoteringSettingsLoaded();
-  ensureNoteringDataLoaded();
+  // Körs i tur och ordning (inte parallellt) - båda måste hitta/skapa samma "Notering"-mapp i
+  // Drive, och två samtidiga mapp-uppslag riskerar att skapa mappen dubbelt (se felrapport om
+  // "settings.json" + "settings (1).json"). Grundfixen ligger i core.js, detta minskar risken
+  // från Noterings sida i väntan på den.
+  ensureNoteringSettingsLoaded().then(function(){return ensureNoteringDataLoaded();});
   var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:6px'>"
     +"<div style='flex:1;display:grid;grid-template-columns:1fr 1fr;gap:6px'>"
     +"<button class='mode-btn"+(funderingarSubview==="anteckning"?" on":"")+"' data-fundsub='anteckning' style='font-size:12px'>Anteckning</button>"

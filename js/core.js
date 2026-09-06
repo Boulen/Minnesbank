@@ -612,19 +612,37 @@ async function driveResolveFolderPath(folderNames,rootId){
 
 // Hittar (eller skapar, om skapaOmSaknas=true) en fil med angivet namn i mappen.
 // Returnerar filens Drive-ID, eller null om den saknas och inte skulls skapas.
+// In-flight-skydd (samma mönster som driveMkdir): två samtidiga anrop efter SAMMA fil
+// delar samma pågående förfrågan istället för att båda tro att filen saknas och skapa
+// varsin - annars uppstår dubbletter (bekräftad bugg, rapporterad av Notering-chatten).
+var driveFileCreatePromise={};
 async function driveGetOrCreateFileId(folderNames,fileName,skapaOmSaknas,rootId){
   var parentId=await driveResolveFolderPath(folderNames,rootId);
-  var q="name='"+fileName+"' and '"+parentId+"' in parents and trashed=false";
-  var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id,name,createdTime)&orderBy=createdTime",{headers:{Authorization:"Bearer "+accessToken}});
-  var d=await r.json();
-  if(d.files&&d.files.length)return d.files[0].id;
-  if(!skapaOmSaknas)return null;
-  var form=new FormData();
-  form.append("metadata",new Blob([JSON.stringify({name:fileName,parents:[parentId],mimeType:"application/json"})],{type:"application/json"}));
-  form.append("file",new Blob(["{}"],{type:"application/json"}));
-  var r2=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
-  var d2=await r2.json();
-  return d2.id;
+  var fkey=parentId+"/"+fileName;
+  if(driveFileCreatePromise[fkey]){
+    var existingId=await driveFileCreatePromise[fkey];
+    // Om ett pågående (icke-skapande) anrop inte hittade filen, men DETTA anrop får
+    // skapa den om den saknas - försök på nytt istället för att lita blint på null.
+    if(existingId||!skapaOmSaknas)return existingId;
+  }
+  driveFileCreatePromise[fkey]=(async function(){
+    try{
+      var q="name='"+fileName+"' and '"+parentId+"' in parents and trashed=false";
+      var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id,name,createdTime)&orderBy=createdTime",{headers:{Authorization:"Bearer "+accessToken}});
+      var d=await r.json();
+      if(d.files&&d.files.length)return d.files[0].id;
+      if(!skapaOmSaknas)return null;
+      var form=new FormData();
+      form.append("metadata",new Blob([JSON.stringify({name:fileName,parents:[parentId],mimeType:"application/json"})],{type:"application/json"}));
+      form.append("file",new Blob(["{}"],{type:"application/json"}));
+      var r2=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
+      var d2=await r2.json();
+      return d2.id;
+    }finally{
+      delete driveFileCreatePromise[fkey];
+    }
+  })();
+  return driveFileCreatePromise[fkey];
 }
 
 // Läser valfri JSON-fil på valfri mappstig. Returnerar det parsade objektet,
