@@ -1179,30 +1179,36 @@ function renderLogFunderingar(){
   // från Noterings sida i väntan på den.
   ensureNoteringSettingsLoaded().then(function(){return ensureNoteringDataLoaded();}).then(function(){
     if(!accessToken)return;
+    // Alla flaggor sätts DIREKT (synkront, innan väntan) - inte efter att jobbet är klart.
+    // Annars kan ett återinträde (renderLogFunderingar anropas på nytt inifrån denna kedja,
+    // t.ex. via ensureNoteringDataLoaded/checkObsidianDeletions som redan rerendrar vid
+    // klart) starta HELA den här dyra kedjan en gång till parallellt, medan den första
+    // körningen fortfarande pågår - vilket kan dränka ut andra Drive-anrop (t.ex. själva
+    // settings.json-läsningen) i en störtflod av samtidiga förfrågningar.
     var chain=Promise.resolve();
     if(!obsidianFoldersEmojiStripped){
+      obsidianFoldersEmojiStripped=true;
       chain=chain.then(function(){return stripEmojiFromAllObsidianFolders();}).then(function(){
-        obsidianFoldersEmojiStripped=true;
         return saveNoteringSettings();
       });
     }
     if(!anteckningObsidianMigrated){
+      anteckningObsidianMigrated=true;
       chain=chain.then(function(){return backfillEntriesToObsidian(anteckningHist,"anteckning",saveNoteringAnteckning);}).then(function(){
-        anteckningObsidianMigrated=true;
         return saveNoteringAnteckning();
       });
     }
     if(!fundObsidianMigrated){
+      fundObsidianMigrated=true;
       chain=chain.then(function(){return backfillEntriesToObsidian(fundHist,"fundering",saveNoteringFundering);}).then(function(){
-        fundObsidianMigrated=true;
         return saveNoteringFundering();
       });
     }
     if(!obsidianFilenameBackfillDone){
+      obsidianFilenameBackfillDone=true;
       chain=chain.then(function(){return backfillObsidianFilenames(anteckningHist,saveNoteringAnteckning);})
         .then(function(){return backfillObsidianFilenames(fundHist,saveNoteringFundering);})
         .then(function(){
-          obsidianFilenameBackfillDone=true;
           return saveNoteringSettings();
         });
     }
@@ -1214,7 +1220,7 @@ function renderLogFunderingar(){
       fundObsidianDeleteCheckDone=true;
       chain=chain.then(function(){return checkObsidianDeletions(fundHist,"fundering",saveNoteringFundering);});
     }
-    return chain;
+    return chain.catch(function(e){showNoteringDriveError("Ett Obsidian-bakgrundsjobb misslyckades",e);});
   });
   var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:6px'>"
     +"<div style='flex:1;display:grid;grid-template-columns:1fr 1fr;gap:6px'>"
