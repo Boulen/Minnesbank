@@ -694,6 +694,8 @@ var anteckningObsidianMigrated=false; // sparas i anteckning.json
 var fundObsidianMigrated=false; // sparas i fundering.json
 var anteckningObsidianDeleteCheckDone=false; // en gång per sidladdning/session
 var fundObsidianDeleteCheckDone=false;
+var anteckningObsidianPullDone=false; // en gång per sidladdning/session - läser in nytt/ändrat från Obsidian
+var fundObsidianPullDone=false;
 var obsidianFoldersEmojiStripped=false; // sparas i settings.json - engångskörning
 var obsidianFilenameBackfillDone=false; // sparas i settings.json - engångskörning
 
@@ -832,13 +834,17 @@ async function syncEntryToObsidian(entry,type,saveFn){
     var filename=obsidianFilenameFor(entry,type);
 
     if(entry.obsidianFileId){
-      var pr=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
+      var pr=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media&fields=modifiedTime",{
         method:"PATCH",
         headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
         body:content
       });
       if(pr.ok){
-        if(!entry.obsidianFilename){entry.obsidianFilename=filename;if(saveFn)saveFn();}
+        var prd=await pr.json().catch(function(){return null;});
+        var changed=false;
+        if(!entry.obsidianFilename){entry.obsidianFilename=filename;changed=true;}
+        if(prd&&prd.modifiedTime&&entry.obsidianModifiedTime!==prd.modifiedTime){entry.obsidianModifiedTime=prd.modifiedTime;changed=true;}
+        if(changed&&saveFn)saveFn();
         return;
       }
       // Filen kan ha tagits bort/flyttats manuellt i Obsidian - faller igenom till nedan.
@@ -850,11 +856,13 @@ async function syncEntryToObsidian(entry,type,saveFn){
     if(d.files&&d.files.length){
       entry.obsidianFileId=d.files[0].id;
       entry.obsidianFilename=filename;
-      await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
+      var pr2=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media&fields=modifiedTime",{
         method:"PATCH",
         headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
         body:content
       });
+      var pr2d=await pr2.json().catch(function(){return null;});
+      if(pr2d&&pr2d.modifiedTime)entry.obsidianModifiedTime=pr2d.modifiedTime;
       if(saveFn)saveFn();
       return;
     }
@@ -862,12 +870,13 @@ async function syncEntryToObsidian(entry,type,saveFn){
     var form=new FormData();
     form.append("metadata",new Blob([JSON.stringify({name:filename,parents:[folderId],mimeType:"text/markdown"})],{type:"application/json"}));
     form.append("file",new Blob([content],{type:"text/markdown"}));
-    var cr=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
+    var cr=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id,modifiedTime",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
     if(!cr.ok)throw new Error("HTTP "+cr.status);
     var cd=await cr.json();
     if(cd.id){
       entry.obsidianFileId=cd.id;
       entry.obsidianFilename=filename;
+      if(cd.modifiedTime)entry.obsidianModifiedTime=cd.modifiedTime;
       if(saveFn)saveFn();
     }
   }catch(e){
@@ -967,6 +976,165 @@ async function listAllFilesInObsidianFolder(folderId){
     pageToken=d.nextPageToken||null;
   }while(pageToken);
   return files;
+}
+
+// ---- Tvåvägssynk: läser in nya/ändrade filer FRÅN Obsidian in i appen ----
+// Skapa/redigera/spara i Obsidian -> nästa gång Notering-fliken öppnas läses det in här.
+async function listObsidianCategoryFolders(type){
+  var rootId=await ensureObsidianTypeRootFolder(type);
+  if(!rootId)return [];
+  var url=DRIVE_API+"?q="+encodeURIComponent("'"+rootId+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false")+"&fields=files(id,name)";
+  var r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
+  if(!r.ok)throw new Error("HTTP "+r.status);
+  var d=await r.json();
+  return d.files||[];
+}
+
+async function listObsidianFilesWithMeta(folderId){
+  var files=[];
+  var pageToken=null;
+  do{
+    var url=DRIVE_API+"?q="+encodeURIComponent("'"+folderId+"' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'")+"&fields=nextPageToken,files(id,name,modifiedTime)&pageSize=100"+(pageToken?"&pageToken="+encodeURIComponent(pageToken):"");
+    var r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    var d=await r.json();
+    files=files.concat(d.files||[]);
+    pageToken=d.nextPageToken||null;
+  }while(pageToken);
+  return files;
+}
+
+// Hittar rätt kategori-sträng (MED emoji, som resten av appen använder) utifrån ett
+// emoji-fritt mappnamn, genom att jämföra mot de kända presetsen. Hittas ingen match
+// (t.ex. en helt ny mapp som skapats direkt i Obsidian) används mappnamnet rakt av.
+function categoryFromObsidianFolderName(folderName,type){
+  if(folderName===OBSIDIAN_UNCATEGORIZED_FOLDER_NAME)return "";
+  var presets=type==="fundering"?FUND_CAT_PRESETS:ANTECKNING_CAT_PRESETS;
+  for(var i=0;i<presets.length;i++){
+    if(obsidianFolderNameForCategory(presets[i])===folderName)return presets[i];
+  }
+  return folderName;
+}
+
+// Tolerant tolkning av frontmatter - fungerar även om filen skapats/redigerats för hand i
+// Obsidian utan all metadata. Saknade fält får rimliga standardvärden längre upp i anropskedjan.
+function parseObsidianMarkdown(content){
+  var result={id:null,timestamp:null,rubrik:null,aliases:[],text:content};
+  var m=content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if(!m){result.text=content.trim();return result;}
+  var frontmatter=m[1];
+  var body=m[2];
+  var idMatch=frontmatter.match(/^id:\s*(\d+)\s*$/m);
+  if(idMatch)result.id=Number(idMatch[1]);
+  var tsMatch=frontmatter.match(/^timestamp:\s*(.+?)\s*$/m);
+  if(tsMatch)result.timestamp=tsMatch[1].replace(/^"|"$/g,"");
+  var rubrikMatch=frontmatter.match(/^rubrik:\s*"?(.*?)"?\s*$/m);
+  if(rubrikMatch&&rubrikMatch[1])result.rubrik=rubrikMatch[1];
+  var aliasesBlockMatch=frontmatter.match(/^aliases:\s*\n((?:\s*-\s*.+\n?)+)/m);
+  if(aliasesBlockMatch){
+    result.aliases=aliasesBlockMatch[1].split("\n").map(function(line){
+      var lm=line.match(/-\s*"?(.*?)"?\s*$/);
+      return lm&&lm[1]?lm[1]:null;
+    }).filter(Boolean);
+  }
+  body=body.replace(/^\s*\n/,"");
+  if(result.rubrik){
+    var escapedRubrik=result.rubrik.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+    var headingRe=new RegExp("^#\\s+"+escapedRubrik+"\\s*\\n+");
+    body=body.replace(headingRe,"");
+  }
+  result.text=body.trim();
+  return result;
+}
+
+// Går igenom alla kategori-mappar för en typ, hämtar allt som är nytt eller ändrat sen
+// senaste kända tillstånd (obsidianModifiedTime) och skriver in det i entries (muteras på
+// plats). Matchar i första hand på obsidianFileId, därefter på frontmatterns id (skydd om
+// obsidianFileId av någon anledning tappats bort) - annars skapas en helt ny post.
+async function pullObsidianChangesForType(entries,type,saveFn){
+  if(!accessToken)return false;
+  var changed=false;
+  var newCount=0;
+  try{
+    var folders=await listObsidianCategoryFolders(type);
+    for(var fi=0;fi<folders.length;fi++){
+      var folder=folders[fi];
+      var category=categoryFromObsidianFolderName(folder.name,type);
+      var files;
+      try{
+        files=await listObsidianFilesWithMeta(folder.id);
+      }catch(e){
+        showNoteringDriveError("Kunde inte lista filer i Obsidian-mappen \""+folder.name+"\" - hoppar över",e);
+        continue;
+      }
+      for(var i=0;i<files.length;i++){
+        var file=files[i];
+        if(!/\.md$/i.test(file.name))continue;
+        var existing=entries.find(function(e){return e.obsidianFileId===file.id;});
+        if(existing&&existing.obsidianModifiedTime===file.modifiedTime)continue; // oförändrad sen sist
+
+        var content;
+        try{
+          var cr=await fetch(DRIVE_API+"/"+file.id+"?alt=media",{headers:{Authorization:"Bearer "+accessToken}});
+          if(!cr.ok)throw new Error("HTTP "+cr.status);
+          content=await cr.text();
+        }catch(e){
+          showNoteringDriveError("Kunde inte läsa \""+file.name+"\" från Obsidian",e);
+          continue;
+        }
+        var parsed=parseObsidianMarkdown(content);
+
+        if(existing){
+          existing.text=parsed.text;
+          if(parsed.rubrik)existing.rubrik=parsed.rubrik;else delete existing.rubrik;
+          if(category)existing.category=category;else delete existing.category;
+          if(parsed.aliases.length)existing.subcategories=parsed.aliases;else delete existing.subcategories;
+          existing.obsidianModifiedTime=file.modifiedTime;
+          existing.obsidianFilename=file.name;
+          delete existing.obsidianMissingSince;
+          changed=true;
+          continue;
+        }
+
+        var matchById=parsed.id?entries.find(function(e){return e.id===parsed.id;}):null;
+        if(matchById){
+          matchById.obsidianFileId=file.id;
+          matchById.obsidianFilename=file.name;
+          matchById.obsidianModifiedTime=file.modifiedTime;
+          matchById.text=parsed.text;
+          if(parsed.rubrik)matchById.rubrik=parsed.rubrik;
+          if(category)matchById.category=category;
+          if(parsed.aliases.length)matchById.subcategories=parsed.aliases;
+          delete matchById.obsidianMissingSince;
+          changed=true;
+          continue;
+        }
+
+        var newEntry={
+          id:parsed.id||(Date.now()+Math.floor(Math.random()*1000)),
+          text:parsed.text,
+          timestamp:parsed.timestamp||file.modifiedTime||new Date().toISOString(),
+          obsidianFileId:file.id,
+          obsidianFilename:file.name,
+          obsidianModifiedTime:file.modifiedTime
+        };
+        if(category)newEntry.category=category;
+        if(parsed.rubrik)newEntry.rubrik=parsed.rubrik;
+        if(parsed.aliases.length)newEntry.subcategories=parsed.aliases;
+        entries.push(newEntry);
+        changed=true;
+        newCount++;
+      }
+    }
+  }catch(e){
+    showNoteringDriveError("Kunde inte hämta ändringar från Obsidian ("+obsidianTypeFolderName(type)+")",e);
+  }
+  if(changed){
+    if(saveFn)saveFn();
+    if(newCount>0)showNoteringToastLong("📥 "+newCount+(newCount===1?" ny post":" nya poster")+" inlästa från Obsidian ("+obsidianTypeFolderName(type)+")");
+    if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
+  }
+  return changed;
 }
 
 // entries muteras på plats (length=0 + push) så att den fungerar oavsett om den anropas med
@@ -1211,6 +1379,14 @@ function renderLogFunderingar(){
         .then(function(){
           return saveNoteringSettings();
         });
+    }
+    if(!anteckningObsidianPullDone){
+      anteckningObsidianPullDone=true;
+      chain=chain.then(function(){return pullObsidianChangesForType(anteckningHist,"anteckning",saveNoteringAnteckning);});
+    }
+    if(!fundObsidianPullDone){
+      fundObsidianPullDone=true;
+      chain=chain.then(function(){return pullObsidianChangesForType(fundHist,"fundering",saveNoteringFundering);});
     }
     if(!anteckningObsidianDeleteCheckDone){
       anteckningObsidianDeleteCheckDone=true; // sätts direkt (inte i .then) så den aldrig kan hinna köras dubbelt
