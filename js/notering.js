@@ -761,28 +761,39 @@ function obsidianUriForOneNotePath(relativePath){
 // Går igenom "OneNote"-mappen rekursivt och samlar in ALLA .md-filer, oavsett hur djupt
 // nedgrävda eller vilken undermapp de ligger i (inte bara Minnesbank/Anteckning|Fundering -
 // även andra mappar som redan låg i valvet sen tidigare, t.ex. från en OneNote-migrering).
-async function listAllMarkdownFilesRecursive(folderId,pathPrefix){
+async function listMarkdownFolderChildren(folderId,pathPrefix){
   var children=[];
   var pageToken=null;
   // Filtrerar bort allt utom mappar och .md-filer redan i själva Drive-frågan - annars
   // hämtas även alla bilder (många per anteckning från OneNote-migreringen), vilket gjorde
   // att stora mappar (100+ objekt) tog för lång tid eller aldrig blev klara.
   var q="'"+folderId+"' in parents and trashed=false and (mimeType='application/vnd.google-apps.folder' or mimeType='text/markdown')";
-  try{
-    do{
-      var url=DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100"+(pageToken?"&pageToken="+encodeURIComponent(pageToken):"");
-      var r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
-      if(!r.ok)throw new Error("HTTP "+r.status+" vid listning av \""+pathPrefix+"\"");
-      var d=await r.json();
-      children=children.concat(d.files||[]);
-      pageToken=d.nextPageToken||null;
-    }while(pageToken);
-  }catch(e){
-    // En enskild mapp som inte går att lista ska inte döda HELA skanningen - hoppa bara
-    // över just den grenen. (Tidigare bugg: Promise.all nedan gjorde att EN misslyckad
-    // mapp någonstans i hela OneNote-trädet kastade bort ALLA redan hittade filer.)
-    console.error("Kunde inte lista mappen",pathPrefix,e);
-    return [];
+  do{
+    var url=DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100"+(pageToken?"&pageToken="+encodeURIComponent(pageToken):"");
+    var r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)throw new Error("HTTP "+r.status+" vid listning av \""+pathPrefix+"\"");
+    var d=await r.json();
+    children=children.concat(d.files||[]);
+    pageToken=d.nextPageToken||null;
+  }while(pageToken);
+  return children;
+}
+
+// isRoot=true (bara den allra första, yttersta anropet) LÅTER fel bubbla upp - roten MÅSTE
+// lyckas, annars vore ett systemfel (t.ex. utgången inloggning) osynligt tystat till "inga
+// filer hittades" istället för ett riktigt felmeddelande. Alla INRE (rekursiva) anrop
+// hoppar däremot bara över en enskild mapp som strular, utan att döda hela skanningen.
+async function listAllMarkdownFilesRecursive(folderId,pathPrefix,isRoot){
+  var children;
+  if(isRoot){
+    children=await listMarkdownFolderChildren(folderId,pathPrefix);
+  }else{
+    try{
+      children=await listMarkdownFolderChildren(folderId,pathPrefix);
+    }catch(e){
+      console.error("Kunde inte lista mappen",pathPrefix,e);
+      return [];
+    }
   }
 
   var folders=children.filter(function(f){return f.mimeType==="application/vnd.google-apps.folder";});
@@ -794,7 +805,7 @@ async function listAllMarkdownFilesRecursive(folderId,pathPrefix){
   // allSettled istället för all - en gren som misslyckas ska inte ta bort resultaten från
   // alla andra grenar.
   var subResultsSettled=await Promise.allSettled(folders.map(function(f){
-    return listAllMarkdownFilesRecursive(f.id,pathPrefix+f.name+"/");
+    return listAllMarkdownFilesRecursive(f.id,pathPrefix+f.name+"/",false);
   }));
   subResultsSettled.forEach(function(res){
     if(res.status==="fulfilled")results=results.concat(res.value);
@@ -1274,7 +1285,7 @@ async function renderObsidianFilesPage(){
   try{
     // Hela OneNote-mappen (inte bara Minnesbank) - så alla dina markdown-filer, oavsett
     // vilken mapp de ligger i, går att hitta och öppna härifrån.
-    var rawFiles=await listAllMarkdownFilesRecursive(OBSIDIAN_ONENOTE_FOLDER_ID,"");
+    var rawFiles=await listAllMarkdownFilesRecursive(OBSIDIAN_ONENOTE_FOLDER_ID,"",true);
     allFiles=rawFiles.map(function(f){
       var segments=f.path.split("/");
       return {
