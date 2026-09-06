@@ -821,29 +821,38 @@ async function syncEntryToObsidian(entry,type,saveFn){
     var filename=obsidianFilenameFor(entry,type);
 
     if(entry.obsidianFileId){
-      var pr=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
-        method:"PATCH",
-        headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
-        body:content
-      });
-      if(pr.ok){
-        if(!entry.obsidianFilename){entry.obsidianFilename=filename;if(saveFn)saveFn();}
-        return;
+      try{
+        var pr=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
+          method:"PATCH",
+          headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
+          body:content
+        });
+        if(pr.ok){
+          if(!entry.obsidianFilename){entry.obsidianFilename=filename;if(saveFn)saveFn();}
+          return;
+        }
+      }catch(patchErr){
+        // Nätverksfel vid uppdatering av befintlig fil - faller igenom till sök-eller-skapa
+        // nedan istället för att avbryta hela synken (tidigare bugg: detta kraschade tyst
+        // om obsidianFileId var ogiltigt/borttaget sen tidigare felsökning).
       }
-      // Filen kan ha tagits bort/flyttats manuellt i Obsidian - faller igenom till nedan.
+      // Filen kan ha tagits bort/flyttats manuellt i Obsidian, eller obsidianFileId är
+      // ogiltigt sen tidigare - faller igenom till sök-eller-skapa nedan.
     }
 
     var q="name='"+filename.replace(/'/g,"\\'")+"' and '"+folderId+"' in parents and trashed=false";
     var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)throw new Error("HTTP "+r.status+" vid sökning efter befintlig fil");
     var d=await r.json();
     if(d.files&&d.files.length){
       entry.obsidianFileId=d.files[0].id;
       entry.obsidianFilename=filename;
-      await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
+      var pr2=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
         method:"PATCH",
         headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},
         body:content
       });
+      if(!pr2.ok)throw new Error("HTTP "+pr2.status+" vid uppdatering av hittad fil");
       if(saveFn)saveFn();
       return;
     }
@@ -852,15 +861,14 @@ async function syncEntryToObsidian(entry,type,saveFn){
     form.append("metadata",new Blob([JSON.stringify({name:filename,parents:[folderId],mimeType:"text/markdown"})],{type:"application/json"}));
     form.append("file",new Blob([content],{type:"text/markdown"}));
     var cr=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
-    if(!cr.ok)throw new Error("HTTP "+cr.status);
+    if(!cr.ok)throw new Error("HTTP "+cr.status+" vid skapande av ny fil");
     var cd=await cr.json();
-    if(cd.id){
-      entry.obsidianFileId=cd.id;
-      entry.obsidianFilename=filename;
-      if(saveFn)saveFn();
-    }
+    if(!cd.id)throw new Error("Drive returnerade inget fil-id vid skapande");
+    entry.obsidianFileId=cd.id;
+    entry.obsidianFilename=filename;
+    if(saveFn)saveFn();
   }catch(e){
-    showNoteringDriveError("Kunde inte synka till Obsidian",e);
+    showNoteringDriveError("Kunde inte synka \""+(entry.rubrik||(entry.text||"").slice(0,20))+"\" till Obsidian",e);
   }
 }
 
