@@ -764,10 +764,13 @@ function obsidianUriForOneNotePath(relativePath){
 async function listMarkdownFolderChildren(folderId,pathPrefix){
   var children=[];
   var pageToken=null;
-  // Filtrerar bort allt utom mappar och .md-filer redan i själva Drive-frågan - annars
-  // hämtas även alla bilder (många per anteckning från OneNote-migreringen), vilket gjorde
-  // att stora mappar (100+ objekt) tog för lång tid eller aldrig blev klara.
-  var q="'"+folderId+"' in parents and trashed=false and (mimeType='application/vnd.google-apps.folder' or mimeType='text/markdown')";
+  // OBS: filtrerar INTE längre på mimeType='text/markdown' i själva Drive-frågan - det
+  // visade sig utesluta riktiga .md-filer (särskilt äldre, OneNote-migrerade sådana som
+  // inte alltid fått exakt den mimetypen satt av Drive). Avgör nu istället ENDAST på
+  // filnamnets ändelse (.md) längre ner, klient-sidan - garanterat korrekt oavsett vad
+  // Drive råkar ha satt som mimeType. Det kostar lite extra data (bilder hämtas också),
+  // men är den enda tillförlitliga metoden.
+  var q="'"+folderId+"' in parents and trashed=false";
   do{
     var url=DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100"+(pageToken?"&pageToken="+encodeURIComponent(pageToken):"");
     var r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
