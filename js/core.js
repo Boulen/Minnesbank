@@ -3,7 +3,13 @@
 var PROXY = "https://ai-proxy.jenseskilsson95.workers.dev/";
 
 var CLIENT_ID="167841441516-moo7oedk74f6oj3f79jdqhca3a12dgi5.apps.googleusercontent.com";
-var SCOPE="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile";
+// drive.readonly tillagd 2026-09 (på begäran av Notering-chatten): drive.file ger bara
+// åtkomst till mappar/filer appen själv skapat - tysta tomma sökresultat (200 OK, {"files":[]})
+// för mappar som redan fanns i användarens Drive sedan innan (t.ex. Obsibok-funktionens
+// OneNote-mapp). drive.readonly ger läsåtkomst till HELA användarens Drive utan att ge
+// skrivåtkomst utanför det appen redan äger via drive.file - alla skrivningar (aktivitet.json,
+// settings.json, m.fl.) fungerar precis som innan, oförändrat.
+var SCOPE="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.profile";
 var FOLDER_ID="18DqgJT6lPDc8Sj7Nb5YLmcz8km_9zGZP";
 // All bildhantering (uppladdning/hämtning) ska ske under en "Bilder"-undermapp i DENNA
 // mapp - manuellt angiven av Blå, inte app-skapad. Se varning i core.js där den används.
