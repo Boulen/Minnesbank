@@ -796,16 +796,25 @@ function obsidianMarkdownFor(entry,type){
 
 // Bygger en obsidian://-länk till en post. Kräver att posten redan synkats och har sitt
 // riktiga filnamn sparat (entry.obsidianFilename) - annars finns ingen fil att länka till.
+var ANDROID_LOCAL_VAULT_PATH="/storage/emulated/0/DriveSyncFiles"; // lokal Drive-synk-mapp på Android, speglar Minnesbank-valvets rot rakt av
+
 function obsidianUriFor(entry,type){
   if(!entry.obsidianFileId||!entry.obsidianFilename)return null;
   var filenameNoExt=entry.obsidianFilename.replace(/\.md$/i,"");
   if(isAndroidDevice()){
-    // Android: skicka BARA filnamnet, ingen mappsökväg. Obsidians Android-app verkar ha
-    // svårare att hitta rätt fil när sökvägen har flera mappnivåer (öppnade tidigare bara
-    // valvet, aldrig rätt fil, oavsett kodning/omslag vi testade). Obsidian kan enligt sin
-    // egen dokumentation slå upp en fil på namn ensamt i hela valvet om ingen sökväg ges -
-    // kringgår sannolikt buggen helt. Dator fortsätter använda hela sökvägen nedan.
-    return "obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"&file="+encodeURIComponent(filenameNoExt);
+    // Android: pekar direkt på den lokalt synkade filen via "path" (absolut filsystemssökväg)
+    // istället för "vault"+"file" (som Obsidians Android-app inte hittade rätt fil med, se
+    // tidigare kommentarer) - kringgår även bild-problemet eftersom Obsidian då läser filen
+    // (och dess ev. bilder) direkt från lokal disk istället för att gå via Drive.
+    var androidSegments;
+    if(type==="fundering"){
+      androidSegments=[ANDROID_LOCAL_VAULT_PATH].concat(OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/")).concat(["Anteckning",filenameNoExt+".md"]);
+    }else{
+      var androidTypeName=obsidianTypeFolderName(type);
+      var androidCatName=obsidianFolderNameForCategory(entry.category);
+      androidSegments=[ANDROID_LOCAL_VAULT_PATH].concat(OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/")).concat([androidTypeName,androidCatName,filenameNoExt+".md"]);
+    }
+    return "obsidian://open?path="+encodeURIComponent(androidSegments.join("/"));
   }
   var segments;
   if(type==="fundering"){
@@ -828,8 +837,9 @@ function obsidianUriForOneNotePath(relativePath){
   var relSegments=relativePath.split("/");
   var filenameNoExt=relSegments[relSegments.length-1].replace(/\.md$/i,"");
   if(isAndroidDevice()){
-    // Android: bara filnamnet - se förklaring i obsidianUriFor ovan.
-    return "obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"&file="+encodeURIComponent(filenameNoExt);
+    // Android: absolut sökväg till den lokalt synkade filen, se förklaring i obsidianUriFor.
+    var androidSegments=[ANDROID_LOCAL_VAULT_PATH,"OneNote"].concat(relSegments.slice(0,-1)).concat([filenameNoExt+".md"]);
+    return "obsidian://open?path="+encodeURIComponent(androidSegments.join("/"));
   }
   var segments=["OneNote"].concat(relSegments);
   segments[segments.length-1]=filenameNoExt;
