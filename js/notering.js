@@ -681,6 +681,22 @@ async function saveNoteringAnteckning(){
 var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank" (under OneNote)
 var FUNDERING_OBSIDIAN_FOLDER_ID="16-rgEsM7XgxcVEB88Jt5ffDSCj8fqWes"; // Fundering skrivs numera direkt hit (samma mapp som "Anteckning" redan använder) - ingen egen mapp-struktur eller markdown-formatering längre för Fundering
 var OBSIDIAN_VAULT_NAME="Minnesbank"; // Obsidian-valvets namn
+
+// Öppnar en obsidian://-länk. window.open() till anpassade URI-scheman blockeras/ignoreras
+// ofta av Android-webbläsare (behandlas som en popup till en okänd sida) - location.href
+// fungerar tillförlitligt på både dator och Android. På Android används dessutom ett
+// intent://-omslag, vilket är Androids eget, mer tillförlitliga sätt att slussa vidare till
+// en specifik app (Obsidians Android-paketnamn är "md.obsidian", stabilt och känt).
+function openObsidianUri(uri){
+  var isAndroid=/Android/i.test(navigator.userAgent);
+  if(isAndroid){
+    var intentUri=uri.replace(/^obsidian:\/\//,"intent://")+"#Intent;scheme=obsidian;package=md.obsidian;end";
+    window.location.href=intentUri;
+  }else{
+    window.location.href=uri;
+  }
+}
+
 var OBSIDIAN_ICON_DATA_URI="data:image/png;base64,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"; // Obsidian-app-ikonen, inbäddad (96x96, komprimerad)
 var OBSIDIAN_VAULT_RELATIVE_PREFIX="OneNote/Minnesbank"; // sökväg till skriv-mappen, relativt valv-roten
 var OBSIDIAN_ONENOTE_FOLDER_ID="1aCOTvfa4SHYBk9WreIKo6fubToRlFBqo"; // "OneNote"-mappen (en nivå ovanför Minnesbank) - just nu oanvänd, Obsibok skannar bara Minnesbank
@@ -1179,7 +1195,7 @@ function renderLogFunderingar(){
   };
   var openObsidianBtn=c.querySelector("#notering-open-obsidian-btn");
   if(openObsidianBtn)openObsidianBtn.onclick=function(){
-    window.open("obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME));
+    openObsidianUri("obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME));
   };
   if(obsidianFilesViewActive){
     renderObsidianFilesPage();
@@ -1232,7 +1248,7 @@ function renderFunderingHome(){
       btn.onclick=function(){
         var f=fundHist.find(function(x){return x.id===Number(btn.dataset.openobsidianfundlog);});
         var uri=f?obsidianUriFor(f,"fundering"):null;
-        if(uri)window.open(uri);
+        if(uri)openObsidianUri(uri);
       };
     });
     c.querySelectorAll("[data-pinfundlog]").forEach(function(btn){
@@ -1409,7 +1425,7 @@ async function renderObsidianFilesPage(){
   }
   function bindOpenFile(el){
     el.onclick=function(){
-      window.open(obsidianUriForOneNotePath(el.dataset.obsidianopenpath));
+      openObsidianUri(obsidianUriForOneNotePath(el.dataset.obsidianopenpath));
     };
   }
   function tagsHtml(tags){
@@ -1568,7 +1584,7 @@ function renderFunderingNotisbok(){
     btn.onclick=function(){
       var f=fundHist.find(function(x){return x.id===Number(btn.dataset.openobsidianfundlog);});
       var uri=f?obsidianUriFor(f,"fundering"):null;
-      if(uri)window.open(uri);
+      if(uri)openObsidianUri(uri);
     };
   });
   c.querySelectorAll("[data-pinfundlog]").forEach(function(btn){
@@ -1690,7 +1706,7 @@ function renderAnteckning(){
       btn.onclick=function(){
         var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.openobsidiananteckninglog);});
         var uri=f?obsidianUriFor(f,"anteckning"):null;
-        if(uri)window.open(uri);
+        if(uri)openObsidianUri(uri);
       };
     });
     c.querySelectorAll("[data-pinanteckninglog]").forEach(function(btn){
@@ -1841,7 +1857,7 @@ function renderAnteckningNotisbok(){
       btn.onclick=function(){
         var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.openobsidiananteckninglog);});
         var uri=f?obsidianUriFor(f,"anteckning"):null;
-        if(uri)window.open(uri);
+        if(uri)openObsidianUri(uri);
       };
     });
     resultsEl.querySelectorAll("[data-pinanteckninglog]").forEach(function(btn){
