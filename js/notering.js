@@ -802,10 +802,11 @@ function obsidianUriFor(entry,type){
   if(!entry.obsidianFileId||!entry.obsidianFilename)return null;
   var filenameNoExt=entry.obsidianFilename.replace(/\.md$/i,"");
   if(isAndroidDevice()){
-    // Android: pekar direkt på den lokalt synkade filen via "path" (absolut filsystemssökväg)
-    // istället för "vault"+"file" (som Obsidians Android-app inte hittade rätt fil med, se
-    // tidigare kommentarer) - kringgår även bild-problemet eftersom Obsidian då läser filen
-    // (och dess ev. bilder) direkt från lokal disk istället för att gå via Drive.
+    // Android: pekar direkt på den lokalt synkade filen via "path" (absolut filsystemssökväg).
+    // Bekräftat: DriveSyncFiles speglar VALV-ROTEN ("Minnesbank", en nivå OVANFÖR OneNote) -
+    // "OneNote" ska alltså vara med i sökvägen, precis som OBSIDIAN_VAULT_RELATIVE_PREFIX
+    // redan uttrycker ("OneNote/Minnesbank" - den andra, inre "Minnesbank"-mappen där appens
+    // egna filer faktiskt ligger, under OneNote).
     var androidSegments;
     if(type==="fundering"){
       androidSegments=[ANDROID_LOCAL_VAULT_PATH].concat(OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/")).concat(["Anteckning",filenameNoExt+".md"]);
@@ -837,7 +838,9 @@ function obsidianUriForOneNotePath(relativePath){
   var relSegments=relativePath.split("/");
   var filenameNoExt=relSegments[relSegments.length-1].replace(/\.md$/i,"");
   if(isAndroidDevice()){
-    // Android: absolut sökväg till den lokalt synkade filen, se förklaring i obsidianUriFor.
+    // Android: absolut sökväg till den lokalt synkade filen. relativePath är redan relativt
+    // "OneNote"-mappen, och DriveSyncFiles speglar VALV-ROTEN (en nivå OVANFÖR OneNote) -
+    // "OneNote" måste alltså läggas till här (bekräftat av Blå, se kommentar i obsidianUriFor).
     var androidSegments=[ANDROID_LOCAL_VAULT_PATH,"OneNote"].concat(relSegments.slice(0,-1)).concat([filenameNoExt+".md"]);
     return "obsidian://open?path="+encodeURIComponent(androidSegments.join("/"));
   }
