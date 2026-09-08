@@ -682,16 +682,6 @@ var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank
 var FUNDERING_OBSIDIAN_FOLDER_ID="16-rgEsM7XgxcVEB88Jt5ffDSCj8fqWes"; // Fundering skrivs numera direkt hit (samma mapp som "Anteckning" redan använder) - ingen egen mapp-struktur eller markdown-formatering längre för Fundering
 var OBSIDIAN_VAULT_NAME="Minnesbank"; // Obsidian-valvets namn
 
-// Öppnar en obsidian://-länk via location.href (fungerar bättre än window.open() på Android
-// - window.open() till anpassade URI-scheman behandlas ofta som en popup till en okänd
-// sida och ignoreras). OBS: intent://-omslaget som testades här tidigare togs bort igen -
-// det fick Obsidian att öppnas men tappade bort vault/file-delarna på vägen (Chrome bygger
-// om intent://-URI:er internt på ett sätt som inte bevarade query-parametrarna). Vanlig
-// obsidian://-länk med location.href, samma som på dator, verkar fungera bättre.
-function openObsidianUri(uri){
-  window.location.href=uri;
-}
-
 function isAndroidDevice(){
   return /Android/i.test(navigator.userAgent);
 }
@@ -1129,7 +1119,7 @@ function fundRow(f,prefix){
     +"<div style='white-space:pre-wrap;font-weight:400;line-height:1.45;font-size:13px;color:#cfcfcf'>"+esc(f.text)+"</div>"
     +"<div class='etime'>"+fd(f.timestamp)+"</div>"
     +"</div>"
-    +(f.obsidianFileId&&f.obsidianFilename?"<button class='delbtn' data-openobsidianfundlog='"+f.id+"' title='Öppna i Obsidian' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>🔗</button>":"")
+    +(f.obsidianFileId&&f.obsidianFilename?"<a class='delbtn' href='"+esc(obsidianUriFor(f,"fundering")||"#")+"' title='Öppna i Obsidian' style='color:#5c5c5c;font-size:14px;padding:2px 6px;text-decoration:none;display:inline-flex;align-items:center'>🔗</a>":"")
     +"<button class='delbtn' data-pinfundlog='"+f.id+"' title='"+(f.pinned?"Ta bort pin":"Pinna")+"' style='color:"+(f.pinned?"#4fa8ff":"#5c5c5c")+";font-size:14px;padding:2px 6px'>📌</button>"
     +"<button class='delbtn' data-editfundlog='"+prefix+":"+f.id+"' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>✏️</button>"
     +"<button class='delbtn' data-delfundlog='"+f.id+"'>x</button>"
@@ -1159,7 +1149,7 @@ function anteckningRow(f,prefix){
     +"<div style='white-space:pre-wrap;font-weight:400;line-height:1.45;font-size:13px;color:#cfcfcf'>"+esc(f.text)+"</div>"
     +"<div class='etime'>"+fd(f.timestamp)+"</div>"
     +"</div>"
-    +(f.obsidianFileId&&f.obsidianFilename?"<button class='delbtn' data-openobsidiananteckninglog='"+f.id+"' title='Öppna i Obsidian' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>🔗</button>":"")
+    +(f.obsidianFileId&&f.obsidianFilename?"<a class='delbtn' href='"+esc(obsidianUriFor(f,"anteckning")||"#")+"' title='Öppna i Obsidian' style='color:#5c5c5c;font-size:14px;padding:2px 6px;text-decoration:none;display:inline-flex;align-items:center'>🔗</a>":"")
     +"<button class='delbtn' data-pinanteckninglog='"+f.id+"' title='"+(f.pinned?"Ta bort pin":"Pinna")+"' style='color:"+(f.pinned?"#4fa8ff":"#5c5c5c")+";font-size:14px;padding:2px 6px'>📌</button>"
     +"<button class='delbtn' data-editanteckninglog='"+prefix+":"+f.id+"' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>✏️</button>"
     +"<button class='delbtn' data-delanteckninglog='"+f.id+"'>x</button>"
@@ -1194,7 +1184,7 @@ function renderLogFunderingar(){
     +"<button class='mode-btn"+(funderingarSubview==="anteckning"?" on":"")+"' data-fundsub='anteckning' style='font-size:12px'>Anteckning</button>"
     +"<button class='mode-btn"+(funderingarSubview==="fundering"?" on":"")+"' data-fundsub='fundering' style='font-size:12px'>Fundering</button>"
     +"</div>"
-    +"<button id='notering-open-obsidian-btn' type='button' title='Öppna Obsidian' style='background:none;border:none;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0;display:flex;align-items:center'><img src='"+OBSIDIAN_ICON_DATA_URI+"' style='width:20px;height:20px;display:block' alt='Obsidian'/></button>"
+    +"<a id='notering-open-obsidian-btn' href='obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"' title='Öppna Obsidian' style='background:none;border:none;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0;display:flex;align-items:center'><img src='"+OBSIDIAN_ICON_DATA_URI+"' style='width:20px;height:20px;display:block' alt='Obsidian'/></a>"
     +"<button id='notering-settings-btn' type='button' title='Inställningar' style='background:none;border:none;color:#6b6880;font-size:20px;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0'>⚙️</button>"
     +"</div>"
     +(hideTopButtons?"":"<button class='sec ghost' id='notering-notisbok-btn' type='button' style='width:100%;margin-bottom:14px'>📓 Notisbok</button>");
@@ -1213,10 +1203,6 @@ function renderLogFunderingar(){
   if(notisbokBtn)notisbokBtn.onclick=function(){
     notisbokActive=true;
     renderLogFunderingar();
-  };
-  var openObsidianBtn=c.querySelector("#notering-open-obsidian-btn");
-  if(openObsidianBtn)openObsidianBtn.onclick=function(){
-    openObsidianUri("obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME));
   };
   if(obsidianFilesViewActive){
     renderObsidianFilesPage();
@@ -1265,13 +1251,6 @@ function renderFunderingHome(){
   };
 
   function bindFundRowActions(){
-    c.querySelectorAll("[data-openobsidianfundlog]").forEach(function(btn){
-      btn.onclick=function(){
-        var f=fundHist.find(function(x){return x.id===Number(btn.dataset.openobsidianfundlog);});
-        var uri=f?obsidianUriFor(f,"fundering"):null;
-        if(uri)openObsidianUri(uri);
-      };
-    });
     c.querySelectorAll("[data-pinfundlog]").forEach(function(btn){
       btn.onclick=function(){
         var f=fundHist.find(function(x){return x.id===Number(btn.dataset.pinfundlog);});
@@ -1444,11 +1423,6 @@ async function renderObsidianFilesPage(){
       renderObsidianFilesPage();
     };
   }
-  function bindOpenFile(el){
-    el.onclick=function(){
-      openObsidianUri(obsidianUriForOneNotePath(el.dataset.obsidianopenpath));
-    };
-  }
   function tagsHtml(tags){
     if(!tags||!tags.length)return "";
     return "<div style='font-size:11px;color:#4fa8ff;margin-top:2px'>"+tags.map(function(t){return esc("#"+t);}).join(" ")+"</div>";
@@ -1487,7 +1461,7 @@ async function renderObsidianFilesPage(){
     }).join("")
     +allFiles.map(function(f){
       var relPath=obsidianFolderStack.slice(1).map(function(x){return x.name;}).concat([f.name]).join("/");
-      return "<div class='entry' data-obsidianopenfile data-obsidianopenpath='"+esc(relPath)+"' style='cursor:pointer'>"
+      return "<a class='entry' href='"+esc(obsidianUriForOneNotePath(relPath))+"' style='text-decoration:none;color:inherit'>"
         +"<div style='flex:1;display:flex;align-items:center;gap:8px'>"
         +"<span style='font-size:15px'>📝</span>"
         +"<div style='flex:1'>"
@@ -1496,10 +1470,9 @@ async function renderObsidianFilesPage(){
         +"</div>"
         +"</div>"
         +"<span style='color:#5c5c5c;font-size:14px'>🔗</span>"
-        +"</div>";
+        +"</a>";
     }).join("");
     freshListEl.querySelectorAll("[data-obsidianopenfolder]").forEach(bindOpenFolder);
-    freshListEl.querySelectorAll("[data-obsidianopenfile]").forEach(bindOpenFile);
   }
 
   // Söker i HELA OneNote-mappen (alla mappar, inte bara den nuvarande) - visar resultat
@@ -1524,16 +1497,15 @@ async function renderObsidianFilesPage(){
       freshListEl.style.color="";
       freshListEl.innerHTML=results.map(function(f){
         var folderPath=f.path.slice(0,f.path.length-f.name.length-1);
-        return "<div class='entry' data-obsidianopenfile data-obsidianopenpath='"+esc(f.path)+"' style='cursor:pointer'>"
+        return "<a class='entry' href='"+esc(obsidianUriForOneNotePath(f.path))+"' style='text-decoration:none;color:inherit'>"
           +"<div style='flex:1'>"
           +(folderPath?"<div style='font-size:11px;color:#5c5c5c;margin-bottom:2px'>"+esc(folderPath)+"</div>":"")
           +"<div style='font-size:13px;color:#cfcfcf'>"+esc(f.name.replace(/\.md$/i,""))+"</div>"
           +tagsHtml(f.tags)
           +"</div>"
           +"<span style='color:#5c5c5c;font-size:14px'>🔗</span>"
-          +"</div>";
+          +"</a>";
       }).join("");
-      freshListEl.querySelectorAll("[data-obsidianopenfile]").forEach(bindOpenFile);
     }).catch(function(e){
       showNoteringDriveError("Kunde inte söka bland Obsidian-filerna",e);
     });
@@ -1601,13 +1573,6 @@ function renderFunderingNotisbok(){
     fundReadActive=true;renderLogFunderingar();
   };
 
-  c.querySelectorAll("[data-openobsidianfundlog]").forEach(function(btn){
-    btn.onclick=function(){
-      var f=fundHist.find(function(x){return x.id===Number(btn.dataset.openobsidianfundlog);});
-      var uri=f?obsidianUriFor(f,"fundering"):null;
-      if(uri)openObsidianUri(uri);
-    };
-  });
   c.querySelectorAll("[data-pinfundlog]").forEach(function(btn){
     btn.onclick=function(){
       var f=fundHist.find(function(x){return x.id===Number(btn.dataset.pinfundlog);});
@@ -1723,13 +1688,6 @@ function renderAnteckning(){
   }
 
   function bindAnteckningRowActions(){
-    c.querySelectorAll("[data-openobsidiananteckninglog]").forEach(function(btn){
-      btn.onclick=function(){
-        var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.openobsidiananteckninglog);});
-        var uri=f?obsidianUriFor(f,"anteckning"):null;
-        if(uri)openObsidianUri(uri);
-      };
-    });
     c.querySelectorAll("[data-pinanteckninglog]").forEach(function(btn){
       btn.onclick=function(){
         var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.pinanteckninglog);});
@@ -1874,13 +1832,6 @@ function renderAnteckningNotisbok(){
     bindTtReadResultActions(resultsEl,"rubriksearch");
   }
   function bindTtReadResultActions(resultsEl,prefix){
-    resultsEl.querySelectorAll("[data-openobsidiananteckninglog]").forEach(function(btn){
-      btn.onclick=function(){
-        var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.openobsidiananteckninglog);});
-        var uri=f?obsidianUriFor(f,"anteckning"):null;
-        if(uri)openObsidianUri(uri);
-      };
-    });
     resultsEl.querySelectorAll("[data-pinanteckninglog]").forEach(function(btn){
       btn.onclick=function(){
         var f=anteckningHist.find(function(x){return x.id===Number(btn.dataset.pinanteckninglog);});
