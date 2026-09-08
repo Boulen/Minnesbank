@@ -686,6 +686,46 @@ var OBSIDIAN_VAULT_RELATIVE_PREFIX="OneNote/Minnesbank"; // sökväg till skriv-
 var OBSIDIAN_ONENOTE_FOLDER_ID="1aCOTvfa4SHYBk9WreIKo6fubToRlFBqo"; // "OneNote"-mappen (en nivå ovanför Minnesbank) - just nu oanvänd, Obsibok skannar bara Minnesbank
 var obsidianFilesViewActive=false;
 var obsidianFolderStack=null; // {id,name}[] - byggs upp allteftersom man navigerar i Obsibok, nollställs när man lämnar
+var obsidianTagsCache={}; // fileId -> taggar[] - så samma fil inte läses om flera gånger under en session
+
+// Läser filens innehåll (bara en gång per fil, cachas) och plockar ut tags-fältet ur
+// frontmatter. Tål både det format appen själv skriver ("tags: [\"a\", \"b\"]") och ett
+// handskrivet Obsidian-format ("tags:\n  - a\n  - b").
+async function getFileTags(fileId){
+  if(obsidianTagsCache.hasOwnProperty(fileId))return obsidianTagsCache[fileId];
+  try{
+    var r=await fetch(DRIVE_API+"/"+fileId+"?alt=media",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    var content=await r.text();
+    var tags=parseTagsFromContent(content);
+    obsidianTagsCache[fileId]=tags;
+    return tags;
+  }catch(e){
+    obsidianTagsCache[fileId]=[];
+    return [];
+  }
+}
+
+function parseTagsFromContent(content){
+  var m=content.match(/^---\n([\s\S]*?)\n---/);
+  if(!m)return [];
+  var frontmatter=m[1];
+  var inlineMatch=frontmatter.match(/^tags:\s*\[(.*)\]\s*$/m);
+  if(inlineMatch){
+    return inlineMatch[1].split(",").map(function(t){
+      return t.trim().replace(/^["']|["']$/g,"");
+    }).filter(Boolean);
+  }
+  var blockMatch=frontmatter.match(/^tags:\s*\n((?:\s*-\s*.+\n?)+)/m);
+  if(blockMatch){
+    return blockMatch[1].split("\n").map(function(line){
+      var lm=line.match(/-\s*"?(.*?)"?\s*$/);
+      return lm&&lm[1]?lm[1].trim():null;
+    }).filter(Boolean);
+  }
+  return [];
+}
+
 var OBSIDIAN_UNCATEGORIZED_FOLDER_NAME="Övrigt";
 var obsidianTypeRootFolderIds={};
 var obsidianTypeRootFolderPromises={};
@@ -744,27 +784,33 @@ function obsidianMarkdownFor(entry,type){
 function obsidianUriFor(entry,type){
   if(!entry.obsidianFileId||!entry.obsidianFilename)return null;
   var filenameNoExt=entry.obsidianFilename.replace(/\.md$/i,"");
-  var fullPath;
+  var segments;
   if(type==="fundering"){
     // Fundering ligger inte längre i sin egen typ/kategori-mapp - skrivs numera direkt in
     // i samma "Anteckning"-mapp som Anteckning använder (se FUNDERING_OBSIDIAN_FOLDER_ID).
-    fullPath=[OBSIDIAN_VAULT_RELATIVE_PREFIX,"Anteckning",filenameNoExt].join("/");
+    segments=OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/").concat(["Anteckning",filenameNoExt]);
   }else{
     var typeName=obsidianTypeFolderName(type);
     var catName=obsidianFolderNameForCategory(entry.category);
-    fullPath=[OBSIDIAN_VAULT_RELATIVE_PREFIX,typeName,catName,filenameNoExt].join("/");
+    segments=OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/").concat([typeName,catName,filenameNoExt]);
   }
-  // HELA sökvägen (inkl. "/") kodas som EN enhet - annars tolkar Obsidians URI-hanterare
-  // ofta inte "file"-parametern korrekt (öppnar bara valvet, inte den specifika filen).
-  return "obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"&file="+encodeURIComponent(fullPath);
+  // Testversion: kodar varje mappnamn för sig men slår ihop med VANLIGA snedstreck (inte
+  // %2F). Går emot Obsidians egen dokumentation (som säger att / ska kodas som %2F), men
+  // användarrapporter pekar på att djupt nästlade sökvägar ibland hanteras mer tillförlitligt
+  // med vanliga snedstreck i praktiken. Byt tillbaka till encodeURIComponent(fullPath) i ett
+  // steg om detta inte fungerar bättre.
+  var path=segments.map(encodeURIComponent).join("/");
+  return "obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"&file="+path;
 }
 
 // Bygger en obsidian://-länk utifrån en sökväg RELATIV TILL "OneNote"-mappen - t.ex.
 // "Volvo/Volvo/Motor.md" eller "Minnesbank/Anteckning/Arbete/Pall storlek.md".
 function obsidianUriForOneNotePath(relativePath){
-  var fullPath="OneNote/"+relativePath;
-  var noExt=fullPath.replace(/\.md$/i,"");
-  return "obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"&file="+encodeURIComponent(noExt);
+  var segments=["OneNote"].concat(relativePath.split("/"));
+  segments[segments.length-1]=segments[segments.length-1].replace(/\.md$/i,"");
+  // Testversion: se kommentar i obsidianUriFor ovan - vanliga snedstreck istället för %2F.
+  var path=segments.map(encodeURIComponent).join("/");
+  return "obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"&file="+path;
 }
 
 // Går igenom "OneNote"-mappen rekursivt och samlar in ALLA .md-filer, oavsett hur djupt
@@ -1270,8 +1316,19 @@ async function searchMarkdownFilesRecursive(folderId,pathPrefix,query,inheritedM
   }
   var folders=children.filter(function(f){return f.mimeType==="application/vnd.google-apps.folder";});
   var files=children.filter(function(f){return f.mimeType!=="application/vnd.google-apps.folder"&&/\.md$/i.test(f.name);});
-  var matches=files.filter(function(f){return inheritedMatch||f.name.toLowerCase().indexOf(query)>=0;})
-    .map(function(f){return {id:f.id,name:f.name,path:pathPrefix+f.name,modifiedTime:f.modifiedTime};});
+
+  // Matchar namn/mappnamn (som förut) ELLER någon av filens taggar - taggarna måste läsas
+  // ur filens innehåll (cachas i getFileTags så samma fil aldrig läses två gånger).
+  var matchPromises=files.map(async function(f){
+    var nameMatches=inheritedMatch||f.name.toLowerCase().indexOf(query)>=0;
+    var tags=await getFileTags(f.id);
+    if(nameMatches||tags.some(function(t){return t.toLowerCase().indexOf(query)>=0;})){
+      return {id:f.id,name:f.name,path:pathPrefix+f.name,modifiedTime:f.modifiedTime,tags:tags};
+    }
+    return null;
+  });
+  var matchResults=await Promise.all(matchPromises);
+  var matches=matchResults.filter(Boolean);
 
   var subResultsSettled=await Promise.allSettled(folders.map(function(f){
     var subMatch=inheritedMatch||f.name.toLowerCase().indexOf(query)>=0;
@@ -1355,18 +1412,34 @@ async function renderObsidianFilesPage(){
       window.open(obsidianUriForOneNotePath(el.dataset.obsidianopenpath));
     };
   }
+  function tagsHtml(tags){
+    if(!tags||!tags.length)return "";
+    return "<div style='font-size:11px;color:#4fa8ff;margin-top:2px'>"+tags.map(function(t){return esc("#"+t);}).join(" ")+"</div>";
+  }
 
-  // Visar innehållet i DEN MAPP man står i just nu (normalläge, tom sökruta).
-  function renderCurrentFolder(){
+  // Visar innehållet i DEN MAPP man står i just nu (normalläge, tom sökruta). Läser in
+  // filernas taggar (cachade, så samma fil aldrig läses två gånger) innan den ritar upp
+  // listan, så taggarna kan visas direkt under titeln.
+  async function renderCurrentFolder(){
     if(!allFolders.length&&!allFiles.length){
       listEl.style.textAlign="center";
       listEl.style.color="#5c5c5c";
       listEl.textContent="Mappen är tom.";
       return;
     }
-    listEl.style.textAlign="left";
-    listEl.style.color="";
-    listEl.innerHTML=allFolders.map(function(f){
+    listEl.style.textAlign="center";
+    listEl.style.color="#5c5c5c";
+    listEl.textContent="Laddar...";
+
+    var tagsResults=await Promise.allSettled(allFiles.map(function(f){return getFileTags(f.id);}));
+    var freshListEl=document.getElementById("obsidianfiles-list");
+    if(!freshListEl||searchInp.value.trim())return; // navigerat bort, eller sökning påbörjad under tiden
+    var tagsById={};
+    allFiles.forEach(function(f,i){tagsById[f.id]=tagsResults[i].status==="fulfilled"?tagsResults[i].value:[];});
+
+    freshListEl.style.textAlign="left";
+    freshListEl.style.color="";
+    freshListEl.innerHTML=allFolders.map(function(f){
       return "<div class='entry' data-obsidianopenfolder='"+esc(f.id)+"' data-obsidianfoldername='"+esc(f.name)+"' style='cursor:pointer'>"
         +"<div style='flex:1;display:flex;align-items:center;gap:8px'>"
         +"<span style='font-size:15px'>📁</span>"
@@ -1380,17 +1453,21 @@ async function renderObsidianFilesPage(){
       return "<div class='entry' data-obsidianopenfile data-obsidianopenpath='"+esc(relPath)+"' style='cursor:pointer'>"
         +"<div style='flex:1;display:flex;align-items:center;gap:8px'>"
         +"<span style='font-size:15px'>📝</span>"
-        +"<span style='font-size:13px;color:#cfcfcf'>"+esc(f.name.replace(/\.md$/i,""))+"</span>"
+        +"<div style='flex:1'>"
+        +"<div style='font-size:13px;color:#cfcfcf'>"+esc(f.name.replace(/\.md$/i,""))+"</div>"
+        +tagsHtml(tagsById[f.id])
+        +"</div>"
         +"</div>"
         +"<span style='color:#5c5c5c;font-size:14px'>🔗</span>"
         +"</div>";
     }).join("");
-    listEl.querySelectorAll("[data-obsidianopenfolder]").forEach(bindOpenFolder);
-    listEl.querySelectorAll("[data-obsidianopenfile]").forEach(bindOpenFile);
+    freshListEl.querySelectorAll("[data-obsidianopenfolder]").forEach(bindOpenFolder);
+    freshListEl.querySelectorAll("[data-obsidianopenfile]").forEach(bindOpenFile);
   }
 
   // Söker i HELA OneNote-mappen (alla mappar, inte bara den nuvarande) - visar resultat
-  // med full sökväg eftersom träffarna kan komma från vilken mapp som helst.
+  // med full sökväg eftersom träffarna kan komma från vilken mapp som helst. Matchar även
+  // filernas taggar (inte bara namn/mappnamn), se searchMarkdownFilesRecursive.
   var searchDebounceTimer=null;
   function runGlobalSearch(query){
     listEl.style.textAlign="center";
@@ -1414,6 +1491,7 @@ async function renderObsidianFilesPage(){
           +"<div style='flex:1'>"
           +(folderPath?"<div style='font-size:11px;color:#5c5c5c;margin-bottom:2px'>"+esc(folderPath)+"</div>":"")
           +"<div style='font-size:13px;color:#cfcfcf'>"+esc(f.name.replace(/\.md$/i,""))+"</div>"
+          +tagsHtml(f.tags)
           +"</div>"
           +"<span style='color:#5c5c5c;font-size:14px'>🔗</span>"
           +"</div>";

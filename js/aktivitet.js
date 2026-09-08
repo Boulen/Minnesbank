@@ -1239,7 +1239,14 @@ function renderAktivitetLoggaTab(c){
     }
   };
   // Kategori-specifika förslag för Anteckning
-  bindAutocomplete(c.querySelector("#ni"),c.querySelector("#ni-ac"),function(){return ANTECKNING_BY_CAT[cat]||[];},function(v){if(ANTECKNING_BY_CAT[cat])ANTECKNING_BY_CAT[cat]=ANTECKNING_BY_CAT[cat].filter(function(x){return x!==v;});saveAndSync("inmatningar");},function(v){if(ci.value.trim())addAct(ci.value.trim());});
+  // Kategori-specifika förslag för Anteckning. onSelect ska bara lämna texten i fältet
+  // (bindAutocomplete gör redan det innan onSelect anropas) och låta en fortsätta skriva -
+  // INTE logga inlägget, som tidigare av misstag råkade göras här.
+  bindAutocomplete(c.querySelector("#ni"),c.querySelector("#ni-ac"),function(){return ANTECKNING_BY_CAT[cat]||[];},function(v){if(ANTECKNING_BY_CAT[cat])ANTECKNING_BY_CAT[cat]=ANTECKNING_BY_CAT[cat].filter(function(x){return x!==v;});saveAndSync("inmatningar");},function(v){
+    autoResizeTextarea(ni);
+    ni.focus();
+    ni.setSelectionRange(ni.value.length,ni.value.length); // markören sist i texten, redo att fortsätta skriva
+  });
   var niAddBtn=c.querySelector("#ni-add-btn");
   if(niAddBtn)niAddBtn.onclick=function(){
     var niEl=c.querySelector("#ni");
@@ -1572,6 +1579,7 @@ function showAktivitetSettings(){
   var wGroups=AKTIVITET_BILDKATEGORIER.map(function(g){return {id:g.id,label:g.label,e:g.e};});
   var editIdx=null;
   var editGroupIdx=null;
+  var pendingPresetCleanup=[]; // kategori-id:n vars snabbval ska rensas, men bara vid faktisk Spara
 
   var ov=document.createElement("div");
   ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto";
@@ -1745,10 +1753,24 @@ function showAktivitetSettings(){
       btn.onclick=function(e){
         e.stopPropagation();
         var i=Number(btn.dataset.catRemoveIdx);
-        if(!wCats[i])return;
-        wCats.splice(i,1);
-        if(editIdx===i)editIdx=null;else if(editIdx!==null&&editIdx>i)editIdx--;
-        rerender();
+        var removed=wCats[i];
+        if(!removed)return;
+        var actCount=(ACT_PRESETS_BY_CAT[removed.id]||[]).length;
+        var placeCount=(PLACE_PRESETS_BY_CAT[removed.id]||[]).length;
+        function doRemove(){
+          wCats.splice(i,1);
+          pendingPresetCleanup.push(removed.id);
+          if(editIdx===i)editIdx=null;else if(editIdx!==null&&editIdx>i)editIdx--;
+          rerender();
+        }
+        if(actCount||placeCount){
+          var parts=[];
+          if(actCount)parts.push(actCount+" aktivitet-snabbval");
+          if(placeCount)parts.push(placeCount+" plats-snabbval");
+          confirmDelete("Kategorin \""+removed.label+"\" har "+parts.join(" och ")+" sparade. Ta bort kategorin och dessa snabbval?",doRemove);
+        }else{
+          doRemove();
+        }
       };
     });
     var confirmBtn=ov.querySelector("#as-edit-confirm");
@@ -1844,6 +1866,16 @@ function showAktivitetSettings(){
       CATS=wCats;
       if(!wCats.some(function(c){return c.id===cat;}))cat=wCats[0].id;
       AKTIVITET_BILDKATEGORIER=wGroups;
+      // Städa snabbval bara för kategorier som fortfarande faktiskt är borta (inte om
+      // man tog bort och sen lade till en kategori med samma id igen innan Spara).
+      pendingPresetCleanup.forEach(function(id){
+        if(!wCats.some(function(c){return c.id===id;})){
+          delete ACT_PRESETS_BY_CAT[id];
+          delete PLACE_PRESETS_BY_CAT[id];
+        }
+      });
+      if(AKTIVITET_BETEENDE.standardKategori&&!wCats.some(function(c){return c.id===AKTIVITET_BETEENDE.standardKategori;}))AKTIVITET_BETEENDE.standardKategori="";
+      if(AKTIVITET_BETEENDE.pinnedCats)AKTIVITET_BETEENDE.pinnedCats=AKTIVITET_BETEENDE.pinnedCats.filter(function(id){return wCats.some(function(c){return c.id===id;});});
       saveAktivitetSettings();
       ov.remove();
       renderLogAktivitet();
