@@ -95,97 +95,62 @@ function bindAnteckningSubPicker(container,idPrefix,getCat,selected){
 
 // ---- Mappväljare för Obsidian-export - enkel filhanterar-navigering, bara mappar (ingen
 // filer visas, det är en mapp man väljer, inte en fil). Samma breadcrumb-mönster som Obsibok.
-function showObsidianFolderPicker(onChosen){
-  var ov=document.createElement("div");
-  ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:10020;display:flex;align-items:center;justify-content:center;padding:24px 16px";
-  ov.innerHTML="<div style='background:#161616;border-radius:20px;width:100%;max-width:380px;max-height:70vh;display:flex;flex-direction:column;padding:18px;box-sizing:border-box'>"
-    +"<div class='lbl' style='margin-bottom:4px'>Välj mapp för MD-filer</div>"
-    +"<div id='obsidianpicker-active' style='font-size:11px;color:#5c5c5c;margin-bottom:10px'></div>"
-    +"<div id='obsidianpicker-breadcrumb' style='font-size:12px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:2px'></div>"
-    +"<div id='obsidianpicker-list' style='flex:1;min-height:120px;max-height:40vh;overflow-y:auto;font-size:13px;color:#5c5c5c;text-align:center;padding-top:14px'>Laddar...</div>"
-    +"<div style='display:flex;gap:10px;margin-top:14px;flex-shrink:0'>"
-    +"<button id='obsidianpicker-choose' class='cta-log' style='flex:1'>Välj</button>"
-    +"<button id='obsidianpicker-cancel' class='sec ghost' style='flex:1'>Avbryt</button>"
-    +"</div>"
-    +"</div>";
-  document.body.appendChild(ov);
+var GOOGLE_PICKER_API_KEY="AIzaSyAqPDe6qHGFrhMvf5KQ0T5qRGNzmcJSXUw"; // från huvud-chatten, redan aktiverad + domänbegränsad till boulen.github.io
+var googlePickerApiLoadPromise=null;
 
-  var startId=obsidianExportRootFolderId||OBSIDIAN_FOLDER_PICKER_START_ID;
-  var startName=obsidianExportRootFolderName||OBSIDIAN_FOLDER_PICKER_START_NAME;
-  var stack=[{id:startId,name:startName}];
+// Laddar Google API-skriptet + Picker-modulen en gång, cachas för resten av sessionen.
+function ensureGooglePickerApiLoaded(){
+  if(window.google&&window.google.picker)return Promise.resolve();
+  if(googlePickerApiLoadPromise)return googlePickerApiLoadPromise;
+  googlePickerApiLoadPromise=new Promise(function(resolve,reject){
+    var script=document.createElement("script");
+    script.src="https://apis.google.com/js/api.js";
+    script.onload=function(){
+      gapi.load("picker",{
+        callback:resolve,
+        onerror:function(){reject(new Error("Kunde inte ladda Google Picker-modulen"));}
+      });
+    };
+    script.onerror=function(){reject(new Error("Kunde inte ladda Google API-skriptet"));};
+    document.head.appendChild(script);
+  });
+  return googlePickerApiLoadPromise;
+}
 
-  var activeEl=ov.querySelector("#obsidianpicker-active");
-  activeEl.textContent="Aktiv mapp just nu: "+(obsidianExportRootFolderName||"Standard (Minnesbank)");
-
-  ov.querySelector("#obsidianpicker-cancel").onclick=function(){ov.remove();};
-  ov.querySelector("#obsidianpicker-choose").onclick=function(){
-    var current=stack[stack.length-1];
-    ov.remove();
-    onChosen(current.id,current.name);
-  };
-
-  async function renderPickerFolder(){
-    var current=stack[stack.length-1];
-    var crumbEl=ov.querySelector("#obsidianpicker-breadcrumb");
-    crumbEl.innerHTML=stack.map(function(f,i){
-      var isLast=i===stack.length-1;
-      return "<span data-obsidianpickercrumb='"+i+"' style='cursor:"+(isLast?"default":"pointer")+";color:"+(isLast?"#f2f2f2":"#4fa8ff")+"'>"+esc(f.name)+"</span>"
-        +(isLast?"":"<span style='color:#5c5c5c'>&nbsp;/&nbsp;</span>");
-    }).join("");
-    crumbEl.querySelectorAll("[data-obsidianpickercrumb]").forEach(function(el){
-      el.onclick=function(){
-        var idx=Number(el.dataset.obsidianpickercrumb);
-        if(idx===stack.length-1)return;
-        stack=stack.slice(0,idx+1);
-        renderPickerFolder();
-      };
-    });
-
-    var listEl=ov.querySelector("#obsidianpicker-list");
-    listEl.style.textAlign="center";
-    listEl.style.color="#5c5c5c";
-    listEl.textContent="Laddar...";
-    var folders;
-    try{
-      // Ingen cache - hämtar alltid färskt innehåll från Drive, så listan speglar det
-      // faktiska, aktuella läget även om mappar precis skapats/ändrats.
-      var q="'"+current.id+"' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'";
-      var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id,name)&pageSize=200",{headers:{Authorization:"Bearer "+accessToken}});
-      if(!r.ok)throw new Error("HTTP "+r.status);
-      var d=await r.json();
-      folders=(d.files||[]).sort(function(a,b){return a.name.localeCompare(b.name,"sv");});
-    }catch(e){
-      showNoteringDriveError("Kunde inte lista mappar",e);
-      listEl.textContent="Kunde inte hämta mappar.";
-      return;
-    }
-    var freshListEl=ov.querySelector("#obsidianpicker-list");
-    if(!freshListEl)return; // stängd under tiden
-    if(!folders.length){
-      freshListEl.textContent="Inga undermappar här.";
-      return;
-    }
-    freshListEl.style.textAlign="left";
-    freshListEl.style.color="";
-    freshListEl.innerHTML=folders.map(function(f){
-      var isActive=f.id===obsidianExportRootFolderId;
-      return "<div class='entry' data-obsidianpickeropen='"+esc(f.id)+"' data-obsidianpickername='"+esc(f.name)+"' style='cursor:pointer'>"
-        +"<div style='flex:1;display:flex;align-items:center;gap:8px'>"
-        +"<span style='font-size:15px'>"+(isActive?"✅":"📁")+"</span>"
-        +"<span style='font-size:13px;color:"+(isActive?"#4fa8ff":"#cfcfcf")+"'>"+esc(f.name)+(isActive?" (aktiv)":"")+"</span>"
-        +"</div>"
-        +"<span style='color:#5c5c5c;font-size:14px'>\u203a</span>"
-        +"</div>";
-    }).join("");
-    freshListEl.querySelectorAll("[data-obsidianpickeropen]").forEach(function(el){
-      el.onclick=function(){
-        stack.push({id:el.dataset.obsidianpickeropen,name:el.dataset.obsidianpickername});
-        renderPickerFolder();
-      };
-    });
+// Googles egen, riktiga mappväljare (samma komponent som t.ex. Gmail använder för att
+// bifoga Drive-filer) - ersätter den tidigare egenbyggda mappnavigeraren. Startar i den
+// redan valda mappen om det finns en, annars OBSIDIAN_FOLDER_PICKER_START_ID.
+async function showObsidianFolderPicker(onChosen){
+  try{
+    await ensureGooglePickerApiLoaded();
+  }catch(e){
+    showNoteringDriveError("Kunde inte ladda Google Picker",e);
+    return;
   }
-
-  renderPickerFolder();
+  var startFolderId=obsidianExportRootFolderId||OBSIDIAN_FOLDER_PICKER_START_ID;
+  var view=new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+    .setSelectFolderEnabled(true)
+    .setIncludeFolders(true)
+    .setMimeTypes("application/vnd.google-apps.folder")
+    .setParent(startFolderId);
+  var picker=new google.picker.PickerBuilder()
+    .addView(view)
+    .setOAuthToken(accessToken)
+    .setDeveloperKey(GOOGLE_PICKER_API_KEY)
+    .setTitle("Välj mapp för MD-filer")
+    .setCallback(function(data){
+      if(data.action===google.picker.Action.PICKED&&data.docs&&data.docs[0]){
+        var folder=data.docs[0];
+        onChosen(folder.id,folder.name);
+      }else if(data.action===google.picker.Action.ERROR){
+        // Om detta är ett 401: kolla att "Google Picker API" står med i nyckelns egna
+        // API-begränsningar i Google Cloud Console (inte bara domänbegränsningen) - se
+        // huvud-chattens svar om Picker-nyckeln för mer kontext.
+        showNoteringDriveError("Google Picker-fel",data.error||null);
+      }
+    })
+    .build();
+  picker.setVisible(true);
 }
 
 // ---- ⚙️ Inställningar — Notering (en gemensam panel för hela fliken, mönster från Aktivitet) ----
