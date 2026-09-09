@@ -93,6 +93,92 @@ function bindAnteckningSubPicker(container,idPrefix,getCat,selected){
 }
 // Nya kategori-specifika snabbval för Media (Kreatör/Genre)
 
+// ---- Mappväljare för Obsidian-export - enkel filhanterar-navigering, bara mappar (ingen
+// filer visas, det är en mapp man väljer, inte en fil). Samma breadcrumb-mönster som Obsibok.
+function showObsidianFolderPicker(onChosen){
+  var ov=document.createElement("div");
+  ov.style.cssText="position:fixed;inset:0;background:#0e0e0e;z-index:10020;display:flex;flex-direction:column;padding:20px;box-sizing:border-box";
+  ov.innerHTML="<div class='lbl' style='margin-bottom:10px'>Välj mapp för MD-filer</div>"
+    +"<div id='obsidianpicker-breadcrumb' style='font-size:12px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:2px'></div>"
+    +"<div id='obsidianpicker-list' style='flex:1;overflow-y:auto;font-size:13px;color:#5c5c5c;text-align:center;padding-top:14px'>Laddar...</div>"
+    +"<div style='display:flex;gap:10px;margin-top:14px;flex-shrink:0'>"
+    +"<button id='obsidianpicker-choose' class='cta-log' style='flex:1'>Välj den här mappen</button>"
+    +"<button id='obsidianpicker-cancel' class='sec ghost' style='flex:1'>Avbryt</button>"
+    +"</div>";
+  document.body.appendChild(ov);
+
+  var startId=obsidianExportRootFolderId||OBSIDIAN_VAULT_FOLDER_ID;
+  var startName=obsidianExportRootFolderName||"Minnesbank";
+  var stack=[{id:startId,name:startName}];
+
+  ov.querySelector("#obsidianpicker-cancel").onclick=function(){ov.remove();};
+  ov.querySelector("#obsidianpicker-choose").onclick=function(){
+    var current=stack[stack.length-1];
+    ov.remove();
+    onChosen(current.id,current.name);
+  };
+
+  async function renderPickerFolder(){
+    var current=stack[stack.length-1];
+    var crumbEl=ov.querySelector("#obsidianpicker-breadcrumb");
+    crumbEl.innerHTML=stack.map(function(f,i){
+      var isLast=i===stack.length-1;
+      return "<span data-obsidianpickercrumb='"+i+"' style='cursor:"+(isLast?"default":"pointer")+";color:"+(isLast?"#f2f2f2":"#4fa8ff")+"'>"+esc(f.name)+"</span>"
+        +(isLast?"":"<span style='color:#5c5c5c'>&nbsp;/&nbsp;</span>");
+    }).join("");
+    crumbEl.querySelectorAll("[data-obsidianpickercrumb]").forEach(function(el){
+      el.onclick=function(){
+        var idx=Number(el.dataset.obsidianpickercrumb);
+        if(idx===stack.length-1)return;
+        stack=stack.slice(0,idx+1);
+        renderPickerFolder();
+      };
+    });
+
+    var listEl=ov.querySelector("#obsidianpicker-list");
+    listEl.style.textAlign="center";
+    listEl.style.color="#5c5c5c";
+    listEl.textContent="Laddar...";
+    var folders;
+    try{
+      var q="'"+current.id+"' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'";
+      var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id,name)&pageSize=200",{headers:{Authorization:"Bearer "+accessToken}});
+      if(!r.ok)throw new Error("HTTP "+r.status);
+      var d=await r.json();
+      folders=(d.files||[]).sort(function(a,b){return a.name.localeCompare(b.name,"sv");});
+    }catch(e){
+      showNoteringDriveError("Kunde inte lista mappar",e);
+      listEl.textContent="Kunde inte hämta mappar.";
+      return;
+    }
+    var freshListEl=ov.querySelector("#obsidianpicker-list");
+    if(!freshListEl)return; // stängd under tiden
+    if(!folders.length){
+      freshListEl.textContent="Inga undermappar här.";
+      return;
+    }
+    freshListEl.style.textAlign="left";
+    freshListEl.style.color="";
+    freshListEl.innerHTML=folders.map(function(f){
+      return "<div class='entry' data-obsidianpickeropen='"+esc(f.id)+"' data-obsidianpickername='"+esc(f.name)+"' style='cursor:pointer'>"
+        +"<div style='flex:1;display:flex;align-items:center;gap:8px'>"
+        +"<span style='font-size:15px'>📁</span>"
+        +"<span style='font-size:13px;color:#cfcfcf'>"+esc(f.name)+"</span>"
+        +"</div>"
+        +"<span style='color:#5c5c5c;font-size:14px'>\u203a</span>"
+        +"</div>";
+    }).join("");
+    freshListEl.querySelectorAll("[data-obsidianpickeropen]").forEach(function(el){
+      el.onclick=function(){
+        stack.push({id:el.dataset.obsidianpickeropen,name:el.dataset.obsidianpickername});
+        renderPickerFolder();
+      };
+    });
+  }
+
+  renderPickerFolder();
+}
+
 // ---- ⚙️ Inställningar — Notering (en gemensam panel för hela fliken, mönster från Aktivitet) ----
 // OBS: kategorierna här är enkla strängar (inte id/label/emoji-objekt som i Aktivitet) - det
 // matchar hur FUND_CAT_PRESETS/ANTECKNING_CAT_PRESETS redan lagras. Emoji sätts in i textfältet via 😀-knappen (öppnar samma emoji-väljare som Aktivitet, se openNoteringEmojiPicker).
@@ -177,7 +263,11 @@ function showNoteringSettings(){
       +"<div class='lbl' style='margin-top:18px'>Data & backup</div>"
       // OBS: "Data & backup" ska alltid ligga SIST i panelen, precis som i Aktivitets mönster.
       +"<button id='ns-json-editor' class='sec ghost' style='width:100%'>📝 Öppna/redigera JSON-filer</button>"
-      +"<button id='ns-obsidian-export' class='sec ghost' style='width:100%;margin-top:8px'>📤 Skapa Obsidian-filer</button>"
+      +"<div style='display:flex;gap:8px;margin-top:8px'>"
+      +"<button id='ns-obsidian-export' class='sec ghost' style='flex:1'>Skapa MD-filer</button>"
+      +"<button id='ns-obsidian-pickfolder' class='sec ghost' style='flex:1'>📁 Välj mapp</button>"
+      +"</div>"
+      +"<div id='ns-obsidian-folder-label' style='font-size:11px;color:#5c5c5c;margin-top:6px'>Sparas till: "+esc(obsidianExportRootFolderName||"Minnesbank (standard)")+"</div>"
 
       +"</div>"
       +"<div style='padding:16px 20px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
@@ -361,6 +451,22 @@ function showNoteringSettings(){
       await exportAllToObsidian();
       obsidianExportBtn.disabled=false;
       obsidianExportBtn.textContent=origText;
+    };
+    var obsidianPickFolderBtn=ov.querySelector("#ns-obsidian-pickfolder");
+    if(obsidianPickFolderBtn)obsidianPickFolderBtn.onclick=function(){
+      showObsidianFolderPicker(function(folderId,folderName){
+        obsidianExportRootFolderId=folderId;
+        obsidianExportRootFolderName=folderName;
+        // Rensa cachade mapp-id:n - annars fortsätter export gå till den GAMLA mappen tills
+        // sidan laddas om, eftersom mappen väl hittats/skapats cachas den för resten av sessionen.
+        obsidianTypeRootFolderIds={};
+        obsidianTypeRootFolderPromises={};
+        obsidianCategoryFolderIds={};
+        obsidianCategoryFolderPromises={};
+        saveNoteringSettings();
+        var labelEl=ov.querySelector("#ns-obsidian-folder-label");
+        if(labelEl)labelEl.textContent="Sparas till: "+folderName;
+      });
     };
 
     ov.querySelector("#ns-save").onclick=function(){
@@ -678,8 +784,9 @@ async function saveNoteringAnteckning(){
 // skapa/uppdatera filer, triggat via knappen "📤 Skapa Obsidian-filer" i ⚙️-panelen.
 // Poster utan kategori hamnar i "Övrigt". Subkategorier (bara Anteckning) blir Obsidians
 // "aliases" i frontmatter, inte taggar.
-var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank" (under OneNote)
-var FUNDERING_OBSIDIAN_FOLDER_ID="16-rgEsM7XgxcVEB88Jt5ffDSCj8fqWes"; // Fundering skrivs numera direkt hit (samma mapp som "Anteckning" redan använder) - ingen egen mapp-struktur eller markdown-formatering längre för Fundering
+var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank" (under OneNote) - standardmapp om ingen egen mapp valts i inställningarna
+var obsidianExportRootFolderId=""; // vald i ⚙️-panelen ("Välj mapp"), sparas i settings.json - tom = använd standardmappen ovan
+var obsidianExportRootFolderName=""; // visningsnamn för den valda mappen
 var OBSIDIAN_VAULT_NAME="Minnesbank"; // Obsidian-valvets namn
 
 function isAndroidDevice(){
@@ -786,40 +893,32 @@ function obsidianMarkdownFor(entry,type){
 
 // Bygger en obsidian://-länk till en post. Kräver att posten redan synkats och har sitt
 // riktiga filnamn sparat (entry.obsidianFilename) - annars finns ingen fil att länka till.
-var ANDROID_LOCAL_VAULT_PATH="/storage/emulated/0/DriveSyncFiles"; // lokal Drive-synk-mapp på Android, speglar Minnesbank-valvets rot rakt av
+var ANDROID_VAULT_NAME="DriveSyncFiles"; // valvets namn så som Obsidian känner det på Android (mappen som öppnats som valv där) - bekräftat genom att jämföra mot en länk kopierad direkt ur Obsidian själv
+
+// Bygger en obsidian://-länk från en sökväg RELATIV TILL VALV-ROTEN (t.ex. "OneNote/Volvo/
+// volvo M4/Titel", utan .md-ändelse). Verifierad mot en länk kopierad direkt ur Obsidians
+// egen "Copy Obsidian URL"-funktion - matchar exakt: vault+file med %2F-kodade snedstreck
+// (HELA sökvägen kodas som en enhet via encodeURIComponent). Enda skillnaden mellan
+// dator/Android är valvets NAMN - sökvägsstrukturen är identisk.
+function obsidianUriForRelativePath(relativePath){
+  var vaultName=isAndroidDevice()?ANDROID_VAULT_NAME:OBSIDIAN_VAULT_NAME;
+  return "obsidian://open?vault="+encodeURIComponent(vaultName)+"&file="+encodeURIComponent(relativePath);
+}
 
 function obsidianUriFor(entry,type){
   if(!entry.obsidianFileId||!entry.obsidianFilename)return null;
   var filenameNoExt=entry.obsidianFilename.replace(/\.md$/i,"");
-  if(isAndroidDevice()){
-    // Android: pekar direkt på den lokalt synkade filen via "path" (absolut filsystemssökväg).
-    // Bekräftat: DriveSyncFiles speglar VALV-ROTEN ("Minnesbank", en nivå OVANFÖR OneNote) -
-    // "OneNote" ska alltså vara med i sökvägen, precis som OBSIDIAN_VAULT_RELATIVE_PREFIX
-    // redan uttrycker ("OneNote/Minnesbank" - den andra, inre "Minnesbank"-mappen där appens
-    // egna filer faktiskt ligger, under OneNote).
-    var androidSegments;
-    if(type==="fundering"){
-      androidSegments=[ANDROID_LOCAL_VAULT_PATH].concat(OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/")).concat(["Anteckning",filenameNoExt+".md"]);
-    }else{
-      var androidTypeName=obsidianTypeFolderName(type);
-      var androidCatName=obsidianFolderNameForCategory(entry.category);
-      androidSegments=[ANDROID_LOCAL_VAULT_PATH].concat(OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/")).concat([androidTypeName,androidCatName,filenameNoExt+".md"]);
-    }
-    return "obsidian://open?path="+encodeURIComponent(androidSegments.join("/"));
-  }
   var segments;
   if(type==="fundering"){
     // Fundering ligger inte längre i sin egen typ/kategori-mapp - skrivs numera direkt in
-    // i samma "Anteckning"-mapp som Anteckning använder (se FUNDERING_OBSIDIAN_FOLDER_ID).
+    // i samma "Anteckning"-mapp som Anteckning använder.
     segments=OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/").concat(["Anteckning",filenameNoExt]);
   }else{
     var typeName=obsidianTypeFolderName(type);
     var catName=obsidianFolderNameForCategory(entry.category);
     segments=OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/").concat([typeName,catName,filenameNoExt]);
   }
-  // Vanliga snedstreck mellan mappnamnen (inte %2F) - fungerade bäst på dator vid testning.
-  var path=segments.map(encodeURIComponent).join("/");
-  return "obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"&file="+path;
+  return obsidianUriForRelativePath(segments.join("/"));
 }
 
 // Bygger en obsidian://-länk utifrån en sökväg RELATIV TILL "OneNote"-mappen - t.ex.
@@ -827,17 +926,9 @@ function obsidianUriFor(entry,type){
 function obsidianUriForOneNotePath(relativePath){
   var relSegments=relativePath.split("/");
   var filenameNoExt=relSegments[relSegments.length-1].replace(/\.md$/i,"");
-  if(isAndroidDevice()){
-    // Android: absolut sökväg till den lokalt synkade filen. relativePath är redan relativt
-    // "OneNote"-mappen, och DriveSyncFiles speglar VALV-ROTEN (en nivå OVANFÖR OneNote) -
-    // "OneNote" måste alltså läggas till här (bekräftat av Blå, se kommentar i obsidianUriFor).
-    var androidSegments=[ANDROID_LOCAL_VAULT_PATH,"OneNote"].concat(relSegments.slice(0,-1)).concat([filenameNoExt+".md"]);
-    return "obsidian://open?path="+encodeURIComponent(androidSegments.join("/"));
-  }
   var segments=["OneNote"].concat(relSegments);
   segments[segments.length-1]=filenameNoExt;
-  var path=segments.map(encodeURIComponent).join("/");
-  return "obsidian://open?vault="+encodeURIComponent(OBSIDIAN_VAULT_NAME)+"&file="+path;
+  return obsidianUriForRelativePath(segments.join("/"));
 }
 
 // Går igenom "OneNote"-mappen rekursivt och samlar in ALLA .md-filer, oavsett hur djupt
@@ -896,7 +987,8 @@ function ensureObsidianTypeRootFolder(type){
   if(obsidianTypeRootFolderPromises[name])return obsidianTypeRootFolderPromises[name];
   obsidianTypeRootFolderPromises[name]=(async function(){
     try{
-      var folderId=await obsidianFindOrCreateFolder(name,OBSIDIAN_VAULT_FOLDER_ID);
+      var parentId=obsidianExportRootFolderId||OBSIDIAN_VAULT_FOLDER_ID;
+      var folderId=await obsidianFindOrCreateFolder(name,parentId);
       obsidianTypeRootFolderIds[name]=folderId;
       obsidianTypeRootFolderPromises[name]=null;
       return folderId;
@@ -941,8 +1033,10 @@ async function syncEntryToObsidian(entry,type,saveFn){
     if(type==="fundering"){
       // Fundering: ingen egen mapp-struktur (Fundering-mappen/kategori-mappar) skapas
       // längre - skriver istället rå text (ingen frontmatter/markdown-formatering) direkt
-      // in i samma mapp som Anteckning redan använder.
-      folderId=FUNDERING_OBSIDIAN_FOLDER_ID;
+      // in i samma "Anteckning"-mapp som Anteckning redan använder. Löses upp DYNAMISKT
+      // (inte ett fast ID) så att det följer med om exportmappen byts i ⚙️-panelen.
+      folderId=await ensureObsidianTypeRootFolder("anteckning");
+      if(!folderId)throw new Error("Kunde inte hitta/skapa Anteckning-mappen i Obsidian-valvet");
       content=entry.text;
     }else{
       folderId=await ensureObsidianCategoryFolder(type,entry.category);
@@ -1047,6 +1141,10 @@ function ensureNoteringSettingsLoaded(){
         if(data.fundCatPresets&&data.fundCatPresets.length)FUND_CAT_PRESETS=data.fundCatPresets;
         if(data.anteckningCatPresets&&data.anteckningCatPresets.length)ANTECKNING_CAT_PRESETS=data.anteckningCatPresets;
         if(data.anteckningSubcatByCat)ANTECKNING_SUBCAT_BY_CAT=data.anteckningSubcatByCat;
+        if(data.obsidianExportRootFolderId){
+          obsidianExportRootFolderId=data.obsidianExportRootFolderId;
+          obsidianExportRootFolderName=data.obsidianExportRootFolderName||"";
+        }
       }
       if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
     }catch(e){
@@ -1063,7 +1161,9 @@ async function saveNoteringSettings(){
     await driveWriteJson(["Notering"],"settings.json",{
       fundCatPresets:FUND_CAT_PRESETS,
       anteckningCatPresets:ANTECKNING_CAT_PRESETS,
-      anteckningSubcatByCat:ANTECKNING_SUBCAT_BY_CAT
+      anteckningSubcatByCat:ANTECKNING_SUBCAT_BY_CAT,
+      obsidianExportRootFolderId:obsidianExportRootFolderId,
+      obsidianExportRootFolderName:obsidianExportRootFolderName
     });
   }catch(e){
     showNoteringDriveError("Kunde inte spara Notering-inställningar",e);
