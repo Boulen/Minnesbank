@@ -138,7 +138,7 @@ async function showObsidianFolderPicker(onChosen){
     return;
   }
   ensureGooglePickerZIndexFix();
-  var startFolderId=obsidianExportRootFolderId||OBSIDIAN_FOLDER_PICKER_START_ID;
+  var startFolderId=OBSIDIAN_FOLDER_PICKER_START_ID;
   var view=new google.picker.DocsView(google.picker.ViewId.FOLDERS)
     .setSelectFolderEnabled(true)
     .setIncludeFolders(true)
