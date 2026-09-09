@@ -1001,6 +1001,17 @@ async function obsidianFindOrCreateFolder(name,parentId){
   return cd.id;
 }
 
+async function checkFolderExistsAndNotTrashed(folderId){
+  try{
+    var r=await fetch(DRIVE_API+"/"+folderId+"?fields=id,trashed",{headers:{Authorization:"Bearer "+accessToken}});
+    if(!r.ok)return false; // hittades inte alls (borttagen permanent, eller fel id)
+    var d=await r.json();
+    return !d.trashed;
+  }catch(e){
+    return false;
+  }
+}
+
 function ensureObsidianTypeRootFolder(type){
   var name=obsidianTypeFolderName(type);
   if(obsidianTypeRootFolderIds[name])return Promise.resolve(obsidianTypeRootFolderIds[name]);
@@ -1009,11 +1020,24 @@ function ensureObsidianTypeRootFolder(type){
     try{
       var folderId;
       if(obsidianExportRootFolderId){
-        // En egen mapp har valts i ⚙️-panelen ("Välj mapp") - använd den DIREKT, skapa INTE
-        // ännu en "Anteckning"/"Fundering"-undermapp inuti den. Annars blir det en
-        // förvirrande dubbelnästling (Anteckning/Anteckning/...), och kategori-mappar som
-        // redan ligger direkt i den valda mappen hittas aldrig av koden.
-        folderId=obsidianExportRootFolderId;
+        // En egen mapp har valts i ⚙️-panelen ("Välj mapp") - kolla FÖRST att den
+        // fortfarande finns och inte ligger i papperskorgen (se checkFolderExistsAndNotTrashed
+        // ovan) - annars faller vi tillbaka på standardmappen istället för att skriva
+        // osynligt vidare i en borttagen mapp.
+        var stillValid=await checkFolderExistsAndNotTrashed(obsidianExportRootFolderId);
+        if(stillValid){
+          // Använd den DIREKT, skapa INTE ännu en "Anteckning"/"Fundering"-undermapp inuti
+          // den - annars blir det en förvirrande dubbelnästling (Anteckning/Anteckning/...).
+          folderId=obsidianExportRootFolderId;
+        }else{
+          showNoteringDriveError("Den valda mappen för MD-filer hittades inte (borttagen eller i papperskorgen) - använder standardmappen istället. Välj en mapp igen i ⚙️-panelen om du vill.",null);
+          obsidianExportRootFolderId="";
+          obsidianExportRootFolderName="";
+          obsidianTypeRootFolderIds={};
+          obsidianCategoryFolderIds={};
+          saveNoteringSettings();
+          folderId=await obsidianFindOrCreateFolder(name,OBSIDIAN_VAULT_FOLDER_ID);
+        }
       }else{
         folderId=await obsidianFindOrCreateFolder(name,OBSIDIAN_VAULT_FOLDER_ID);
       }

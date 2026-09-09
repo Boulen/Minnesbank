@@ -119,7 +119,14 @@ function logEntry(log){
   var img=imageHist.find(function(i){return i.logId===log.id;});
   if(editingId===log.id){
     var dateVal=log.timestamp?new Date(log.timestamp).toISOString().slice(0,10):"";
-    var catOptions=["<option value=''>Välj kategori</option>"].concat(CAT_PRESETS.map(function(p){var ct=CATS.find(function(x){return (x.e+" "+x.label)===p||x.id===p;});var id=ct?ct.id:p;return "<option value='"+esc(id)+"'"+(id===log.category?" selected":"")+">"+esc(p)+"</option>";})).join("");
+    // RÄTTAT 2026-09-09 (bugg flaggad av Aktivitet-chatten): byggdes tidigare uteslutande
+    // från CAT_PRESETS, en global som ägs av Installningar/core.js och som kan vara tom
+    // beroende på laddningsordning - då blev dropdownen bara en tom platshållare, "Välj
+    // kategori" och inget annat. CATS (14 poster, alltid tillgänglig) är den garanterat
+    // fyllda källan och är vad huvudformulärets Kategori-fält byggs från - bygg samma väg
+    // här, precis som Bild-flikens kategori-dropdown redan gör.
+    var catOptions="<option value=''>Välj kategori</option>"
+      +CATS.map(function(c){return "<option value='"+esc(c.id)+"'"+(c.id===log.category?" selected":"")+">"+c.e+" "+esc(c.label)+"</option>";}).join("");
     // Parse existing time
     var existTidpunkt="",existDurH=0,existDurM=0;
     if(log.time){
