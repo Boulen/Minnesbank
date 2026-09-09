@@ -794,6 +794,8 @@ var OBSIDIAN_VAULT_RELATIVE_PREFIX="OneNote/Minnesbank"; // sökväg till skriv-
 var OBSIDIAN_ONENOTE_FOLDER_ID="1aCOTvfa4SHYBk9WreIKo6fubToRlFBqo"; // "OneNote"-mappen (en nivå ovanför Minnesbank) - just nu oanvänd, Obsibok skannar bara Minnesbank
 var obsidianFilesViewActive=false;
 var obsidianFolderStack=null; // {id,name}[] - byggs upp allteftersom man navigerar i Obsibok, nollställs när man lämnar
+var obsibokStartFolderId=""; // vald via 📁-knappen i Obsibok, sparas i settings.json - tom = använd OBSIDIAN_ONENOTE_FOLDER_ID som standard
+var obsibokStartFolderName="";
 var obsidianTagsCache={}; // fileId -> taggar[] - så samma fil inte läses om flera gånger under en session
 
 // Läser filens innehåll (bara en gång per fil, cachas) och plockar ut tags-fältet ur
@@ -1173,6 +1175,10 @@ function ensureNoteringSettingsLoaded(){
           obsidianExportRootFolderId=data.obsidianExportRootFolderId;
           obsidianExportRootFolderName=data.obsidianExportRootFolderName||"";
         }
+        if(data.obsibokStartFolderId){
+          obsibokStartFolderId=data.obsibokStartFolderId;
+          obsibokStartFolderName=data.obsibokStartFolderName||"";
+        }
       }
       if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
     }catch(e){
@@ -1191,7 +1197,9 @@ async function saveNoteringSettings(){
       anteckningCatPresets:ANTECKNING_CAT_PRESETS,
       anteckningSubcatByCat:ANTECKNING_SUBCAT_BY_CAT,
       obsidianExportRootFolderId:obsidianExportRootFolderId,
-      obsidianExportRootFolderName:obsidianExportRootFolderName
+      obsidianExportRootFolderName:obsidianExportRootFolderName,
+      obsibokStartFolderId:obsibokStartFolderId,
+      obsibokStartFolderName:obsibokStartFolderName
     });
   }catch(e){
     showNoteringDriveError("Kunde inte spara Notering-inställningar",e);
@@ -1488,20 +1496,34 @@ async function renderObsidianFilesPage(){
   var c=document.getElementById("fundering-content");
   if(!c)return;
   if(!obsidianFolderStack||!obsidianFolderStack.length){
-    obsidianFolderStack=[{id:OBSIDIAN_ONENOTE_FOLDER_ID,name:"OneNote"}];
+    var rootId=obsibokStartFolderId||OBSIDIAN_ONENOTE_FOLDER_ID;
+    var rootName=obsibokStartFolderName||"OneNote";
+    obsidianFolderStack=[{id:rootId,name:rootName}];
   }
   var current=obsidianFolderStack[obsidianFolderStack.length-1];
 
   c.innerHTML="<button class='sec ghost' id='obsidianfiles-back' type='button' style='margin-bottom:14px'>← Tillbaka</button>"
     +"<div class='lbl'>Obsibok</div>"
     +"<div id='obsidianfiles-breadcrumb' style='font-size:12px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:2px'></div>"
-    +"<input class='inp w100' id='obsidianfiles-search' placeholder='Sök bland alla filer...' style='margin-bottom:10px'/>"
+    +"<div style='display:flex;gap:6px;margin-bottom:10px'>"
+    +"<input class='inp w100' id='obsidianfiles-search' placeholder='Sök bland alla filer...' style='flex:1'/>"
+    +"<button id='obsidianfiles-pickroot' type='button' title='Välj var Obsibok ska leta' style='background:none;border:none;cursor:pointer;padding:4px 8px;line-height:1;flex-shrink:0;font-size:18px'>📁</button>"
+    +"</div>"
     +"<div id='obsidianfiles-list' style='font-size:13px;color:#5c5c5c;text-align:center;margin-top:14px'>Laddar...</div>";
 
   c.querySelector("#obsidianfiles-back").onclick=function(){
     obsidianFilesViewActive=false;
-    obsidianFolderStack=null; // nollställ - nästa öppning börjar om från OneNote-roten
+    obsidianFolderStack=null; // nollställ - nästa öppning börjar om från vald startmapp
     renderLogFunderingar();
+  };
+  c.querySelector("#obsidianfiles-pickroot").onclick=function(){
+    showObsidianFolderPicker(function(folderId,folderName){
+      obsibokStartFolderId=folderId;
+      obsibokStartFolderName=folderName;
+      saveNoteringSettings();
+      obsidianFolderStack=null; // börja om från den nya mappen
+      renderObsidianFilesPage();
+    });
   };
 
   var crumbEl=c.querySelector("#obsidianfiles-breadcrumb");
