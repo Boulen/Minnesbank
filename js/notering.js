@@ -120,6 +120,16 @@ function ensureGooglePickerApiLoaded(){
 // Googles egen, riktiga mappväljare (samma komponent som t.ex. Gmail använder för att
 // bifoga Drive-filer) - ersätter den tidigare egenbyggda mappnavigeraren. Startar i den
 // redan valda mappen om det finns en, annars OBSIDIAN_FOLDER_PICKER_START_ID.
+function ensureGooglePickerZIndexFix(){
+  if(document.getElementById("google-picker-zindex-fix"))return;
+  var style=document.createElement("style");
+  style.id="google-picker-zindex-fix";
+  // Googles Picker-dialog använder ett standard-z-index runt 1000, vilket hamnar UNDER vår
+  // egen ⚙️-panel (z-index:9999) - tvingar Pickern över allt annat i appen istället.
+  style.textContent=".picker-dialog-bg{z-index:10050 !important;} .picker-dialog{z-index:10051 !important;}";
+  document.head.appendChild(style);
+}
+
 async function showObsidianFolderPicker(onChosen){
   try{
     await ensureGooglePickerApiLoaded();
@@ -127,6 +137,7 @@ async function showObsidianFolderPicker(onChosen){
     showNoteringDriveError("Kunde inte ladda Google Picker",e);
     return;
   }
+  ensureGooglePickerZIndexFix();
   var startFolderId=obsidianExportRootFolderId||OBSIDIAN_FOLDER_PICKER_START_ID;
   var view=new google.picker.DocsView(google.picker.ViewId.FOLDERS)
     .setSelectFolderEnabled(true)
@@ -768,8 +779,8 @@ async function saveNoteringAnteckning(){
 // Poster utan kategori hamnar i "Övrigt". Subkategorier (bara Anteckning) blir Obsidians
 // "aliases" i frontmatter, inte taggar.
 var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank" (under OneNote) - standardmapp om ingen egen mapp valts i inställningarna
-var OBSIDIAN_FOLDER_PICKER_START_ID="1Z1nC3h7adresmsQvRgC_VabYVv0MClrK"; // var mappväljaren ("Välj mapp" i ⚙️) börjar bläddra om ingen mapp redan är vald - Blås egentliga Obsidian-valv
-var OBSIDIAN_FOLDER_PICKER_START_NAME="Minnesbank";
+var OBSIDIAN_FOLDER_PICKER_START_ID="1nT0s5QiAKMALz1cB4rmAGNNBu0MLn3y3"; // var mappväljaren ("Välj mapp" i ⚙️) börjar bläddra om ingen mapp redan är vald - "MD (Noteringar)"-mappen
+var OBSIDIAN_FOLDER_PICKER_START_NAME="MD (Noteringar)";
 var obsidianExportRootFolderId=""; // vald i ⚙️-panelen ("Välj mapp"), sparas i settings.json - tom = använd standardmappen ovan
 var obsidianExportRootFolderName=""; // visningsnamn för den valda mappen
 var OBSIDIAN_VAULT_NAME="Minnesbank"; // Obsidian-valvets namn
