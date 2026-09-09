@@ -97,18 +97,20 @@ function bindAnteckningSubPicker(container,idPrefix,getCat,selected){
 // filer visas, det är en mapp man väljer, inte en fil). Samma breadcrumb-mönster som Obsibok.
 function showObsidianFolderPicker(onChosen){
   var ov=document.createElement("div");
-  ov.style.cssText="position:fixed;inset:0;background:#0e0e0e;z-index:10020;display:flex;flex-direction:column;padding:20px;box-sizing:border-box";
-  ov.innerHTML="<div class='lbl' style='margin-bottom:10px'>Välj mapp för MD-filer</div>"
+  ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:10020;display:flex;align-items:center;justify-content:center;padding:24px 16px";
+  ov.innerHTML="<div style='background:#161616;border-radius:20px;width:100%;max-width:380px;max-height:70vh;display:flex;flex-direction:column;padding:18px;box-sizing:border-box'>"
+    +"<div class='lbl' style='margin-bottom:10px'>Välj mapp för MD-filer</div>"
     +"<div id='obsidianpicker-breadcrumb' style='font-size:12px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:2px'></div>"
-    +"<div id='obsidianpicker-list' style='flex:1;overflow-y:auto;font-size:13px;color:#5c5c5c;text-align:center;padding-top:14px'>Laddar...</div>"
+    +"<div id='obsidianpicker-list' style='flex:1;min-height:120px;max-height:40vh;overflow-y:auto;font-size:13px;color:#5c5c5c;text-align:center;padding-top:14px'>Laddar...</div>"
     +"<div style='display:flex;gap:10px;margin-top:14px;flex-shrink:0'>"
-    +"<button id='obsidianpicker-choose' class='cta-log' style='flex:1'>Välj den här mappen</button>"
+    +"<button id='obsidianpicker-choose' class='cta-log' style='flex:1'>Välj</button>"
     +"<button id='obsidianpicker-cancel' class='sec ghost' style='flex:1'>Avbryt</button>"
+    +"</div>"
     +"</div>";
   document.body.appendChild(ov);
 
-  var startId=obsidianExportRootFolderId||OBSIDIAN_VAULT_FOLDER_ID;
-  var startName=obsidianExportRootFolderName||"Minnesbank";
+  var startId=obsidianExportRootFolderId||OBSIDIAN_FOLDER_PICKER_START_ID;
+  var startName=obsidianExportRootFolderName||OBSIDIAN_FOLDER_PICKER_START_NAME;
   var stack=[{id:startId,name:startName}];
 
   ov.querySelector("#obsidianpicker-cancel").onclick=function(){ov.remove();};
@@ -463,9 +465,18 @@ function showNoteringSettings(){
         obsidianTypeRootFolderPromises={};
         obsidianCategoryFolderIds={};
         obsidianCategoryFolderPromises={};
+        // Nollställ ALLA sparade fil-referenser - annars försöker nästa export bara
+        // UPPDATERA de gamla filerna på sin gamla plats (de finns ju kvar där) istället för
+        // att skapa nya i den nyss valda mappen, eftersom koden alltid kollar obsidianFileId
+        // först. Med detta skapas allt fräscht i den nya mappen vid nästa "Skapa MD-filer".
+        anteckningHist.forEach(function(e){delete e.obsidianFileId;delete e.obsidianFilename;delete e.obsidianModifiedTime;});
+        fundHist.forEach(function(e){delete e.obsidianFileId;delete e.obsidianFilename;delete e.obsidianModifiedTime;});
+        saveNoteringAnteckning();
+        saveNoteringFundering();
         saveNoteringSettings();
         var labelEl=ov.querySelector("#ns-obsidian-folder-label");
         if(labelEl)labelEl.textContent="Sparas till: "+folderName;
+        showNoteringToastLong("Ny mapp vald - tryck \"Skapa MD-filer\" för att skapa filerna där.");
       });
     };
 
@@ -785,6 +796,8 @@ async function saveNoteringAnteckning(){
 // Poster utan kategori hamnar i "Övrigt". Subkategorier (bara Anteckning) blir Obsidians
 // "aliases" i frontmatter, inte taggar.
 var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank" (under OneNote) - standardmapp om ingen egen mapp valts i inställningarna
+var OBSIDIAN_FOLDER_PICKER_START_ID="1Z1nC3h7adresmsQvRgC_VabYVv0MClrK"; // var mappväljaren ("Välj mapp" i ⚙️) börjar bläddra om ingen mapp redan är vald - Blås egentliga Obsidian-valv
+var OBSIDIAN_FOLDER_PICKER_START_NAME="Minnesbank";
 var obsidianExportRootFolderId=""; // vald i ⚙️-panelen ("Välj mapp"), sparas i settings.json - tom = använd standardmappen ovan
 var obsidianExportRootFolderName=""; // visningsnamn för den valda mappen
 var OBSIDIAN_VAULT_NAME="Minnesbank"; // Obsidian-valvets namn
