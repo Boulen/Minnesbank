@@ -99,7 +99,8 @@ function showObsidianFolderPicker(onChosen){
   var ov=document.createElement("div");
   ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:10020;display:flex;align-items:center;justify-content:center;padding:24px 16px";
   ov.innerHTML="<div style='background:#161616;border-radius:20px;width:100%;max-width:380px;max-height:70vh;display:flex;flex-direction:column;padding:18px;box-sizing:border-box'>"
-    +"<div class='lbl' style='margin-bottom:10px'>Välj mapp för MD-filer</div>"
+    +"<div class='lbl' style='margin-bottom:4px'>Välj mapp för MD-filer</div>"
+    +"<div id='obsidianpicker-active' style='font-size:11px;color:#5c5c5c;margin-bottom:10px'></div>"
     +"<div id='obsidianpicker-breadcrumb' style='font-size:12px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:2px'></div>"
     +"<div id='obsidianpicker-list' style='flex:1;min-height:120px;max-height:40vh;overflow-y:auto;font-size:13px;color:#5c5c5c;text-align:center;padding-top:14px'>Laddar...</div>"
     +"<div style='display:flex;gap:10px;margin-top:14px;flex-shrink:0'>"
@@ -112,6 +113,9 @@ function showObsidianFolderPicker(onChosen){
   var startId=obsidianExportRootFolderId||OBSIDIAN_FOLDER_PICKER_START_ID;
   var startName=obsidianExportRootFolderName||OBSIDIAN_FOLDER_PICKER_START_NAME;
   var stack=[{id:startId,name:startName}];
+
+  var activeEl=ov.querySelector("#obsidianpicker-active");
+  activeEl.textContent="Aktiv mapp just nu: "+(obsidianExportRootFolderName||"Standard (Minnesbank)");
 
   ov.querySelector("#obsidianpicker-cancel").onclick=function(){ov.remove();};
   ov.querySelector("#obsidianpicker-choose").onclick=function(){
@@ -143,6 +147,8 @@ function showObsidianFolderPicker(onChosen){
     listEl.textContent="Laddar...";
     var folders;
     try{
+      // Ingen cache - hämtar alltid färskt innehåll från Drive, så listan speglar det
+      // faktiska, aktuella läget även om mappar precis skapats/ändrats.
       var q="'"+current.id+"' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'";
       var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id,name)&pageSize=200",{headers:{Authorization:"Bearer "+accessToken}});
       if(!r.ok)throw new Error("HTTP "+r.status);
@@ -162,10 +168,11 @@ function showObsidianFolderPicker(onChosen){
     freshListEl.style.textAlign="left";
     freshListEl.style.color="";
     freshListEl.innerHTML=folders.map(function(f){
+      var isActive=f.id===obsidianExportRootFolderId;
       return "<div class='entry' data-obsidianpickeropen='"+esc(f.id)+"' data-obsidianpickername='"+esc(f.name)+"' style='cursor:pointer'>"
         +"<div style='flex:1;display:flex;align-items:center;gap:8px'>"
-        +"<span style='font-size:15px'>📁</span>"
-        +"<span style='font-size:13px;color:#cfcfcf'>"+esc(f.name)+"</span>"
+        +"<span style='font-size:15px'>"+(isActive?"✅":"📁")+"</span>"
+        +"<span style='font-size:13px;color:"+(isActive?"#4fa8ff":"#cfcfcf")+"'>"+esc(f.name)+(isActive?" (aktiv)":"")+"</span>"
         +"</div>"
         +"<span style='color:#5c5c5c;font-size:14px'>\u203a</span>"
         +"</div>";
@@ -1000,8 +1007,16 @@ function ensureObsidianTypeRootFolder(type){
   if(obsidianTypeRootFolderPromises[name])return obsidianTypeRootFolderPromises[name];
   obsidianTypeRootFolderPromises[name]=(async function(){
     try{
-      var parentId=obsidianExportRootFolderId||OBSIDIAN_VAULT_FOLDER_ID;
-      var folderId=await obsidianFindOrCreateFolder(name,parentId);
+      var folderId;
+      if(obsidianExportRootFolderId){
+        // En egen mapp har valts i ⚙️-panelen ("Välj mapp") - använd den DIREKT, skapa INTE
+        // ännu en "Anteckning"/"Fundering"-undermapp inuti den. Annars blir det en
+        // förvirrande dubbelnästling (Anteckning/Anteckning/...), och kategori-mappar som
+        // redan ligger direkt i den valda mappen hittas aldrig av koden.
+        folderId=obsidianExportRootFolderId;
+      }else{
+        folderId=await obsidianFindOrCreateFolder(name,OBSIDIAN_VAULT_FOLDER_ID);
+      }
       obsidianTypeRootFolderIds[name]=folderId;
       obsidianTypeRootFolderPromises[name]=null;
       return folderId;

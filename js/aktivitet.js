@@ -1599,7 +1599,7 @@ function showAktivitetSettings(){
         if(i===editIdx){
           return "<span style='display:inline-flex;align-items:center;gap:4px;background:#1c3c5a;border:1px solid #4fa8ff;border-radius:8px;padding:4px 4px 4px 6px'>"
             +"<input id='as-edit-emoji' readonly value='"+esc(ct.e)+"' style='width:28px;background:none;border:none;color:#f2f2f2;font-size:13px;text-align:center;padding:2px 0;cursor:pointer'/>"
-            +"<input id='as-edit-label' value='"+esc(ct.label)+"' style='width:90px;background:none;border:none;color:#f2f2f2;font-size:13px;padding:2px 0'/>"
+            +"<input id='as-edit-label' value=\""+esc(ct.label)+"\" style='width:90px;background:none;border:none;color:#f2f2f2;font-size:13px;padding:2px 0'/>"
             +"<button id='as-edit-confirm' title='Klar' style='background:none;border:none;color:#4fa8ff;cursor:pointer;font-size:14px;padding:2px'>✓</button>"
             +"</span>";
         }
@@ -1619,7 +1619,7 @@ function showAktivitetSettings(){
         if(i===editGroupIdx){
           return "<span style='display:inline-flex;align-items:center;gap:4px;background:#1c3c5a;border:1px solid #4fa8ff;border-radius:8px;padding:4px 4px 4px 6px'>"
             +"<input id='as-editgroup-emoji' readonly value='"+esc(g.e)+"' style='width:28px;background:none;border:none;color:#f2f2f2;font-size:13px;text-align:center;padding:2px 0;cursor:pointer'/>"
-            +"<input id='as-editgroup-label' value='"+esc(g.label)+"' style='width:90px;background:none;border:none;color:#f2f2f2;font-size:13px;padding:2px 0'/>"
+            +"<input id='as-editgroup-label' value=\""+esc(g.label)+"\" style='width:90px;background:none;border:none;color:#f2f2f2;font-size:13px;padding:2px 0'/>"
             +"<button id='as-editgroup-confirm' title='Klar' style='background:none;border:none;color:#4fa8ff;cursor:pointer;font-size:14px;padding:2px'>✓</button>"
             +"</span>";
         }
