@@ -1009,7 +1009,18 @@ async function checkFolderExistsAndNotTrashed(folderId){
 function openObsidianFileByName(filename){
   var filenameNoExt=filename.replace(/\.md$/i,"");
   var vaultName=isAndroidDevice()?ANDROID_VAULT_NAME:OBSIDIAN_VAULT_NAME;
+  var didBlur=false;
+  function onBlur(){didBlur=true;}
+  window.addEventListener("blur",onBlur);
   window.location.href="obsidian://open?vault="+encodeURIComponent(vaultName)+"&file="+encodeURIComponent(filenameNoExt);
+  setTimeout(function(){
+    window.removeEventListener("blur",onBlur);
+    if(!didBlur){
+      showObsidianFolderPicker(function(folderId,folderName){
+        window.location.href="obsidian://open?vault="+encodeURIComponent(folderName)+"&file="+encodeURIComponent(filenameNoExt);
+      });
+    }
+  },1200);
 }
 
 async function saveAnteckningEntryToFixedFolderAndOpen(entry,targetFolderId){
