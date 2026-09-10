@@ -1020,6 +1020,17 @@ async function checkFolderExistsAndNotTrashed(folderId){
   }
 }
 
+function deleteObsidianFileForEntry(entry){
+  if(!entry||!entry.obsidianFileId||!accessToken)return;
+  fetch(DRIVE_API+"/"+entry.obsidianFileId,{
+    method:"PATCH",
+    headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},
+    body:JSON.stringify({trashed:true})
+  }).catch(function(e){
+    showNoteringDriveError("Kunde inte ta bort MD-filen i Drive",e);
+  });
+}
+
 var ANTECKNING_QUICK_SAVE_VAULT_NAME="Minnesbank Obsidian";
 function openObsidianFileByName(filename){
   var filenameNoExt=filename.replace(/\.md$/i,"");
@@ -1568,6 +1579,8 @@ function renderFunderingHome(){
     });
     c.querySelectorAll("[data-delfundlog]").forEach(function(btn){
       btn.onclick=function(){
+        var delFund=fundHist.find(function(f){return f.id===Number(btn.dataset.delfundlog);});
+        deleteObsidianFileForEntry(delFund);
         fundHist=fundHist.filter(function(f){return f.id!==Number(btn.dataset.delfundlog);});
         editingFundKeyLog=null;saveNoteringFundering();renderLogFunderingar();
       };
@@ -1904,6 +1917,8 @@ function renderFunderingNotisbok(){
   });
   c.querySelectorAll("[data-delfundlog]").forEach(function(btn){
     btn.onclick=function(){
+      var delFund=fundHist.find(function(f){return f.id===Number(btn.dataset.delfundlog);});
+      deleteObsidianFileForEntry(delFund);
       fundHist=fundHist.filter(function(f){return f.id!==Number(btn.dataset.delfundlog);});
       editingFundKeyLog=null;saveNoteringFundering();renderLogFunderingar();
     };
@@ -2042,6 +2057,8 @@ function renderAnteckning(){
     c.querySelectorAll("[data-delanteckninglog]").forEach(function(btn){
       btn.onclick=function(){
         confirmDelete("Vill du ta bort anteckningen?",function(){
+          var delEntry=anteckningHist.find(function(f){return f.id===Number(btn.dataset.delanteckninglog);});
+          deleteObsidianFileForEntry(delEntry);
           anteckningHist=anteckningHist.filter(function(f){return f.id!==Number(btn.dataset.delanteckninglog);});
           editingAnteckningKeyLog=null;saveNoteringAnteckning();renderLogFunderingar();
         });
@@ -2186,6 +2203,8 @@ function renderAnteckningNotisbok(){
     resultsEl.querySelectorAll("[data-delanteckninglog]").forEach(function(btn){
       btn.onclick=function(){
         confirmDelete("Vill du ta bort anteckningen?",function(){
+          var delEntry=anteckningHist.find(function(f){return f.id===Number(btn.dataset.delanteckninglog);});
+          deleteObsidianFileForEntry(delEntry);
           anteckningHist=anteckningHist.filter(function(f){return f.id!==Number(btn.dataset.delanteckninglog);});
           editingAnteckningKeyLog=null;saveNoteringAnteckning();renderLogFunderingar();
         });
