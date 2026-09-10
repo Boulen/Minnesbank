@@ -794,12 +794,20 @@ function openObsidianOrFallbackToPicker(){
   var didBlur=false;
   function onBlur(){didBlur=true;}
   window.addEventListener("blur",onBlur);
-  window.location.href="obsidian://open";
+  try{
+    window.location.href="obsidian://open";
+  }catch(e){
+    // Fångas isolerat - se motsvarande kommentar i openObsidianFileByName.
+  }
   setTimeout(function(){
     window.removeEventListener("blur",onBlur);
     if(!didBlur){
       showObsidianFolderPicker(function(folderId,folderName){
-        window.location.href="obsidian://open?vault="+encodeURIComponent(folderName);
+        try{
+          window.location.href="obsidian://open?vault="+encodeURIComponent(folderName);
+        }catch(e){
+          showNoteringDriveError("Kunde inte öppna Obsidian",e);
+        }
       });
     }
   },1200);
@@ -1014,7 +1022,14 @@ async function checkFolderExistsAndNotTrashed(folderId){
 
 function openObsidianFileByName(filename){
   var filenameNoExt=filename.replace(/\.md$/i,"");
-  window.location.href="obsidian://open?vault="+encodeURIComponent(ANTECKNING_QUICK_SAVE_VAULT_NAME)+"&file="+encodeURIComponent(filenameNoExt);
+  try{
+    window.location.href="obsidian://open?vault="+encodeURIComponent(ANTECKNING_QUICK_SAVE_VAULT_NAME)+"&file="+encodeURIComponent(filenameNoExt);
+  }catch(e){
+    // Vissa webbläsare/webbvisningar kastar ett riktigt JS-fel om obsidian:// nekas/inte är
+    // registrerat, istället för att bara tyst navigera. Fångas HÄR isolerat så det aldrig
+    // kan se ut som att sparandet i sig misslyckades (filen är redan skapad i Drive vid det
+    // här laget - det är bara öppningsförsöket som eventuellt strular).
+  }
   showObsidianFileNotFoundHelper();
 }
 
@@ -1050,7 +1065,11 @@ async function pickObsidianFileManually(){
       if(data.action===google.picker.Action.PICKED&&data.docs&&data.docs[0]){
         var file=data.docs[0];
         var nameNoExt=file.name.replace(/\.md$/i,"");
-        window.location.href="obsidian://open?vault="+encodeURIComponent(ANTECKNING_QUICK_SAVE_VAULT_NAME)+"&file="+encodeURIComponent(nameNoExt);
+        try{
+          window.location.href="obsidian://open?vault="+encodeURIComponent(ANTECKNING_QUICK_SAVE_VAULT_NAME)+"&file="+encodeURIComponent(nameNoExt);
+        }catch(e){
+          showNoteringDriveError("Kunde inte öppna filen i Obsidian",e);
+        }
       }
     })
     .build();
