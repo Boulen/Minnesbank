@@ -922,6 +922,12 @@ function obsidianUriForRelativePath(relativePath){
 function obsidianUriFor(entry,type){
   if(!entry.obsidianFileId||!entry.obsidianFilename)return null;
   var filenameNoExt=entry.obsidianFilename.replace(/\.md$/i,"");
+  if(entry.obsidianDirectSaved){
+    // Sparad direkt via Obsidian-knappen till en fast mapp utanför den vanliga
+    // valvstrukturen - bygg ingen sökväg (vi känner inte till den), slå upp på namn ensamt.
+    var vaultName=isAndroidDevice()?ANDROID_VAULT_NAME:OBSIDIAN_VAULT_NAME;
+    return "obsidian://open?vault="+encodeURIComponent(vaultName)+"&file="+encodeURIComponent(filenameNoExt);
+  }
   var segments;
   if(type==="fundering"){
     // Fundering ligger inte längre i sin egen typ/kategori-mapp - skrivs numera direkt in
@@ -1050,7 +1056,10 @@ async function saveAnteckningEntryToFixedFolderAndOpen(entry,targetFolderId){
             method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},body:content
           });
           if(pr.ok){
-            if(!entry.obsidianFilename){entry.obsidianFilename=filename;saveNoteringAnteckning();}
+            var changed=false;
+            if(!entry.obsidianFilename){entry.obsidianFilename=filename;changed=true;}
+            if(!entry.obsidianDirectSaved){entry.obsidianDirectSaved=true;changed=true;}
+            if(changed)saveNoteringAnteckning();
             openObsidianFileByName(entry.obsidianFilename||filename);
             return;
           }
@@ -1065,6 +1074,7 @@ async function saveAnteckningEntryToFixedFolderAndOpen(entry,targetFolderId){
     if(d.files&&d.files.length){
       entry.obsidianFileId=d.files[0].id;
       entry.obsidianFilename=filename;
+      entry.obsidianDirectSaved=true;
       var pr2=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
         method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},body:content
       });
@@ -1083,6 +1093,7 @@ async function saveAnteckningEntryToFixedFolderAndOpen(entry,targetFolderId){
     if(!cd.id)throw new Error("Drive returnerade inget fil-id vid skapande");
     entry.obsidianFileId=cd.id;
     entry.obsidianFilename=filename;
+    entry.obsidianDirectSaved=true; // markerar posten som redan sparad direkt via Obsidian-knappen - "Skapa MD-filer" ska hoppa över den (finns redan i MD-format på "Minnesbank Obsidian")
     saveNoteringAnteckning();
     openObsidianFileByName(filename);
   }catch(e){
@@ -1249,11 +1260,15 @@ function showNoteringToastLong(text){
 // bakgrundskörning - du ser direkt om det fungerade eller inte.
 async function exportAllToObsidian(){
   if(!accessToken){showNoteringDriveError("Kunde inte exportera","Inte inloggad mot Drive");return;}
-  var total=anteckningHist.length;
+  // Poster som redan sparats direkt via Obsidian-knappen (obsidianDirectSaved) finns redan
+  // i MD-format på "Minnesbank Obsidian" - hoppas över här, annars skulle de av misstag
+  // skapas en gång till (i fel mapp/kategori-struktur) vid vanlig "Skapa MD-filer".
+  var toExport=anteckningHist.filter(function(e){return !e.obsidianDirectSaved;});
+  var total=toExport.length;
   if(!total){showNoteringToastLong("Inga poster att exportera än.");return;}
-  for(var i=0;i<anteckningHist.length;i++)await syncEntryToObsidian(anteckningHist[i],"anteckning",null);
+  for(var i=0;i<toExport.length;i++)await syncEntryToObsidian(toExport[i],"anteckning",null);
   saveNoteringAnteckning();
-  var done=anteckningHist.filter(function(e){return e.obsidianFileId;}).length;
+  var done=toExport.filter(function(e){return e.obsidianFileId;}).length;
   showNoteringToastLong(done===total?("✅ Klart: "+done+"/"+total+" poster skrivna till Obsidian."):("⚠️ "+done+"/"+total+" poster skrivna - se felruta för resten."));
   renderLogFunderingar();
 }
