@@ -1155,10 +1155,12 @@ async function saveAnteckningEntryToFixedFolderAndOpen(entry,targetFolderId){
     entry.obsidianDirectSaved=true; // markerar posten som redan sparad direkt via Obsidian-knappen - "Skapa MD-filer" ska hoppa över den (finns redan i MD-format på "Minnesbank Obsidian")
     saveNoteringAnteckning();
     // En HELT NY fil hinner inte alltid synkas ner lokalt av Google Drive Desktop innan
-    // Obsidian försöker hitta den - därför en kort väntetid här (gäller bara nyskapade
-    // filer, inte de två fallen ovan där filen redan fanns och sannolikt redan var synkad).
+    // Obsidian försöker hitta den - 3 sekunder räckte inte i praktiken, höjt till 8. Kan
+    // fortfarande behöva höjas ytterligare beroende på hur snabbt Drive Desktop synkar på
+    // den specifika enheten - den gula reserv-knappen (manuellt val via Picker) finns kvar
+    // som fallback oavsett.
     showNoteringToastLong("Sparat - väntar på att Drive synkar filen lokalt...");
-    setTimeout(function(){openObsidianFileByName(filename);},3000);
+    setTimeout(function(){openObsidianFileByName(filename);},8000);
   }catch(e){
     showNoteringDriveError("Kunde inte spara till Obsidian",e);
   }
