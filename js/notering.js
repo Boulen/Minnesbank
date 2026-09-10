@@ -1020,6 +1020,7 @@ async function checkFolderExistsAndNotTrashed(folderId){
   }
 }
 
+var ANTECKNING_QUICK_SAVE_VAULT_NAME="Minnesbank Obsidian";
 function openObsidianFileByName(filename){
   var filenameNoExt=filename.replace(/\.md$/i,"");
   try{
