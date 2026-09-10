@@ -1149,14 +1149,11 @@ function showNoteringToastLong(text){
 // bakgrundskörning - du ser direkt om det fungerade eller inte.
 async function exportAllToObsidian(){
   if(!accessToken){showNoteringDriveError("Kunde inte exportera","Inte inloggad mot Drive");return;}
-  var total=anteckningHist.length+fundHist.length;
+  var total=anteckningHist.length;
   if(!total){showNoteringToastLong("Inga poster att exportera än.");return;}
   for(var i=0;i<anteckningHist.length;i++)await syncEntryToObsidian(anteckningHist[i],"anteckning",null);
-  for(var j=0;j<fundHist.length;j++)await syncEntryToObsidian(fundHist[j],"fundering",null);
   saveNoteringAnteckning();
-  saveNoteringFundering();
-  var done=anteckningHist.filter(function(e){return e.obsidianFileId;}).length
-    +fundHist.filter(function(e){return e.obsidianFileId;}).length;
+  var done=anteckningHist.filter(function(e){return e.obsidianFileId;}).length;
   showNoteringToastLong(done===total?("✅ Klart: "+done+"/"+total+" poster skrivna till Obsidian."):("⚠️ "+done+"/"+total+" poster skrivna - se felruta för resten."));
   renderLogFunderingar();
 }
