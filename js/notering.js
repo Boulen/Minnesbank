@@ -923,10 +923,10 @@ function obsidianUriFor(entry,type){
   if(!entry.obsidianFileId||!entry.obsidianFilename)return null;
   var filenameNoExt=entry.obsidianFilename.replace(/\.md$/i,"");
   if(entry.obsidianDirectSaved){
-    // Sparad direkt via Obsidian-knappen till en fast mapp utanför den vanliga
-    // valvstrukturen - bygg ingen sökväg (vi känner inte till den), slå upp på namn ensamt.
-    var vaultName=isAndroidDevice()?ANDROID_VAULT_NAME:OBSIDIAN_VAULT_NAME;
-    return "obsidian://open?vault="+encodeURIComponent(vaultName)+"&file="+encodeURIComponent(filenameNoExt);
+    // Sparad direkt via Obsidian-knappen till "Minnesbank Obsidian"-mappen, som är öppnad
+    // som sitt eget separata valv - valvnamnet är bekräftat (via "Copy Obsidian URL"), inte
+    // en gissning. Ingen sökväg behövs, bara filnamnet.
+    return "obsidian://open?vault="+encodeURIComponent(ANTECKNING_QUICK_SAVE_VAULT_NAME)+"&file="+encodeURIComponent(filenameNoExt);
   }
   var segments;
   if(type==="fundering"){
@@ -1014,19 +1014,47 @@ async function checkFolderExistsAndNotTrashed(folderId){
 
 function openObsidianFileByName(filename){
   var filenameNoExt=filename.replace(/\.md$/i,"");
-  var vaultName=isAndroidDevice()?ANDROID_VAULT_NAME:OBSIDIAN_VAULT_NAME;
-  var didBlur=false;
-  function onBlur(){didBlur=true;}
-  window.addEventListener("blur",onBlur);
-  window.location.href="obsidian://open?vault="+encodeURIComponent(vaultName)+"&file="+encodeURIComponent(filenameNoExt);
-  setTimeout(function(){
-    window.removeEventListener("blur",onBlur);
-    if(!didBlur){
-      showObsidianFolderPicker(function(folderId,folderName){
-        window.location.href="obsidian://open?vault="+encodeURIComponent(folderName)+"&file="+encodeURIComponent(filenameNoExt);
-      });
-    }
-  },1200);
+  window.location.href="obsidian://open?vault="+encodeURIComponent(ANTECKNING_QUICK_SAVE_VAULT_NAME)+"&file="+encodeURIComponent(filenameNoExt);
+  showObsidianFileNotFoundHelper();
+}
+
+function showObsidianFileNotFoundHelper(){
+  var el=document.createElement("div");
+  el.style.cssText="position:fixed;bottom:16px;left:16px;right:16px;max-width:420px;margin:0 auto;background:#2e2515;border:1px solid #d9b34a;color:#d9b34a;padding:10px 14px;border-radius:10px;font-size:12px;z-index:10001;text-align:center;cursor:pointer";
+  el.textContent="Hittade inte filen i Obsidian? Tryck här för att välja den manuellt.";
+  el.onclick=function(){
+    el.remove();
+    pickObsidianFileManually();
+  };
+  document.body.appendChild(el);
+  setTimeout(function(){el.remove();},10000);
+}
+
+async function pickObsidianFileManually(){
+  try{
+    await ensureGooglePickerApiLoaded();
+  }catch(e){
+    showNoteringDriveError("Kunde inte ladda Google Picker",e);
+    return;
+  }
+  ensureGooglePickerZIndexFix();
+  var view=new google.picker.DocsView(google.picker.ViewId.DOCS)
+    .setMimeTypes("text/markdown")
+    .setParent(ANTECKNING_QUICK_SAVE_FOLDER_ID);
+  var picker=new google.picker.PickerBuilder()
+    .addView(view)
+    .setOAuthToken(accessToken)
+    .setDeveloperKey(GOOGLE_PICKER_API_KEY)
+    .setTitle("Välj rätt fil i Obsidian")
+    .setCallback(function(data){
+      if(data.action===google.picker.Action.PICKED&&data.docs&&data.docs[0]){
+        var file=data.docs[0];
+        var nameNoExt=file.name.replace(/\.md$/i,"");
+        window.location.href="obsidian://open?vault="+encodeURIComponent(ANTECKNING_QUICK_SAVE_VAULT_NAME)+"&file="+encodeURIComponent(nameNoExt);
+      }
+    })
+    .build();
+  picker.setVisible(true);
 }
 
 async function saveAnteckningEntryToFixedFolderAndOpen(entry,targetFolderId){
