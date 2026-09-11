@@ -779,8 +779,8 @@ async function saveNoteringAnteckning(){
 // Poster utan kategori hamnar i "Övrigt". Subkategorier (bara Anteckning) blir Obsidians
 // "aliases" i frontmatter, inte taggar.
 var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank" (under OneNote) - standardmapp om ingen egen mapp valts i inställningarna
-var OBSIDIAN_FOLDER_PICKER_START_ID="1nT0s5QiAKMALz1cB4rmAGNNBu0MLn3y3"; // var mappväljaren ("Välj mapp" i ⚙️) börjar bläddra om ingen mapp redan är vald - "MD (Noteringar)"-mappen
-var OBSIDIAN_FOLDER_PICKER_START_NAME="MD (Noteringar)";
+var OBSIDIAN_FOLDER_PICKER_START_ID="1Z1nC3h7adresmsQvRgC_VabYVv0MClrK"; // var mappväljaren ("Välj mapp" i ⚙️ / Obsibok) börjar bläddra - en nivå ovanför "MD (Noteringar)" så den mappen själv syns och går att välja/navigera in i, istället för att öppnas direkt via setParent
+var OBSIDIAN_FOLDER_PICKER_START_NAME="Minnesbank";
 var obsidianExportRootFolderId=""; // vald i ⚙️-panelen ("Välj mapp"), sparas i settings.json - tom = använd standardmappen ovan
 var ANTECKNING_QUICK_SAVE_FOLDER_ID="1EUsKmzMo6-5BvkE2FyKweXpbfYeyMK90"; // "Minnesbank Obsidian" - snabbspara-knappen bredvid "Spara anteckning"
 var obsidianExportRootFolderName=""; // visningsnamn för den valda mappen
@@ -934,7 +934,7 @@ function obsidianUriFor(entry,type){
     // Sparad direkt via Obsidian-knappen till "Minnesbank Obsidian"-mappen, som är öppnad
     // som sitt eget separata valv - valvnamnet är bekräftat (via "Copy Obsidian URL"), inte
     // en gissning. Ingen sökväg behövs, bara filnamnet.
-    return "obsidian://open?vault="+encodeURIComponent(ANTECKNING_QUICK_SAVE_VAULT_NAME)+"&file="+encodeURIComponent(filenameNoExt);
+    return "obsidian://open?vault="+encodeURIComponent(anteckningQuickSaveVaultName())+"&file="+encodeURIComponent(filenameNoExt);
   }
   var segments;
   if(type==="fundering"){
@@ -1032,17 +1032,24 @@ function deleteObsidianFileForEntry(entry){
 }
 
 var ANTECKNING_QUICK_SAVE_VAULT_NAME="Minnesbank Obsidian";
+
+function anteckningQuickSaveVaultName(){
+  return isAndroidDevice()?ANDROID_VAULT_NAME:ANTECKNING_QUICK_SAVE_VAULT_NAME;
+}
+
 function openObsidianFileByName(filename){
   var filenameNoExt=filename.replace(/\.md$/i,"");
   try{
-    window.location.href="obsidian://open?vault="+encodeURIComponent(ANTECKNING_QUICK_SAVE_VAULT_NAME)+"&file="+encodeURIComponent(filenameNoExt);
+    window.location.href="obsidian://open?vault="+encodeURIComponent(anteckningQuickSaveVaultName())+"&file="+encodeURIComponent(filenameNoExt);
   }catch(e){
     // Vissa webbläsare/webbvisningar kastar ett riktigt JS-fel om obsidian:// nekas/inte är
     // registrerat, istället för att bara tyst navigera. Fångas HÄR isolerat så det aldrig
     // kan se ut som att sparandet i sig misslyckades (filen är redan skapad i Drive vid det
-    // här laget - det är bara öppningsförsöket som eventuellt strular).
+    // här laget - det är bara öppningsförsöket som eventuellt strular). Den manuella
+    // reserv-knappen visas bara HÄR (ett faktiskt upptäckt fel) - inte ovillkorligt varje
+    // gång, eftersom det annars visades även när allt faktiskt gick bra.
+    showObsidianFileNotFoundHelper();
   }
-  showObsidianFileNotFoundHelper();
 }
 
 function showObsidianFileNotFoundHelper(){
@@ -1078,7 +1085,7 @@ async function pickObsidianFileManually(){
         var file=data.docs[0];
         var nameNoExt=file.name.replace(/\.md$/i,"");
         try{
-          window.location.href="obsidian://open?vault="+encodeURIComponent(ANTECKNING_QUICK_SAVE_VAULT_NAME)+"&file="+encodeURIComponent(nameNoExt);
+          window.location.href="obsidian://open?vault="+encodeURIComponent(anteckningQuickSaveVaultName())+"&file="+encodeURIComponent(nameNoExt);
         }catch(e){
           showNoteringDriveError("Kunde inte öppna filen i Obsidian",e);
         }
