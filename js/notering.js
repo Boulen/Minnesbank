@@ -820,6 +820,8 @@ var obsidianFilesViewActive=false;
 var obsidianFolderStack=null; // {id,name}[] - byggs upp allteftersom man navigerar i Obsibok, nollställs när man lämnar
 var obsibokStartFolderId=""; // vald via 📁-knappen i Obsibok, sparas i settings.json - tom = använd OBSIDIAN_ONENOTE_FOLDER_ID som standard
 var obsibokStartFolderName="";
+var anteckningQuickSaveFolderId=""; // vald via 📁-knappen bredvid "Spara & öppna i Obsidian", sparas i settings.json - tom = använd ANTECKNING_QUICK_SAVE_FOLDER_ID som standard
+var anteckningQuickSaveFolderName="";
 var obsidianTagsCache={}; // fileId -> taggar[] - så samma fil inte läses om flera gånger under en session
 
 // Läser filens innehåll (bara en gång per fil, cachas) och plockar ut tags-fältet ur
@@ -922,19 +924,26 @@ var ANDROID_VAULT_NAME="DriveSyncFiles"; // valvets namn så som Obsidian känne
 // egen "Copy Obsidian URL"-funktion - matchar exakt: vault+file med %2F-kodade snedstreck
 // (HELA sökvägen kodas som en enhet via encodeURIComponent). Enda skillnaden mellan
 // dator/Android är valvets NAMN - sökvägsstrukturen är identisk.
+function buildObsidianUri(desktopVaultName,desktopRelativePath,filenameNoExt){
+  if(isAndroidDevice()){
+    return "obsidian://open?vault="+encodeURIComponent(ANDROID_VAULT_NAME)+"&file="+encodeURIComponent(filenameNoExt);
+  }
+  return "obsidian://open?vault="+encodeURIComponent(desktopVaultName)+"&file="+encodeURIComponent(desktopRelativePath);
+}
+
 function obsidianUriForRelativePath(relativePath){
-  var vaultName=isAndroidDevice()?ANDROID_VAULT_NAME:OBSIDIAN_VAULT_NAME;
-  return "obsidian://open?vault="+encodeURIComponent(vaultName)+"&file="+encodeURIComponent(relativePath);
+  var segments=relativePath.split("/");
+  var filenameNoExt=segments[segments.length-1];
+  return buildObsidianUri(OBSIDIAN_VAULT_NAME,relativePath,filenameNoExt);
 }
 
 function obsidianUriFor(entry,type){
   if(!entry.obsidianFileId||!entry.obsidianFilename)return null;
   var filenameNoExt=entry.obsidianFilename.replace(/\.md$/i,"");
   if(entry.obsidianDirectSaved){
-    // Sparad direkt via Obsidian-knappen till "Minnesbank Obsidian"-mappen, som är öppnad
-    // som sitt eget separata valv - valvnamnet är bekräftat (via "Copy Obsidian URL"), inte
-    // en gissning. Ingen sökväg behövs, bara filnamnet.
-    return "obsidian://open?vault="+encodeURIComponent(anteckningQuickSaveVaultName())+"&file="+encodeURIComponent(filenameNoExt);
+    // Sparad direkt via Obsidian-knappen till "Minnesbank Obsidian"-mappen (platt struktur,
+    // ingen undermapp) - filnamnet räcker på båda plattformarna, bara valvnamnet skiljer.
+    return buildObsidianUri(ANTECKNING_QUICK_SAVE_VAULT_NAME,filenameNoExt,filenameNoExt);
   }
   var segments;
   if(type==="fundering"){
@@ -1034,7 +1043,8 @@ function deleteObsidianFileForEntry(entry){
 var ANTECKNING_QUICK_SAVE_VAULT_NAME="Minnesbank Obsidian";
 
 function anteckningQuickSaveVaultName(){
-  return isAndroidDevice()?ANDROID_VAULT_NAME:ANTECKNING_QUICK_SAVE_VAULT_NAME;
+  if(isAndroidDevice())return ANDROID_VAULT_NAME;
+  return anteckningQuickSaveFolderName||ANTECKNING_QUICK_SAVE_VAULT_NAME;
 }
 
 function openObsidianFileByName(filename){
@@ -1074,7 +1084,7 @@ async function pickObsidianFileManually(){
   ensureGooglePickerZIndexFix();
   var view=new google.picker.DocsView(google.picker.ViewId.DOCS)
     .setMimeTypes("text/markdown")
-    .setParent(ANTECKNING_QUICK_SAVE_FOLDER_ID);
+    .setParent(anteckningQuickSaveFolderId||ANTECKNING_QUICK_SAVE_FOLDER_ID);
   var picker=new google.picker.PickerBuilder()
     .addView(view)
     .setOAuthToken(accessToken)
@@ -1363,6 +1373,10 @@ function ensureNoteringSettingsLoaded(){
           obsibokStartFolderId=data.obsibokStartFolderId;
           obsibokStartFolderName=data.obsibokStartFolderName||"";
         }
+        if(data.anteckningQuickSaveFolderId){
+          anteckningQuickSaveFolderId=data.anteckningQuickSaveFolderId;
+          anteckningQuickSaveFolderName=data.anteckningQuickSaveFolderName||"";
+        }
       }
       if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
     }catch(e){
@@ -1383,7 +1397,9 @@ async function saveNoteringSettings(){
       obsidianExportRootFolderId:obsidianExportRootFolderId,
       obsidianExportRootFolderName:obsidianExportRootFolderName,
       obsibokStartFolderId:obsibokStartFolderId,
-      obsibokStartFolderName:obsibokStartFolderName
+      obsibokStartFolderName:obsibokStartFolderName,
+      anteckningQuickSaveFolderId:anteckningQuickSaveFolderId,
+      anteckningQuickSaveFolderName:anteckningQuickSaveFolderName
     });
   }catch(e){
     showNoteringDriveError("Kunde inte spara Notering-inställningar",e);
@@ -1694,6 +1710,7 @@ async function renderObsidianFilesPage(){
 
   c.innerHTML="<button class='sec ghost' id='obsidianfiles-back' type='button' style='margin-bottom:14px'>← Tillbaka</button>"
     +"<div class='lbl'>Obsibok</div>"
+    +"<div style='font-size:11px;color:#5c5c5c;margin-bottom:8px'>Mappsystem: "+esc(obsibokStartFolderName||"OneNote (standard)")+"</div>"
     +"<div id='obsidianfiles-breadcrumb' style='font-size:12px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:2px'></div>"
     +"<div style='display:flex;gap:6px;margin-bottom:10px'>"
     +"<input class='inp w100' id='obsidianfiles-search' placeholder='Sök bland alla filer...' style='flex:1'/>"
@@ -1976,7 +1993,16 @@ function renderAnteckning(){
     +"<textarea class='ta' id='anteckningin' placeholder='En anteckning...'>"+esc(anteckningDraft)+"</textarea>"
     +"<div style='display:flex;gap:8px'>"
     +"<button class='sec' id='anteckningadd' style='flex:1'>Spara anteckning</button>"
-    +"<button type='button' id='anteckningaddobsidian' title='Spara & öppna i Obsidian' style='background:none;border:none;cursor:pointer;padding:4px 8px;line-height:1;flex-shrink:0;display:flex;align-items:center'><img src='"+OBSIDIAN_ICON_DATA_URI+"' style='width:22px;height:22px;display:block' alt='Spara i Obsidian'/></button>"
+    +"<div style='display:flex;gap:10px;align-items:center;justify-content:center;flex-shrink:0'>"
+    +"<div style='display:flex;flex-direction:column;align-items:center;gap:2px'>"
+    +"<button type='button' id='anteckningaddobsidian' title='Spara & öppna i Obsidian' style='background:none;border:none;cursor:pointer;padding:0;width:34px;height:34px;display:flex;align-items:center;justify-content:center'><img src='"+OBSIDIAN_ICON_DATA_URI+"' style='width:22px;height:22px;display:block' alt='Spara i Obsidian'/></button>"
+    +"<span id='anteckningaddobsidian-label' style='font-size:9px;color:#5c5c5c;cursor:pointer'>MD</span>"
+    +"</div>"
+    +"<div style='display:flex;flex-direction:column;align-items:center;gap:2px'>"
+    +"<button type='button' id='anteckningobsidianpickfolder' title='Välj var det ska sparas' style='background:none;border:none;cursor:pointer;padding:0;width:34px;height:34px;font-size:16px;display:flex;align-items:center;justify-content:center'>📁</button>"
+    +"<span id='anteckningobsidianpickfolder-label' style='font-size:9px;color:#5c5c5c;cursor:pointer'>"+(isAndroidDevice()?"Android":"Windows")+"</span>"
+    +"</div>"
+    +"</div>"
     +"</div>"
     +"<div class='mt20'><div class='lbl'>Senaste inlägg</div><div id='anteckning-latest-list'>"+anteckningRowsHtml(sortedTt.slice(0,anteckningVisibleCount))+"</div></div>";
 
@@ -2020,7 +2046,8 @@ function renderAnteckning(){
     anteckningDraft="";anteckningRubrikDraft="";anteckningSubSelected.length=0;saveNoteringAnteckning();syncEntryToObsidian(entry,"anteckning",saveNoteringAnteckning);renderLogFunderingar();
   };
   var anteckningAddObsidianBtn=c.querySelector("#anteckningaddobsidian");
-  if(anteckningAddObsidianBtn)anteckningAddObsidianBtn.onclick=function(){
+  var anteckningAddObsidianLabel=c.querySelector("#anteckningaddobsidian-label");
+  var handleAnteckningAddObsidian=function(){
     var txt=c.querySelector("#anteckningin").value.trim();
     if(!txt)return;
     var entry={id:Date.now(),text:txt,timestamp:new Date().toISOString()};
@@ -2031,13 +2058,27 @@ function renderAnteckning(){
     if(rubrikVal)entry.rubrik=rubrikVal;
     anteckningHist.push(entry);
     anteckningDraft="";anteckningRubrikDraft="";anteckningSubSelected.length=0;saveNoteringAnteckning();
-    // OBS: renderLogFunderingar() nedan bygger om hela sidan, så anteckningAddObsidianBtn
-    // (den lokala variabeln ovan) tappar sin koppling till DOM:en direkt efteråt - därför
-    // startas Obsidian-sparningen FÖRE omrenderingen, inte efter (annars skulle en disabled/
-    // enabled-växling på knappen aldrig synas).
-    saveAnteckningEntryToFixedFolderAndOpen(entry,ANTECKNING_QUICK_SAVE_FOLDER_ID);
+    // OBS: renderLogFunderingar() nedan bygger om hela sidan, så alla lokala DOM-referenser
+    // ovan tappar sin koppling direkt efteråt - därför startas Obsidian-sparningen FÖRE
+    // omrenderingen, inte efter.
+    saveAnteckningEntryToFixedFolderAndOpen(entry,anteckningQuickSaveFolderId||ANTECKNING_QUICK_SAVE_FOLDER_ID);
     renderLogFunderingar();
   };
+  if(anteckningAddObsidianBtn)anteckningAddObsidianBtn.onclick=handleAnteckningAddObsidian;
+  if(anteckningAddObsidianLabel)anteckningAddObsidianLabel.onclick=handleAnteckningAddObsidian;
+
+  var anteckningPickFolderBtn=c.querySelector("#anteckningobsidianpickfolder");
+  var anteckningPickFolderLabel=c.querySelector("#anteckningobsidianpickfolder-label");
+  var handleAnteckningPickFolder=function(){
+    showObsidianFolderPicker(function(folderId,folderName){
+      anteckningQuickSaveFolderId=folderId;
+      anteckningQuickSaveFolderName=folderName;
+      saveNoteringSettings();
+      renderLogFunderingar();
+    });
+  };
+  if(anteckningPickFolderBtn)anteckningPickFolderBtn.onclick=handleAnteckningPickFolder;
+  if(anteckningPickFolderLabel)anteckningPickFolderLabel.onclick=handleAnteckningPickFolder;
 
   if(editingAnteckningKeyLog){
     var editParts=editingAnteckningKeyLog.split(":");
