@@ -789,12 +789,32 @@ function isAndroidDevice(){
   return /Android/i.test(navigator.userAgent);
 }
 
-function openObsidianOrFallbackToPicker(){
-  var vaultName=isAndroidDevice()?OBSIDIAN_TOPNAV_VAULT_ANDROID:OBSIDIAN_TOPNAV_VAULT_WINDOWS;
+var OBSIDIAN_TOPNAV_VAULT_ANDROID="Mobil"; // https://drive.google.com/drive/folders/1vAPVXy_YbiQMdWBVC8jD5HRa3F6LSIe_
+var OBSIDIAN_TOPNAV_VAULT_WINDOWS_ID="16a16087049c77ce"; // Bekräftat valv-id (mer robust än namn - unikt per valv, oberoende av ev. framtida mappnamnsbyte)
+
+// Triggar en anpassad URI (obsidian://...) via en osynlig länk som klickas programmatiskt,
+// istället för att bara sätta window.location.href direkt - en känd, mer tillförlitlig
+// teknik för att få webbläsare att faktiskt lämna över till en extern app-hanterare.
+function triggerExternalUri(uri){
   try{
-    window.location.href="obsidian://open?vault="+encodeURIComponent(vaultName);
+    var a=document.createElement("a");
+    a.href=uri;
+    a.style.display="none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){a.remove();},1000);
   }catch(e){
     showNoteringDriveError("Kunde inte öppna Obsidian",e);
+  }
+}
+
+function openObsidianOrFallbackToPicker(){
+  if(isAndroidDevice()){
+    triggerExternalUri("obsidian://open?vault="+encodeURIComponent(OBSIDIAN_TOPNAV_VAULT_ANDROID));
+  }else{
+    // Använder det bekräftade valv-ID:t (från "Copy Obsidian URL"/obsidian.json) istället
+    // för namnet - lika giltigt enligt Obsidians egen dokumentation, och mer robust.
+    triggerExternalUri("obsidian://open?vault="+encodeURIComponent(OBSIDIAN_TOPNAV_VAULT_WINDOWS_ID));
   }
 }
 
