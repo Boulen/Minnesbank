@@ -782,7 +782,6 @@ var OBSIDIAN_VAULT_FOLDER_ID="1wTxwY_iqkDL3Mf4A_CiNzeJgfJVq2Zkb"; // "Minnesbank
 var OBSIDIAN_FOLDER_PICKER_START_ID="1Z1nC3h7adresmsQvRgC_VabYVv0MClrK"; // var mappväljaren ("Välj mapp" i ⚙️ / Obsibok) börjar bläddra - en nivå ovanför "MD (Noteringar)" så den mappen själv syns och går att välja/navigera in i, istället för att öppnas direkt via setParent
 var OBSIDIAN_FOLDER_PICKER_START_NAME="Minnesbank";
 var obsidianExportRootFolderId=""; // vald i ⚙️-panelen ("Välj mapp"), sparas i settings.json - tom = använd standardmappen ovan
-var ANTECKNING_QUICK_SAVE_FOLDER_ID="1EUsKmzMo6-5BvkE2FyKweXpbfYeyMK90"; // "Minnesbank Obsidian" - snabbspara-knappen bredvid "Spara anteckning"
 var obsidianExportRootFolderName=""; // visningsnamn för den valda mappen
 var OBSIDIAN_VAULT_NAME="Minnesbank"; // Obsidian-valvets namn
 
@@ -791,26 +790,12 @@ function isAndroidDevice(){
 }
 
 function openObsidianOrFallbackToPicker(){
-  var didBlur=false;
-  function onBlur(){didBlur=true;}
-  window.addEventListener("blur",onBlur);
+  var vaultName=isAndroidDevice()?OBSIDIAN_TOPNAV_VAULT_ANDROID:OBSIDIAN_TOPNAV_VAULT_WINDOWS;
   try{
-    window.location.href="obsidian://open";
+    window.location.href="obsidian://open?vault="+encodeURIComponent(vaultName);
   }catch(e){
-    // Fångas isolerat - se motsvarande kommentar i openObsidianFileByName.
+    showNoteringDriveError("Kunde inte öppna Obsidian",e);
   }
-  setTimeout(function(){
-    window.removeEventListener("blur",onBlur);
-    if(!didBlur){
-      showObsidianFolderPicker(function(folderId,folderName){
-        try{
-          window.location.href="obsidian://open?vault="+encodeURIComponent(folderName);
-        }catch(e){
-          showNoteringDriveError("Kunde inte öppna Obsidian",e);
-        }
-      });
-    }
-  },1200);
 }
 
 var OBSIDIAN_ICON_DATA_URI="data:image/png;base64,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"; // Obsidian-app-ikonen, inbäddad (96x96, komprimerad)
@@ -820,8 +805,6 @@ var obsidianFilesViewActive=false;
 var obsidianFolderStack=null; // {id,name}[] - byggs upp allteftersom man navigerar i Obsibok, nollställs när man lämnar
 var obsibokStartFolderId=""; // vald via 📁-knappen i Obsibok, sparas i settings.json - tom = använd OBSIDIAN_ONENOTE_FOLDER_ID som standard
 var obsibokStartFolderName="";
-var anteckningQuickSaveFolderId=""; // vald via 📁-knappen bredvid "Spara & öppna i Obsidian", sparas i settings.json - tom = använd ANTECKNING_QUICK_SAVE_FOLDER_ID som standard
-var anteckningQuickSaveFolderName="";
 var obsidianTagsCache={}; // fileId -> taggar[] - så samma fil inte läses om flera gånger under en session
 
 // Läser filens innehåll (bara en gång per fil, cachas) och plockar ut tags-fältet ur
@@ -1042,160 +1025,7 @@ function deleteObsidianFileForEntry(entry){
 
 var ANTECKNING_QUICK_SAVE_VAULT_NAME="Minnesbank Obsidian";
 
-function anteckningQuickSaveVaultName(){
-  if(isAndroidDevice())return ANDROID_VAULT_NAME;
-  return anteckningQuickSaveFolderName||ANTECKNING_QUICK_SAVE_VAULT_NAME;
-}
 
-function openObsidianFileByName(filename){
-  var filenameNoExt=filename.replace(/\.md$/i,"");
-  try{
-    window.location.href="obsidian://open?vault="+encodeURIComponent(anteckningQuickSaveVaultName())+"&file="+encodeURIComponent(filenameNoExt);
-  }catch(e){
-    // Vissa webbläsare/webbvisningar kastar ett riktigt JS-fel om obsidian:// nekas/inte är
-    // registrerat, istället för att bara tyst navigera. Fångas HÄR isolerat så det aldrig
-    // kan se ut som att sparandet i sig misslyckades (filen är redan skapad i Drive vid det
-    // här laget - det är bara öppningsförsöket som eventuellt strular). Den manuella
-    // reserv-knappen visas bara HÄR (ett faktiskt upptäckt fel) - inte ovillkorligt varje
-    // gång, eftersom det annars visades även när allt faktiskt gick bra.
-    showObsidianFileNotFoundHelper();
-  }
-}
-
-function showObsidianFileNotFoundHelper(){
-  var el=document.createElement("div");
-  el.style.cssText="position:fixed;bottom:16px;left:16px;right:16px;max-width:420px;margin:0 auto;background:#2e2515;border:1px solid #d9b34a;color:#d9b34a;padding:10px 14px;border-radius:10px;font-size:12px;z-index:10001;text-align:center;cursor:pointer";
-  el.textContent="Hittade inte filen i Obsidian? Tryck här för att välja den manuellt.";
-  el.onclick=function(){
-    el.remove();
-    pickObsidianFileManually();
-  };
-  document.body.appendChild(el);
-  setTimeout(function(){el.remove();},10000);
-}
-
-async function pickObsidianFileManually(){
-  try{
-    await ensureGooglePickerApiLoaded();
-  }catch(e){
-    showNoteringDriveError("Kunde inte ladda Google Picker",e);
-    return;
-  }
-  ensureGooglePickerZIndexFix();
-  var view=new google.picker.DocsView(google.picker.ViewId.DOCS)
-    .setMimeTypes("text/markdown")
-    .setParent(anteckningQuickSaveFolderId||ANTECKNING_QUICK_SAVE_FOLDER_ID);
-  var picker=new google.picker.PickerBuilder()
-    .addView(view)
-    .setOAuthToken(accessToken)
-    .setDeveloperKey(GOOGLE_PICKER_API_KEY)
-    .setTitle("Välj rätt fil i Obsidian")
-    .setCallback(function(data){
-      if(data.action===google.picker.Action.PICKED&&data.docs&&data.docs[0]){
-        var file=data.docs[0];
-        var nameNoExt=file.name.replace(/\.md$/i,"");
-        try{
-          window.location.href="obsidian://open?vault="+encodeURIComponent(anteckningQuickSaveVaultName())+"&file="+encodeURIComponent(nameNoExt);
-        }catch(e){
-          showNoteringDriveError("Kunde inte öppna filen i Obsidian",e);
-        }
-      }
-    })
-    .build();
-  picker.setVisible(true);
-}
-
-async function saveAnteckningEntryToFixedFolderAndOpen(entry,targetFolderId){
-  if(!accessToken){showNoteringDriveError("Kunde inte spara","Inte inloggad");return;}
-  var folderId=targetFolderId;
-  try{
-    var valid=await checkFolderExistsAndNotTrashed(targetFolderId);
-    if(!valid&&targetFolderId!==ANTECKNING_QUICK_SAVE_FOLDER_ID){
-      // Den valda/sparade mappen hittades inte - försök FÖRST med standardmappen
-      // ("Minnesbank Obsidian") innan Picker visas, istället för att alltid tvinga ett
-      // manuellt val. Om den sparade inställningen pekar på en mapp som inte längre finns
-      // (t.ex. borttagen av misstag) nollställs den här så nästa försök går direkt dit igen.
-      var defaultValid=await checkFolderExistsAndNotTrashed(ANTECKNING_QUICK_SAVE_FOLDER_ID);
-      if(defaultValid){
-        folderId=ANTECKNING_QUICK_SAVE_FOLDER_ID;
-        anteckningQuickSaveFolderId="";
-        anteckningQuickSaveFolderName="";
-        saveNoteringSettings();
-        valid=true;
-      }
-    }
-    if(!valid){
-      folderId=await new Promise(function(resolve){
-        showObsidianFolderPicker(function(id){resolve(id);});
-      });
-      if(!folderId){
-        showNoteringDriveError("Ingen mapp vald - posten sparades i appen men skrevs inte till Obsidian",null);
-        return;
-      }
-    }
-
-    var content=obsidianMarkdownFor(entry,"anteckning");
-    var filename=obsidianFilenameFor(entry,"anteckning");
-
-    if(entry.obsidianFileId){
-      var metaR=await fetch(DRIVE_API+"/"+entry.obsidianFileId+"?fields=trashed",{headers:{Authorization:"Bearer "+accessToken}});
-      if(metaR.ok){
-        var metaD=await metaR.json();
-        if(!metaD.trashed){
-          var pr=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
-            method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},body:content
-          });
-          if(pr.ok){
-            var changed=false;
-            if(!entry.obsidianFilename){entry.obsidianFilename=filename;changed=true;}
-            if(!entry.obsidianDirectSaved){entry.obsidianDirectSaved=true;changed=true;}
-            if(changed)saveNoteringAnteckning();
-            openObsidianFileByName(entry.obsidianFilename||filename);
-            return;
-          }
-        }
-      }
-    }
-
-    var q="name='"+filename.replace(/'/g,"\\'")+"' and '"+folderId+"' in parents and trashed=false";
-    var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id)",{headers:{Authorization:"Bearer "+accessToken}});
-    if(!r.ok)throw new Error("HTTP "+r.status+" vid sökning efter befintlig fil");
-    var d=await r.json();
-    if(d.files&&d.files.length){
-      entry.obsidianFileId=d.files[0].id;
-      entry.obsidianFilename=filename;
-      entry.obsidianDirectSaved=true;
-      var pr2=await fetch(DRIVE_UPLOAD+"/"+entry.obsidianFileId+"?uploadType=media",{
-        method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"text/markdown"},body:content
-      });
-      if(!pr2.ok)throw new Error("HTTP "+pr2.status+" vid uppdatering av hittad fil");
-      saveNoteringAnteckning();
-      openObsidianFileByName(filename);
-      return;
-    }
-
-    var form=new FormData();
-    form.append("metadata",new Blob([JSON.stringify({name:filename,parents:[folderId],mimeType:"text/markdown"})],{type:"application/json"}));
-    form.append("file",new Blob([content],{type:"text/markdown"}));
-    var cr=await fetch(DRIVE_UPLOAD+"?uploadType=multipart&fields=id",{method:"POST",headers:{Authorization:"Bearer "+accessToken},body:form});
-    if(!cr.ok)throw new Error("HTTP "+cr.status+" vid skapande av ny fil");
-    var cd=await cr.json();
-    if(!cd.id)throw new Error("Drive returnerade inget fil-id vid skapande");
-    entry.obsidianFileId=cd.id;
-    entry.obsidianFilename=filename;
-    entry.obsidianDirectSaved=true; // markerar posten som redan sparad direkt via Obsidian-knappen - "Skapa MD-filer" ska hoppa över den (finns redan i MD-format på "Minnesbank Obsidian")
-    saveNoteringAnteckning();
-    // En HELT NY fil hinner inte alltid synkas ner lokalt av Google Drive Desktop innan
-    // Obsidian försöker hitta den - 3 sekunder räckte inte i praktiken, höjt till 8. Kan
-    // fortfarande behöva höjas ytterligare beroende på hur snabbt Drive Desktop synkar på
-    // den specifika enheten - den gula reserv-knappen (manuellt val via Picker) finns kvar
-    // som fallback oavsett.
-    showNoteringToastLong("Sparat - väntar på att Drive synkar filen lokalt...");
-    setTimeout(function(){openObsidianFileByName(filename);},8000);
-  }catch(e){
-    showNoteringDriveError("Kunde inte spara till Obsidian",e);
-  }
-}
 
 function ensureObsidianTypeRootFolder(type){
   var name=obsidianTypeFolderName(type);
@@ -1387,10 +1217,6 @@ function ensureNoteringSettingsLoaded(){
           obsibokStartFolderId=data.obsibokStartFolderId;
           obsibokStartFolderName=data.obsibokStartFolderName||"";
         }
-        if(data.anteckningQuickSaveFolderId){
-          anteckningQuickSaveFolderId=data.anteckningQuickSaveFolderId;
-          anteckningQuickSaveFolderName=data.anteckningQuickSaveFolderName||"";
-        }
       }
       if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
     }catch(e){
@@ -1411,9 +1237,7 @@ async function saveNoteringSettings(){
       obsidianExportRootFolderId:obsidianExportRootFolderId,
       obsidianExportRootFolderName:obsidianExportRootFolderName,
       obsibokStartFolderId:obsibokStartFolderId,
-      obsibokStartFolderName:obsibokStartFolderName,
-      anteckningQuickSaveFolderId:anteckningQuickSaveFolderId,
-      anteckningQuickSaveFolderName:anteckningQuickSaveFolderName
+      obsibokStartFolderName:obsibokStartFolderName
     });
   }catch(e){
     showNoteringDriveError("Kunde inte spara Notering-inställningar",e);
@@ -2005,19 +1829,7 @@ function renderAnteckning(){
     +"<div class='lbl'>Rubrik (valfritt)</div>"
     +"<input class='inp w100' id='anteckningrubrik' placeholder='Rubrik...' style='margin-bottom:10px' value='"+esc(anteckningRubrikDraft)+"'/>"
     +"<textarea class='ta' id='anteckningin' placeholder='En anteckning...'>"+esc(anteckningDraft)+"</textarea>"
-    +"<div style='display:flex;gap:8px'>"
-    +"<button class='sec' id='anteckningadd' style='flex:1'>Spara anteckning</button>"
-    +"<div style='display:flex;gap:10px;align-items:center;justify-content:center;flex-shrink:0'>"
-    +"<div style='display:flex;flex-direction:column;align-items:center;gap:2px'>"
-    +"<button type='button' id='anteckningaddobsidian' title='Spara & öppna i Obsidian' style='background:none;border:none;cursor:pointer;padding:0;width:34px;height:34px;display:flex;align-items:center;justify-content:center'><img src='"+OBSIDIAN_ICON_DATA_URI+"' style='width:22px;height:22px;display:block' alt='Spara i Obsidian'/></button>"
-    +"<span id='anteckningaddobsidian-label' style='font-size:9px;color:#5c5c5c;cursor:pointer'>MD</span>"
-    +"</div>"
-    +"<div style='display:flex;flex-direction:column;align-items:center;gap:2px'>"
-    +"<button type='button' id='anteckningobsidianpickfolder' title='Välj var det ska sparas' style='background:none;border:none;cursor:pointer;padding:0;width:34px;height:34px;font-size:16px;display:flex;align-items:center;justify-content:center'>📁</button>"
-    +"<span id='anteckningobsidianpickfolder-label' style='font-size:9px;color:#5c5c5c;cursor:pointer'>"+(isAndroidDevice()?"Android":"Windows")+"</span>"
-    +"</div>"
-    +"</div>"
-    +"</div>"
+    +"<button class='sec' id='anteckningadd' style='width:100%'>Spara anteckning</button>"
     +"<div class='mt20'><div class='lbl'>Senaste inlägg</div><div id='anteckning-latest-list'>"+anteckningRowsHtml(sortedTt.slice(0,anteckningVisibleCount))+"</div></div>";
 
   var anteckningEditSubPicker=null;
@@ -2059,51 +1871,6 @@ function renderAnteckning(){
     anteckningHist.push(entry);
     anteckningDraft="";anteckningRubrikDraft="";anteckningSubSelected.length=0;saveNoteringAnteckning();syncEntryToObsidian(entry,"anteckning",saveNoteringAnteckning);renderLogFunderingar();
   };
-  var anteckningAddObsidianBtn=c.querySelector("#anteckningaddobsidian");
-  var anteckningAddObsidianLabel=c.querySelector("#anteckningaddobsidian-label");
-  var handleAnteckningAddObsidian=function(){
-    var txt=c.querySelector("#anteckningin").value.trim();
-    if(!txt)return;
-    var entry={id:Date.now(),text:txt,timestamp:new Date().toISOString()};
-    if(anteckningCatSelect)entry.category=anteckningCatSelect;
-    var chosenSubs=anteckningSubPicker.getSelected();
-    if(chosenSubs.length)entry.subcategories=chosenSubs;
-    var rubrikVal=c.querySelector("#anteckningrubrik").value.trim();
-    if(rubrikVal)entry.rubrik=rubrikVal;
-    anteckningHist.push(entry);
-    anteckningDraft="";anteckningRubrikDraft="";anteckningSubSelected.length=0;saveNoteringAnteckning();
-    // OBS: renderLogFunderingar() nedan bygger om hela sidan, så alla lokala DOM-referenser
-    // ovan tappar sin koppling direkt efteråt - därför startas Obsidian-sparningen FÖRE
-    // omrenderingen, inte efter.
-    saveAnteckningEntryToFixedFolderAndOpen(entry,anteckningQuickSaveFolderId||ANTECKNING_QUICK_SAVE_FOLDER_ID);
-    renderLogFunderingar();
-  };
-  if(anteckningAddObsidianBtn)anteckningAddObsidianBtn.onclick=handleAnteckningAddObsidian;
-  if(anteckningAddObsidianLabel)anteckningAddObsidianLabel.onclick=handleAnteckningAddObsidian;
-
-  var anteckningPickFolderBtn=c.querySelector("#anteckningobsidianpickfolder");
-  var anteckningPickFolderLabel=c.querySelector("#anteckningobsidianpickfolder-label");
-  var handleAnteckningPickFolder=function(){
-    showObsidianFolderPicker(function(folderId,folderName){
-      anteckningQuickSaveFolderId=folderId;
-      anteckningQuickSaveFolderName=folderName;
-      saveNoteringSettings();
-      renderLogFunderingar();
-    });
-  };
-  if(anteckningPickFolderBtn)anteckningPickFolderBtn.onclick=handleAnteckningPickFolder;
-  if(anteckningPickFolderLabel)anteckningPickFolderLabel.onclick=handleAnteckningPickFolder;
-
-  // Kollar i bakgrunden om mål-mappen faktiskt hittas just nu och färgar "Windows"/"Android"-
-  // texten grön (hittad) eller röd (hittas inte, Picker skulle behövas) - så man ser läget
-  // direkt utan att behöva trycka på knappen för att ta reda på det.
-  if(anteckningPickFolderLabel&&accessToken){
-    var quickSaveCheckFolderId=anteckningQuickSaveFolderId||ANTECKNING_QUICK_SAVE_FOLDER_ID;
-    checkFolderExistsAndNotTrashed(quickSaveCheckFolderId).then(function(isValid){
-      var freshLabel=document.getElementById("anteckningobsidianpickfolder-label");
-      if(freshLabel)freshLabel.style.color=isValid?"#5fb85f":"#e05252";
-    });
-  }
 
   if(editingAnteckningKeyLog){
     var editParts=editingAnteckningKeyLog.split(":");
