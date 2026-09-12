@@ -1110,6 +1110,20 @@ async function saveAnteckningEntryToFixedFolderAndOpen(entry,targetFolderId){
   var folderId=targetFolderId;
   try{
     var valid=await checkFolderExistsAndNotTrashed(targetFolderId);
+    if(!valid&&targetFolderId!==ANTECKNING_QUICK_SAVE_FOLDER_ID){
+      // Den valda/sparade mappen hittades inte - försök FÖRST med standardmappen
+      // ("Minnesbank Obsidian") innan Picker visas, istället för att alltid tvinga ett
+      // manuellt val. Om den sparade inställningen pekar på en mapp som inte längre finns
+      // (t.ex. borttagen av misstag) nollställs den här så nästa försök går direkt dit igen.
+      var defaultValid=await checkFolderExistsAndNotTrashed(ANTECKNING_QUICK_SAVE_FOLDER_ID);
+      if(defaultValid){
+        folderId=ANTECKNING_QUICK_SAVE_FOLDER_ID;
+        anteckningQuickSaveFolderId="";
+        anteckningQuickSaveFolderName="";
+        saveNoteringSettings();
+        valid=true;
+      }
+    }
     if(!valid){
       folderId=await new Promise(function(resolve){
         showObsidianFolderPicker(function(id){resolve(id);});
@@ -2079,6 +2093,17 @@ function renderAnteckning(){
   };
   if(anteckningPickFolderBtn)anteckningPickFolderBtn.onclick=handleAnteckningPickFolder;
   if(anteckningPickFolderLabel)anteckningPickFolderLabel.onclick=handleAnteckningPickFolder;
+
+  // Kollar i bakgrunden om mål-mappen faktiskt hittas just nu och färgar "Windows"/"Android"-
+  // texten grön (hittad) eller röd (hittas inte, Picker skulle behövas) - så man ser läget
+  // direkt utan att behöva trycka på knappen för att ta reda på det.
+  if(anteckningPickFolderLabel&&accessToken){
+    var quickSaveCheckFolderId=anteckningQuickSaveFolderId||ANTECKNING_QUICK_SAVE_FOLDER_ID;
+    checkFolderExistsAndNotTrashed(quickSaveCheckFolderId).then(function(isValid){
+      var freshLabel=document.getElementById("anteckningobsidianpickfolder-label");
+      if(freshLabel)freshLabel.style.color=isValid?"#5fb85f":"#e05252";
+    });
+  }
 
   if(editingAnteckningKeyLog){
     var editParts=editingAnteckningKeyLog.split(":");
