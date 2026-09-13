@@ -176,9 +176,41 @@ function showNoteringSettings(){
   var editTtIdx=null;
   var anteckningSubCat=wTt.length?wTt[0]:null; // vilken TT-kategoris subkategorier som visas just nu
   var editSubIdx=null;
+  var editingVaultKey=null; // t.ex. "android:1" - vilket valv (om något) som redigeras just nu
+  var newVaultManualValue={android:"",windows:""};
+  var newVaultManualLabel={android:"",windows:""};
 
   var ov=document.createElement("div");
   ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto";
+
+  function obsidianVaultSectionHtml(platformKey,title,list){
+    var rows=list.map(function(v,i){
+      var key=platformKey+":"+i;
+      if(editingVaultKey===key){
+        return "<div class='entry' style='flex-direction:column;gap:8px'>"
+          +"<input class='inp' id='vaultedit-value-"+key+"' placeholder='Namn eller valv-id' value='"+esc(v.value)+"' style='padding:7px 10px;font-size:13px'/>"
+          +"<input class='inp' id='vaultedit-label-"+key+"' placeholder='Eget namn (valfritt)' value='"+esc(v.label||"")+"' style='padding:7px 10px;font-size:13px'/>"
+          +"<div style='display:flex;gap:8px'>"
+          +"<button class='sec' data-vaultsave='"+key+"' style='flex:1'>Spara</button>"
+          +"<button class='sec ghost' data-vaultcancel='"+key+"' style='flex:1'>Avbryt</button>"
+          +"</div></div>";
+      }
+      return "<div class='entry'>"
+        +"<div style='flex:1;font-size:13px;color:#cfcfcf'>"+esc(v.label||v.value)+(v.label&&v.label!==v.value?"<div style='font-size:11px;color:#5c5c5c'>"+esc(v.value)+"</div>":"")+"</div>"
+        +"<button class='delbtn' data-vaultedit='"+key+"' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>✏️</button>"
+        +"<button class='delbtn' data-vaultdel='"+key+"'>x</button>"
+        +"</div>";
+    }).join("")||"<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Inga valv tillagda ännu.</div>";
+    return "<div class='lbl' style='margin-top:14px'>"+esc(title)+"</div>"
+      +rows
+      +"<div style='display:flex;gap:8px;margin-top:8px'>"
+      +"<button class='sec ghost' data-vaultpick='"+platformKey+"' style='flex:1'>📁 Välj via Picker</button>"
+      +"</div>"
+      +"<div style='display:flex;gap:6px;margin-top:6px'>"
+      +"<input class='inp' id='vaultmanual-value-"+platformKey+"' placeholder='Namn eller valv-id' value='"+esc(newVaultManualValue[platformKey])+"' style='flex:1;padding:7px 10px;font-size:13px'/>"
+      +"<button class='chip' data-vaultaddmanual='"+platformKey+"' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
+      +"</div>";
+  }
 
   function simpleChipsHtml(arr,editIdx,prefix,emptyMsg){
     if(!arr.length)return "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>"+emptyMsg+"</div>";
@@ -244,6 +276,10 @@ function showNoteringSettings(){
           +"<button class='chip' id='ns-newsub-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
           +"</div>"
         : "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Lägg till minst en Anteckningar-kategori ovan först.</div>")
+
+      +"<div class='lbl' style='margin-top:18px'>Obsidian-valv (Öppna valv-knappen)</div>"
+      +obsidianVaultSectionHtml("android","Android",obsidianVaultsAndroid)
+      +obsidianVaultSectionHtml("windows","Windows",obsidianVaultsWindows)
 
       +"<div class='lbl' style='margin-top:18px'>Data & backup</div>"
       // OBS: "Data & backup" ska alltid ligga SIST i panelen, precis som i Aktivitets mönster.
@@ -350,6 +386,73 @@ function showNoteringSettings(){
   function bindPanel(){
     ov.querySelector("#ns-close").onclick=function(){ov.remove();};
     ov.querySelector("#ns-cancel").onclick=function(){ov.remove();};
+
+    function vaultListFor(platformKey){
+      return platformKey==="android"?obsidianVaultsAndroid:obsidianVaultsWindows;
+    }
+    ov.querySelectorAll("[data-vaultedit]").forEach(function(btn){
+      btn.onclick=function(){editingVaultKey=btn.dataset.vaultedit;rerender();};
+    });
+    ov.querySelectorAll("[data-vaultcancel]").forEach(function(btn){
+      btn.onclick=function(){editingVaultKey=null;rerender();};
+    });
+    ov.querySelectorAll("[data-vaultdel]").forEach(function(btn){
+      btn.onclick=function(){
+        var parts=btn.dataset.vaultdel.split(":");
+        var list=vaultListFor(parts[0]);
+        var removedValue=list[Number(parts[1])]&&list[Number(parts[1])].value;
+        list.splice(Number(parts[1]),1);
+        // Om det borttagna valvet var det aktivt VALDA för den plattformen, nollställ valet.
+        if(parts[0]==="android"&&obsidianSelectedVaultAndroid===removedValue)obsidianSelectedVaultAndroid="";
+        if(parts[0]==="windows"&&obsidianSelectedVaultWindows===removedValue)obsidianSelectedVaultWindows="";
+        saveNoteringSettings();
+        editingVaultKey=null;
+        rerender();
+      };
+    });
+    ov.querySelectorAll("[data-vaultsave]").forEach(function(btn){
+      btn.onclick=function(){
+        var key=btn.dataset.vaultsave;
+        var parts=key.split(":");
+        var list=vaultListFor(parts[0]);
+        var valueEl=ov.querySelector("#vaultedit-value-"+key);
+        var labelEl=ov.querySelector("#vaultedit-label-"+key);
+        var newValue=valueEl.value.trim();
+        if(!newValue){alert("Namn eller valv-id kan inte vara tomt.");return;}
+        var oldValue=list[Number(parts[1])].value;
+        list[Number(parts[1])]={value:newValue,label:labelEl.value.trim()||newValue};
+        if(parts[0]==="android"&&obsidianSelectedVaultAndroid===oldValue)obsidianSelectedVaultAndroid=newValue;
+        if(parts[0]==="windows"&&obsidianSelectedVaultWindows===oldValue)obsidianSelectedVaultWindows=newValue;
+        saveNoteringSettings();
+        editingVaultKey=null;
+        rerender();
+      };
+    });
+    ov.querySelectorAll("[data-vaultaddmanual]").forEach(function(btn){
+      btn.onclick=function(){
+        var platformKey=btn.dataset.vaultaddmanual;
+        var inp=ov.querySelector("#vaultmanual-value-"+platformKey);
+        var value=inp.value.trim();
+        if(!value)return;
+        vaultListFor(platformKey).push({value:value,label:value});
+        newVaultManualValue[platformKey]="";
+        saveNoteringSettings();
+        rerender();
+      };
+    });
+    ov.querySelectorAll("[data-vaultpick]").forEach(function(btn){
+      btn.onclick=function(){
+        var platformKey=btn.dataset.vaultpick;
+        showObsidianFolderPicker(function(folderId,folderName){
+          var list=vaultListFor(platformKey);
+          if(!list.some(function(v){return v.value===folderName;})){
+            list.push({value:folderName,label:folderName});
+          }
+          saveNoteringSettings();
+          rerender();
+        });
+      };
+    });
 
     ov.querySelector("#ns-fund-sort").onclick=function(){
       wFund.sort(function(a,b){return a.localeCompare(b,"sv");});
@@ -789,9 +892,6 @@ function isAndroidDevice(){
   return /Android/i.test(navigator.userAgent);
 }
 
-var OBSIDIAN_TOPNAV_VAULT_ANDROID="Mobil"; // https://drive.google.com/drive/folders/1vAPVXy_YbiQMdWBVC8jD5HRa3F6LSIe_
-var OBSIDIAN_TOPNAV_VAULT_WINDOWS_ID="16a16087049c77ce"; // Bekräftat valv-id (mer robust än namn - unikt per valv, oberoende av ev. framtida mappnamnsbyte)
-
 // Triggar en anpassad URI (obsidian://...) via en osynlig länk som klickas programmatiskt,
 // istället för att bara sätta window.location.href direkt - en känd, mer tillförlitlig
 // teknik för att få webbläsare att faktiskt lämna över till en extern app-hanterare.
@@ -808,14 +908,16 @@ function triggerExternalUri(uri){
   }
 }
 
-function openObsidianOrFallbackToPicker(){
-  if(isAndroidDevice()){
-    triggerExternalUri("obsidian://open?vault="+encodeURIComponent(OBSIDIAN_TOPNAV_VAULT_ANDROID));
-  }else{
-    // Använder det bekräftade valv-ID:t (från "Copy Obsidian URL"/obsidian.json) istället
-    // för namnet - lika giltigt enligt Obsidians egen dokumentation, och mer robust.
-    triggerExternalUri("obsidian://open?vault="+encodeURIComponent(OBSIDIAN_TOPNAV_VAULT_WINDOWS_ID));
+// Öppnar det valv som är valt i dropdown-menyn för AKTUELL plattform - helt separata val
+// för Android/Windows (se currentPlatformVaultList/getSelectedVaultValue ovan). Ersätter de
+// tidigare hårdkodade "Mobil"/valv-id-gissningarna - nu styr Blå detta själv i ⚙️-panelen.
+function openSelectedVault(){
+  var value=getSelectedVaultValue();
+  if(!value){
+    showNoteringDriveError("Inget valv valt - lägg till och välj ett i ⚙️-panelen",null);
+    return;
   }
+  triggerExternalUri("obsidian://open?vault="+encodeURIComponent(value));
 }
 
 var OBSIDIAN_ICON_DATA_URI="data:image/png;base64,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"; // Obsidian-app-ikonen, inbäddad (96x96, komprimerad)
@@ -826,6 +928,30 @@ var obsidianFolderStack=null; // {id,name}[] - byggs upp allteftersom man navige
 var obsibokStartFolderId=""; // vald via 📁-knappen i Obsibok, sparas i settings.json - tom = använd OBSIDIAN_ONENOTE_FOLDER_ID som standard
 var obsibokStartFolderName="";
 var obsidianTagsCache={}; // fileId -> taggar[] - så samma fil inte läses om flera gånger under en session
+var OBSIDIAN_UNCATEGORIZED_FOLDER_NAME="Övrigt";
+
+// Egna, valfria valv för "Öppna valv"-knappen - helt separata listor/val för Android och
+// Windows (delas via samma settings.json, men påverkar aldrig varandra). Varje post är
+// {value, label} - value är det som faktiskt skickas som vault= i URI:n (namn ELLER
+// Obsidians interna valv-id, båda giltiga enligt Obsidians egen dokumentation), label är
+// vad som visas i dropdown-menyn (samma som value om inget eget angetts).
+var obsidianVaultsAndroid=[{value:"Mobil",label:"Mobil"}];
+var obsidianVaultsWindows=[{value:"16a16087049c77ce",label:"Dator"}]; // bekräftat valv-id (mer robust än namn)
+var obsidianSelectedVaultAndroid="";
+var obsidianSelectedVaultWindows="";
+
+function currentPlatformVaultList(){
+  return isAndroidDevice()?obsidianVaultsAndroid:obsidianVaultsWindows;
+}
+function setCurrentPlatformVaultList(list){
+  if(isAndroidDevice())obsidianVaultsAndroid=list;else obsidianVaultsWindows=list;
+}
+function getSelectedVaultValue(){
+  return isAndroidDevice()?obsidianSelectedVaultAndroid:obsidianSelectedVaultWindows;
+}
+function setSelectedVaultValue(v){
+  if(isAndroidDevice())obsidianSelectedVaultAndroid=v;else obsidianSelectedVaultWindows=v;
+}
 
 // Läser filens innehåll (bara en gång per fil, cachas) och plockar ut tags-fältet ur
 // frontmatter. Tål både det format appen själv skriver ("tags: [\"a\", \"b\"]") och ett
@@ -865,7 +991,6 @@ function parseTagsFromContent(content){
   return [];
 }
 
-var OBSIDIAN_UNCATEGORIZED_FOLDER_NAME="Övrigt";
 var obsidianTypeRootFolderIds={};
 var obsidianTypeRootFolderPromises={};
 var obsidianCategoryFolderIds={};
@@ -940,26 +1065,7 @@ function obsidianUriForRelativePath(relativePath){
   return buildObsidianUri(OBSIDIAN_VAULT_NAME,relativePath,filenameNoExt);
 }
 
-function obsidianUriFor(entry,type){
-  if(!entry.obsidianFileId||!entry.obsidianFilename)return null;
-  var filenameNoExt=entry.obsidianFilename.replace(/\.md$/i,"");
-  if(entry.obsidianDirectSaved){
-    // Sparad direkt via Obsidian-knappen till "Minnesbank Obsidian"-mappen (platt struktur,
-    // ingen undermapp) - filnamnet räcker på båda plattformarna, bara valvnamnet skiljer.
-    return buildObsidianUri(ANTECKNING_QUICK_SAVE_VAULT_NAME,filenameNoExt,filenameNoExt);
-  }
-  var segments;
-  if(type==="fundering"){
-    // Fundering ligger inte längre i sin egen typ/kategori-mapp - skrivs numera direkt in
-    // i samma "Anteckning"-mapp som Anteckning använder.
-    segments=OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/").concat(["Anteckning",filenameNoExt]);
-  }else{
-    var typeName=obsidianTypeFolderName(type);
-    var catName=obsidianFolderNameForCategory(entry.category);
-    segments=OBSIDIAN_VAULT_RELATIVE_PREFIX.split("/").concat([typeName,catName,filenameNoExt]);
-  }
-  return obsidianUriForRelativePath(segments.join("/"));
-}
+
 
 // Bygger en obsidian://-länk utifrån en sökväg RELATIV TILL "OneNote"-mappen - t.ex.
 // "Volvo/Volvo/Motor.md" eller "Minnesbank/Anteckning/Arbete/Pall storlek.md".
@@ -1043,7 +1149,6 @@ function deleteObsidianFileForEntry(entry){
   });
 }
 
-var ANTECKNING_QUICK_SAVE_VAULT_NAME="Minnesbank Obsidian";
 
 
 
@@ -1237,6 +1342,10 @@ function ensureNoteringSettingsLoaded(){
           obsibokStartFolderId=data.obsibokStartFolderId;
           obsibokStartFolderName=data.obsibokStartFolderName||"";
         }
+        if(data.obsidianVaultsAndroid)obsidianVaultsAndroid=data.obsidianVaultsAndroid;
+        if(data.obsidianVaultsWindows)obsidianVaultsWindows=data.obsidianVaultsWindows;
+        if(data.obsidianSelectedVaultAndroid)obsidianSelectedVaultAndroid=data.obsidianSelectedVaultAndroid;
+        if(data.obsidianSelectedVaultWindows)obsidianSelectedVaultWindows=data.obsidianSelectedVaultWindows;
       }
       if(document.getElementById("body")&&view==="funderingar")renderLogFunderingar();
     }catch(e){
@@ -1257,7 +1366,11 @@ async function saveNoteringSettings(){
       obsidianExportRootFolderId:obsidianExportRootFolderId,
       obsidianExportRootFolderName:obsidianExportRootFolderName,
       obsibokStartFolderId:obsibokStartFolderId,
-      obsibokStartFolderName:obsibokStartFolderName
+      obsibokStartFolderName:obsibokStartFolderName,
+      obsidianVaultsAndroid:obsidianVaultsAndroid,
+      obsidianVaultsWindows:obsidianVaultsWindows,
+      obsidianSelectedVaultAndroid:obsidianSelectedVaultAndroid,
+      obsidianSelectedVaultWindows:obsidianSelectedVaultWindows
     });
   }catch(e){
     showNoteringDriveError("Kunde inte spara Notering-inställningar",e);
@@ -1313,7 +1426,6 @@ function fundRow(f,prefix){
     +"<div style='white-space:pre-wrap;font-weight:400;line-height:1.45;font-size:13px;color:#cfcfcf'>"+esc(f.text)+"</div>"
     +"<div class='etime'>"+fd(f.timestamp)+"</div>"
     +"</div>"
-    +(f.obsidianFileId&&f.obsidianFilename?"<a class='delbtn' href='"+esc(obsidianUriFor(f,"fundering")||"#")+"' title='Öppna i Obsidian' style='color:#5c5c5c;font-size:14px;padding:2px 6px;text-decoration:none;display:inline-flex;align-items:center'>🔗</a>":"")
     +"<button class='delbtn' data-pinfundlog='"+f.id+"' title='"+(f.pinned?"Ta bort pin":"Pinna")+"' style='color:"+(f.pinned?"#4fa8ff":"#5c5c5c")+";font-size:14px;padding:2px 6px'>📌</button>"
     +"<button class='delbtn' data-editfundlog='"+prefix+":"+f.id+"' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>✏️</button>"
     +"<button class='delbtn' data-delfundlog='"+f.id+"'>x</button>"
@@ -1343,7 +1455,6 @@ function anteckningRow(f,prefix){
     +"<div style='white-space:pre-wrap;font-weight:400;line-height:1.45;font-size:13px;color:#cfcfcf'>"+esc(f.text)+"</div>"
     +"<div class='etime'>"+fd(f.timestamp)+"</div>"
     +"</div>"
-    +(f.obsidianFileId&&f.obsidianFilename?"<a class='delbtn' href='"+esc(obsidianUriFor(f,"anteckning")||"#")+"' title='Öppna i Obsidian' style='color:#5c5c5c;font-size:14px;padding:2px 6px;text-decoration:none;display:inline-flex;align-items:center'>🔗</a>":"")
     +"<button class='delbtn' data-pinanteckninglog='"+f.id+"' title='"+(f.pinned?"Ta bort pin":"Pinna")+"' style='color:"+(f.pinned?"#4fa8ff":"#5c5c5c")+";font-size:14px;padding:2px 6px'>📌</button>"
     +"<button class='delbtn' data-editanteckninglog='"+prefix+":"+f.id+"' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>✏️</button>"
     +"<button class='delbtn' data-delanteckninglog='"+f.id+"'>x</button>"
@@ -1373,12 +1484,17 @@ function renderLogFunderingar(){
   // från Noterings sida i väntan på den.
   ensureNoteringSettingsLoaded().then(function(){return ensureNoteringDataLoaded();});
   var hideTopButtons=notisbokActive||obsidianFilesViewActive;
+  var vaultDropdownOptions="<option value=''"+(!getSelectedVaultValue()?" selected":"")+">"+(isAndroidDevice()?"Android":"Windows")+"</option>"
+    +currentPlatformVaultList().map(function(v){
+      return "<option value='"+esc(v.value)+"'"+(v.value===getSelectedVaultValue()?" selected":"")+">"+esc(v.label||v.value)+"</option>";
+    }).join("");
   var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:6px'>"
     +"<div style='flex:1;display:grid;grid-template-columns:1fr 1fr;gap:6px'>"
     +"<button class='mode-btn"+(funderingarSubview==="anteckning"?" on":"")+"' data-fundsub='anteckning' style='font-size:12px'>Anteckning</button>"
     +"<button class='mode-btn"+(funderingarSubview==="fundering"?" on":"")+"' data-fundsub='fundering' style='font-size:12px'>Fundering</button>"
     +"</div>"
-    +"<button id='notering-open-obsidian-btn' type='button' title='Öppna Obsidian' style='background:none;border:none;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0;display:flex;align-items:center'><img src='"+OBSIDIAN_ICON_DATA_URI+"' style='width:20px;height:20px;display:block' alt='Obsidian'/></button>"
+    +"<select id='notering-vault-select' style='max-width:90px;background:#161616;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:11px;padding:0 4px;cursor:pointer;font-family:inherit;flex-shrink:0'>"+vaultDropdownOptions+"</select>"
+    +"<button id='notering-open-obsidian-btn' type='button' title='Öppna valv' style='background:none;border:none;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0;display:flex;align-items:center'><img src='"+OBSIDIAN_ICON_DATA_URI+"' style='width:20px;height:20px;display:block' alt='Obsidian'/></button>"
     +"<button id='notering-settings-btn' type='button' title='Inställningar' style='background:none;border:none;color:#6b6880;font-size:20px;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0'>⚙️</button>"
     +"</div>"
     +(hideTopButtons?"":"<button class='sec ghost' id='notering-notisbok-btn' type='button' style='width:100%;margin-bottom:14px'>📓 Notisbok</button>");
@@ -1393,9 +1509,14 @@ function renderLogFunderingar(){
     settingsBtn.disabled=false;settingsBtn.style.opacity="1";
     showNoteringSettings();
   };
+  var vaultSelect=c.querySelector("#notering-vault-select");
+  if(vaultSelect)vaultSelect.onchange=function(){
+    setSelectedVaultValue(vaultSelect.value);
+    saveNoteringSettings();
+  };
   var openObsidianBtn=c.querySelector("#notering-open-obsidian-btn");
   if(openObsidianBtn)openObsidianBtn.onclick=function(){
-    openObsidianOrFallbackToPicker();
+    openSelectedVault();
   };
   var notisbokBtn=c.querySelector("#notering-notisbok-btn");
   if(notisbokBtn)notisbokBtn.onclick=function(){
