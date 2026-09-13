@@ -176,40 +176,29 @@ function showNoteringSettings(){
   var editTtIdx=null;
   var anteckningSubCat=wTt.length?wTt[0]:null; // vilken TT-kategoris subkategorier som visas just nu
   var editSubIdx=null;
-  var editingVaultKey=null; // t.ex. "android:1" - vilket valv (om något) som redigeras just nu
-  var newVaultManualValue={android:"",windows:""};
-  var newVaultManualLabel={android:"",windows:""};
+  var vaultSelectedIdx={android:0,windows:0}; // vilket index som är markerat i respektive dropdown just nu (styr vad ↑/↓/x verkar på)
 
   var ov=document.createElement("div");
   ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto";
 
   function obsidianVaultSectionHtml(platformKey,title,list){
-    var rows=list.map(function(v,i){
-      var key=platformKey+":"+i;
-      if(editingVaultKey===key){
-        return "<div class='entry' style='flex-direction:column;gap:8px'>"
-          +"<input class='inp' id='vaultedit-value-"+key+"' placeholder='Namn eller valv-id' value='"+esc(v.value)+"' style='padding:7px 10px;font-size:13px'/>"
-          +"<input class='inp' id='vaultedit-label-"+key+"' placeholder='Eget namn (valfritt)' value='"+esc(v.label||"")+"' style='padding:7px 10px;font-size:13px'/>"
-          +"<div style='display:flex;gap:8px'>"
-          +"<button class='sec' data-vaultsave='"+key+"' style='flex:1'>Spara</button>"
-          +"<button class='sec ghost' data-vaultcancel='"+key+"' style='flex:1'>Avbryt</button>"
-          +"</div></div>";
-      }
-      return "<div class='entry'>"
-        +"<div style='flex:1;font-size:13px;color:#cfcfcf'>"+esc(v.label||v.value)+(v.label&&v.label!==v.value?"<div style='font-size:11px;color:#5c5c5c'>"+esc(v.value)+"</div>":"")+"</div>"
-        +"<button class='delbtn' data-vaultedit='"+key+"' style='color:#5c5c5c;font-size:14px;padding:2px 6px'>✏️</button>"
-        +"<button class='delbtn' data-vaultdel='"+key+"'>x</button>"
-        +"</div>";
-    }).join("")||"<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Inga valv tillagda ännu.</div>";
+    if(!list.length){
+      return "<div class='lbl' style='margin-top:14px'>"+esc(title)+"</div>"
+        +"<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Inga valv tillagda ännu.</div>"
+        +"<button class='sec ghost' data-vaultpick='"+platformKey+"' style='width:100%;margin-top:6px'>📁 Välj via Picker</button>";
+    }
+    var selIdx=Math.min(vaultSelectedIdx[platformKey]||0,list.length-1);
+    var options=list.map(function(v,i){
+      return "<option value='"+i+"'"+(i===selIdx?" selected":"")+">"+esc(v.label||v.value)+"</option>";
+    }).join("");
     return "<div class='lbl' style='margin-top:14px'>"+esc(title)+"</div>"
-      +rows
-      +"<div style='display:flex;gap:8px;margin-top:8px'>"
-      +"<button class='sec ghost' data-vaultpick='"+platformKey+"' style='flex:1'>📁 Välj via Picker</button>"
+      +"<div style='display:flex;gap:6px;align-items:center'>"
+      +"<select id='vaultorder-select-"+platformKey+"' style='flex:1;background:#161616;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:7px 8px;font-family:inherit'>"+options+"</select>"
+      +"<button class='chip' data-vaultup='"+platformKey+"' type='button' style='flex-shrink:0;padding:7px 10px;font-size:13px'>↑</button>"
+      +"<button class='chip' data-vaultdown='"+platformKey+"' type='button' style='flex-shrink:0;padding:7px 10px;font-size:13px'>↓</button>"
+      +"<button class='delbtn' data-vaultremove='"+platformKey+"' style='flex-shrink:0'>x</button>"
       +"</div>"
-      +"<div style='display:flex;gap:6px;margin-top:6px'>"
-      +"<input class='inp' id='vaultmanual-value-"+platformKey+"' placeholder='Namn eller valv-id' value='"+esc(newVaultManualValue[platformKey])+"' style='flex:1;padding:7px 10px;font-size:13px'/>"
-      +"<button class='chip' data-vaultaddmanual='"+platformKey+"' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
-      +"</div>";
+      +"<button class='sec ghost' data-vaultpick='"+platformKey+"' style='width:100%;margin-top:6px'>📁 Välj via Picker</button>";
   }
 
   function simpleChipsHtml(arr,editIdx,prefix,emptyMsg){
@@ -390,52 +379,48 @@ function showNoteringSettings(){
     function vaultListFor(platformKey){
       return platformKey==="android"?obsidianVaultsAndroid:obsidianVaultsWindows;
     }
-    ov.querySelectorAll("[data-vaultedit]").forEach(function(btn){
-      btn.onclick=function(){editingVaultKey=btn.dataset.vaultedit;rerender();};
+    ["android","windows"].forEach(function(platformKey){
+      var sel=ov.querySelector("#vaultorder-select-"+platformKey);
+      if(sel)sel.onchange=function(){vaultSelectedIdx[platformKey]=Number(sel.value);};
     });
-    ov.querySelectorAll("[data-vaultcancel]").forEach(function(btn){
-      btn.onclick=function(){editingVaultKey=null;rerender();};
-    });
-    ov.querySelectorAll("[data-vaultdel]").forEach(function(btn){
+    ov.querySelectorAll("[data-vaultup]").forEach(function(btn){
       btn.onclick=function(){
-        var parts=btn.dataset.vaultdel.split(":");
-        var list=vaultListFor(parts[0]);
-        var removedValue=list[Number(parts[1])]&&list[Number(parts[1])].value;
-        list.splice(Number(parts[1]),1);
+        var platformKey=btn.dataset.vaultup;
+        var list=vaultListFor(platformKey);
+        var sel=ov.querySelector("#vaultorder-select-"+platformKey);
+        var idx=Number(sel.value);
+        if(idx<=0)return;
+        var tmp=list[idx-1];list[idx-1]=list[idx];list[idx]=tmp;
+        vaultSelectedIdx[platformKey]=idx-1;
+        saveNoteringSettings();
+        rerender();
+      };
+    });
+    ov.querySelectorAll("[data-vaultdown]").forEach(function(btn){
+      btn.onclick=function(){
+        var platformKey=btn.dataset.vaultdown;
+        var list=vaultListFor(platformKey);
+        var sel=ov.querySelector("#vaultorder-select-"+platformKey);
+        var idx=Number(sel.value);
+        if(idx>=list.length-1)return;
+        var tmp=list[idx+1];list[idx+1]=list[idx];list[idx]=tmp;
+        vaultSelectedIdx[platformKey]=idx+1;
+        saveNoteringSettings();
+        rerender();
+      };
+    });
+    ov.querySelectorAll("[data-vaultremove]").forEach(function(btn){
+      btn.onclick=function(){
+        var platformKey=btn.dataset.vaultremove;
+        var list=vaultListFor(platformKey);
+        var sel=ov.querySelector("#vaultorder-select-"+platformKey);
+        var idx=Number(sel.value);
+        var removedValue=list[idx]&&list[idx].value;
+        list.splice(idx,1);
         // Om det borttagna valvet var det aktivt VALDA för den plattformen, nollställ valet.
-        if(parts[0]==="android"&&obsidianSelectedVaultAndroid===removedValue)obsidianSelectedVaultAndroid="";
-        if(parts[0]==="windows"&&obsidianSelectedVaultWindows===removedValue)obsidianSelectedVaultWindows="";
-        saveNoteringSettings();
-        editingVaultKey=null;
-        rerender();
-      };
-    });
-    ov.querySelectorAll("[data-vaultsave]").forEach(function(btn){
-      btn.onclick=function(){
-        var key=btn.dataset.vaultsave;
-        var parts=key.split(":");
-        var list=vaultListFor(parts[0]);
-        var valueEl=ov.querySelector("#vaultedit-value-"+key);
-        var labelEl=ov.querySelector("#vaultedit-label-"+key);
-        var newValue=valueEl.value.trim();
-        if(!newValue){alert("Namn eller valv-id kan inte vara tomt.");return;}
-        var oldValue=list[Number(parts[1])].value;
-        list[Number(parts[1])]={value:newValue,label:labelEl.value.trim()||newValue};
-        if(parts[0]==="android"&&obsidianSelectedVaultAndroid===oldValue)obsidianSelectedVaultAndroid=newValue;
-        if(parts[0]==="windows"&&obsidianSelectedVaultWindows===oldValue)obsidianSelectedVaultWindows=newValue;
-        saveNoteringSettings();
-        editingVaultKey=null;
-        rerender();
-      };
-    });
-    ov.querySelectorAll("[data-vaultaddmanual]").forEach(function(btn){
-      btn.onclick=function(){
-        var platformKey=btn.dataset.vaultaddmanual;
-        var inp=ov.querySelector("#vaultmanual-value-"+platformKey);
-        var value=inp.value.trim();
-        if(!value)return;
-        vaultListFor(platformKey).push({value:value,label:value});
-        newVaultManualValue[platformKey]="";
+        if(platformKey==="android"&&obsidianSelectedVaultAndroid===removedValue)obsidianSelectedVaultAndroid="";
+        if(platformKey==="windows"&&obsidianSelectedVaultWindows===removedValue)obsidianSelectedVaultWindows="";
+        vaultSelectedIdx[platformKey]=Math.max(0,idx-1);
         saveNoteringSettings();
         rerender();
       };
@@ -447,6 +432,7 @@ function showNoteringSettings(){
           var list=vaultListFor(platformKey);
           if(!list.some(function(v){return v.value===folderName;})){
             list.push({value:folderName,label:folderName});
+            vaultSelectedIdx[platformKey]=list.length-1;
           }
           saveNoteringSettings();
           rerender();
