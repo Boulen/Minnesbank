@@ -75,14 +75,58 @@ function updateHandelser(c){
   renderAktivitetSenaste();
 }
 
+function aktivitetDayKey(d){return d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate();}
+function aktivitetWeekKey(d){
+  // ISO-vecka (måndag som första dag).
+  var dt=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
+  var dayNum=(dt.getUTCDay()+6)%7;
+  dt.setUTCDate(dt.getUTCDate()-dayNum+3);
+  var firstThursday=new Date(Date.UTC(dt.getUTCFullYear(),0,4));
+  var week=1+Math.round(((dt-firstThursday)/86400000-3+((firstThursday.getUTCDay()+6)%7))/7);
+  return dt.getUTCFullYear()+"-W"+week;
+}
+function aktivitetDayLabel(d){
+  var today=new Date(),yesterday=new Date();yesterday.setDate(today.getDate()-1);
+  if(aktivitetDayKey(d)===aktivitetDayKey(today))return "Idag";
+  if(aktivitetDayKey(d)===aktivitetDayKey(yesterday))return "Igår";
+  var days=["Söndag","Måndag","Tisdag","Onsdag","Torsdag","Fredag","Lördag"];
+  var months=["jan","feb","mar","apr","maj","jun","jul","aug","sep","okt","nov","dec"];
+  return days[d.getDay()]+" "+d.getDate()+" "+months[d.getMonth()];
+}
+function aktivitetWeekLabel(d){
+  var parts=aktivitetWeekKey(d).split("-W");
+  return "Vecka "+parts[1]+", "+parts[0];
+}
+
 function renderAktivitetSenaste(){
   var wrap=document.getElementById("handelser-wrap");
   if(!wrap)return;
   var nyastForst=AKTIVITET_BETEENDE.handelserSortering!=="aldst";
   var sorted=logs.slice().sort(function(a,b){var diff=new Date(b.timestamp)-new Date(a.timestamp);return nyastForst?diff:-diff;});
 
+  // Håller reda på senast sedda dag/vecka genom HELA listan (initial render + varje
+  // "ladda fler"-batch vid scroll) - inte bara inom ett enskilt rowsHtml-anrop, annars
+  // skulle gränsen mellan två batcher aldrig upptäckas korrekt.
+  var lastDayKey=null,lastWeekKey=null;
+
   function rowsHtml(items){
-    return items.map(function(l){return logEntry(l);}).join("");
+    var html="";
+    items.forEach(function(l){
+      var d=new Date(l.timestamp);
+      var wk=aktivitetWeekKey(d),dk=aktivitetDayKey(d);
+      if(wk!==lastWeekKey){
+        html+="<div style='margin:18px 0 8px;padding-top:14px;border-top:2px solid #2a2a2a'>"
+          +"<span style='font-size:11px;font-weight:700;color:#4fa8ff;text-transform:uppercase;letter-spacing:1px'>"+aktivitetWeekLabel(d)+"</span></div>";
+        lastWeekKey=wk;
+        lastDayKey=null; // tvinga fram en dag-markering direkt efter en ny vecka också
+      }
+      if(dk!==lastDayKey){
+        html+="<div style='font-size:12px;color:#5c5c5c;font-weight:600;margin:10px 0 6px'>"+aktivitetDayLabel(d)+"</div>";
+        lastDayKey=dk;
+      }
+      html+=logEntry(l);
+    });
+    return html;
   }
 
   wrap.innerHTML="<div class='mt20'><div class='lbl'>Senaste inlägg</div>"

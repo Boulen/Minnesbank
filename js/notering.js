@@ -182,10 +182,17 @@ function showNoteringSettings(){
   ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto";
 
   function obsidianVaultSectionHtml(platformKey,title,list){
+    // Android har ingen egen Picker-relevant mappstruktur att bläddra i - alla valv delar
+    // samma lokalt synkade rot ("DriveSyncFiles") på telefonen, så knappen lägger till den
+    // direkt istället för att öppna Google Picker (som ändå bara visar Drive-molnet, inte
+    // telefonens lokala filsystem).
+    var addBtnHtml=platformKey==="android"
+      ?"<button class='sec ghost' data-vaultaddandroid='1' style='width:100%;margin-top:6px'>+ Lägg till DriveSyncFiles</button>"
+      :"<button class='sec ghost' data-vaultpick='"+platformKey+"' style='width:100%;margin-top:6px'>📁 Välj via Picker</button>";
     if(!list.length){
       return "<div class='lbl' style='margin-top:14px'>"+esc(title)+"</div>"
         +"<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Inga valv tillagda ännu.</div>"
-        +"<button class='sec ghost' data-vaultpick='"+platformKey+"' style='width:100%;margin-top:6px'>📁 Välj via Picker</button>";
+        +addBtnHtml;
     }
     var selIdx=Math.min(vaultSelectedIdx[platformKey]||0,list.length-1);
     var options=list.map(function(v,i){
@@ -198,7 +205,7 @@ function showNoteringSettings(){
       +"<button class='chip' data-vaultdown='"+platformKey+"' type='button' style='flex-shrink:0;padding:7px 10px;font-size:13px'>↓</button>"
       +"<button class='delbtn' data-vaultremove='"+platformKey+"' style='flex-shrink:0'>x</button>"
       +"</div>"
-      +"<button class='sec ghost' data-vaultpick='"+platformKey+"' style='width:100%;margin-top:6px'>📁 Välj via Picker</button>";
+      +addBtnHtml;
   }
 
   function simpleChipsHtml(arr,editIdx,prefix,emptyMsg){
@@ -439,6 +446,16 @@ function showNoteringSettings(){
         });
       };
     });
+    var addAndroidBtn=ov.querySelector("[data-vaultaddandroid]");
+    if(addAndroidBtn)addAndroidBtn.onclick=function(){
+      var list=vaultListFor("android");
+      if(!list.some(function(v){return v.value==="DriveSyncFiles";})){
+        list.push({value:"DriveSyncFiles",label:"DriveSyncFiles"});
+        vaultSelectedIdx.android=list.length-1;
+        saveNoteringSettings();
+        rerender();
+      }
+    };
 
     ov.querySelector("#ns-fund-sort").onclick=function(){
       wFund.sort(function(a,b){return a.localeCompare(b,"sv");});
@@ -921,7 +938,7 @@ var OBSIDIAN_UNCATEGORIZED_FOLDER_NAME="Övrigt";
 // {value, label} - value är det som faktiskt skickas som vault= i URI:n (namn ELLER
 // Obsidians interna valv-id, båda giltiga enligt Obsidians egen dokumentation), label är
 // vad som visas i dropdown-menyn (samma som value om inget eget angetts).
-var obsidianVaultsAndroid=[{value:"Mobil",label:"Mobil"}];
+var obsidianVaultsAndroid=[{value:"Mobil",label:"Mobil"},{value:"DriveSyncFiles",label:"DriveSyncFiles"}]; // "DriveSyncFiles" = det lokalt synkade rot-valvet på Android, bekräftat namn sedan tidigare - kan inte läggas till via Picker eftersom det är en lokal mapp, inte en Drive-mapp
 var obsidianVaultsWindows=[{value:"16a16087049c77ce",label:"Dator"}]; // bekräftat valv-id (mer robust än namn)
 var obsidianSelectedVaultAndroid="";
 var obsidianSelectedVaultWindows="";
@@ -1552,7 +1569,9 @@ function renderFunderingHome(){
     var entry={id:Date.now(),text:txt,timestamp:new Date().toISOString()};
     if(fundCatSelect)entry.category=fundCatSelect;
     fundHist.unshift(entry);
-    fundDraft="";saveNoteringFundering();syncEntryToObsidian(entry,"fundering",saveNoteringFundering);renderLogFunderingar();
+    // Fundering ska INTE synkas till Obsidian/MD-filer alls - varken via denna
+    // per-post-synk eller via "Skapa MD-filer" (redan borttaget där tidigare).
+    fundDraft="";saveNoteringFundering();renderLogFunderingar();
   };
 
   function bindFundRowActions(){
@@ -1587,7 +1606,7 @@ function renderFunderingHome(){
         var catSel2=c.querySelector("#editfundcatlog-"+prefix+"-"+fid);
         if(f&&inp&&inp.value.trim())f.text=inp.value.trim();
         if(f&&catSel2)f.category=catSel2.value||undefined;
-        editingFundKeyLog=null;saveNoteringFundering();if(f)syncEntryToObsidian(f,"fundering",saveNoteringFundering);renderLogFunderingar();
+        editingFundKeyLog=null;saveNoteringFundering();renderLogFunderingar();
       };
     });
     c.querySelectorAll("[data-cancelfundlog]").forEach(function(btn){
@@ -1926,7 +1945,7 @@ function renderFunderingNotisbok(){
       var catSel=c.querySelector("#editfundcatlog-"+prefix+"-"+fid);
       if(f&&inp&&inp.value.trim())f.text=inp.value.trim();
       if(f&&catSel)f.category=catSel.value||undefined;
-      editingFundKeyLog=null;saveNoteringFundering();if(f)syncEntryToObsidian(f,"fundering",saveNoteringFundering);renderLogFunderingar();
+      editingFundKeyLog=null;saveNoteringFundering();renderLogFunderingar();
     };
   });
   c.querySelectorAll("[data-cancelfundlog]").forEach(function(btn){
