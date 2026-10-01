@@ -109,6 +109,8 @@ async function ensureSamtalDataLoaded(){
       if(textData&&textData.konvAiPresets)konvAiPresets=textData.konvAiPresets;
       var muntligData=await driveReadJson(["Samtal"],"muntlig.json");
       if(muntligData&&muntligData.muntKonversationer)muntKonversationer=muntligData.muntKonversationer;
+      if(muntligData&&muntligData.muntSavedPrompts)muntSavedPrompts=muntligData.muntSavedPrompts;
+      if(muntligData&&muntligData.muntAiPresets)muntAiPresets=muntligData.muntAiPresets;
     }catch(e){
       console.warn("Kunde inte läsa Samtal-filerna:",e);
     }
@@ -120,7 +122,7 @@ async function saveSamtalText(){
   return driveWriteJson(["Samtal"],"text.json",{konversationer:konversationer,konvSavedPrompts:konvSavedPrompts,konvAiPresets:konvAiPresets});
 }
 async function saveSamtalMuntligt(){
-  return driveWriteJson(["Samtal"],"muntlig.json",{muntKonversationer:muntKonversationer});
+  return driveWriteJson(["Samtal"],"muntlig.json",{muntKonversationer:muntKonversationer,muntSavedPrompts:muntSavedPrompts,muntAiPresets:muntAiPresets});
 }
 
 // ---- AI-sammanfattad bakgrundskontext (Samtal) ----
@@ -195,7 +197,7 @@ async function samtalSummarizeIfChanged(cache,key,items,sampleTextFn,promptLabel
 
 // Fire-and-forget: anropas så fort ett samtalsfönster öppnas. Sparas i modul-variabeln
 // samtalBackgroundContextPromise som awaitas precis innan systemprompten byggs i varje
-// do*-funktion (doKonvAiRequest/doMuntTips/doMuntTankePa/doMuntVill).
+// do*-funktion (doKonvAiRequest/doMuntAiRequest).
 function samtalRefreshBackgroundContext(){
   samtalBackgroundContextPromise=(async function(){
     try{
@@ -250,6 +252,16 @@ var samtalSubview="text"; // text | muntligt
 var konversationer=[]; // [{id,name,messages:[{sender:"dem"|"mig",text,timestamp}],timestamp}]
 var activeKonvId=null;
 var konvSender="dem"; // dem | mig
+
+// Genväg: Tab växlar Dem/Mig när man är inne i en öppen konversation på Text-fliken.
+document.addEventListener("keydown",function(e){
+  if(e.key!=="Tab")return;
+  if(!activeKonvId)return;
+  if(typeof samtalSubview!=="undefined"&&samtalSubview!=="text")return;
+  e.preventDefault();
+  konvSender=(konvSender==="dem")?"mig":"dem";
+  renderKonvChat(document.getElementById("samtal-content"));
+});
 var konvMsgDraft="", konvNewName="", konvNameEditing=false, konvListRenamingId=null;
 var konvMsgForAiDraft=""; // utkast i "Ditt meddelande"-rutan (separat fält, skickas med som kontext om ifyllt)
 var konvAiDraft="", konvAiResult=null, konvAiLoading=false; // konvAiDraft = utkast i "vad vill du ha hjälp med"-rutan
@@ -414,8 +426,11 @@ function renderKonvChat(b){
       resultHtml=spin();
     } else if(konvAiResult){
       resultHtml="<div class=\'mt12\'>"
-        +"<div class=\'tbox\' id=\'konv-ai-result-msg\' style=\'cursor:pointer\' title=\'Klicka för att använda som mitt meddelande\'>"+esc(konvAiResult.message||"")+"</div>"
-        +"<div class=\'copy-ok vis\' style=\'margin-bottom:0\'>Klicka på svaret för att lägga in det i din ruta</div>"
+        +(konvAiResult.message?(
+          "<div class=\'tbox\' id=\'konv-ai-result-msg\' style=\'cursor:pointer\' title=\'Klicka för att använda som mitt meddelande\'>"+esc(konvAiResult.message)+"</div>"
+          +"<div class=\'copy-ok vis\' style=\'margin-bottom:8px\'>Klicka på förslaget för att lägga in det i din ruta</div>"
+        ):"")
+        +(konvAiResult.comment?("<div class=\'swhy\' style=\'margin-bottom:0\'>"+esc(konvAiResult.comment)+"</div>"):"")
         +chatContinuationHtml(konvAiResult.chat,"konvai")
         +"</div>";
     }
@@ -630,14 +645,15 @@ async function doKonvAiRequest(k,request,msgForAi){
   var notePart=notesTxt?("\n\nYtterligare information om samtalet: "+notesTxt):"";
   var msgPart=msgForAi?("\n\nMeddelandet jag funderar pa: \""+msgForAi+"\""):"";
   var bgPart=konvAiUseBgCtx?await samtalGetBackgroundContextPart():"";
-  var sys="Du ar en kommunikationscoach. Har ar samtalshistoriken hittills:\n\n"+(threadText||"(inga tidigare meddelanden)")+notePart+msgPart+bgPart+"\n\nPersonen skriver till "+k.name+". Personens onskemal just nu: \""+request+"\". Svara BARA pa det personen faktiskt bad om. Var kortfattat och konkret - max 2-3 meningar, eller om personen ber om ett konkret meddelande, ge bara det meddelandet plus högst en kort mening om varfor. Svara med vanlig text, ingen JSON, ingen inledande fras som \"Har ar\" eller \"Visst\".";
+  var sys="Du ar en kommunikationscoach. Har ar samtalshistoriken hittills:\n\n"+(threadText||"(inga tidigare meddelanden)")+notePart+msgPart+bgPart+"\n\nPersonen skriver till "+k.name+". Personens onskemal just nu: \""+request+"\". Svara BARA pa det personen faktiskt bad om, var kortfattat och konkret. Svara BARA med giltig JSON: {\"message\":\"<ett konkret forslag pa meddelande att skicka, BARA om personen bad om det eller det annars ar tydligt relevant - annars tom strang>\",\"comment\":\"<din kommentar/svar i ovrigt, max 2-3 meningar, ingen inledande fras som 'Har ar' eller 'Visst'>\"}";
   try{
-    var res=await aiCall(sys,request,350);
+    var res=await aiCall(sys,request,400);
     var data=await res.json();
-    var answer=aiText(data).trim();
-    konvAiResult={message:answer,chat:[{role:"user",content:request},{role:"assistant",content:answer}]};
+    var parsed=JSON.parse(aiText(data).replace(/```json|```/g,"").trim());
+    var combinedForChat=(parsed.message?parsed.message+"\n\n":"")+(parsed.comment||"");
+    konvAiResult={message:parsed.message||"",comment:parsed.comment||"",chat:[{role:"user",content:request},{role:"assistant",content:combinedForChat}]};
   }catch(e){
-    konvAiResult={message:"",chat:[{role:"user",content:request},{role:"assistant",content:"Kunde inte svara. Forsok igen."}]};
+    konvAiResult={message:"",comment:"Kunde inte svara. Forsok igen.",chat:[{role:"user",content:request},{role:"assistant",content:"Kunde inte svara. Forsok igen."}]};
   }
   konvAiLoading=false;renderKonvChat(document.getElementById("samtal-content"));
 }
@@ -646,7 +662,13 @@ async function doKonvAiRequest(k,request,msgForAi){
 var muntKonversationer=[]; // [{id,name,entries:[{id,summary,feeling,timestamp}],notes:[{id,text,timestamp}],timestamp}]
 var activeMuntKonvId=null;
 var muntNewName="";
-var muntAiCtx="Kompis", muntAiDraft="", muntAiResult=null, muntAiLoading=false;
+var muntMsgForAiDraft=""; // utkast i Muntligts "AI chatt"-ruta (motsvarar konvMsgForAiDraft)
+var muntAiDraft="", muntAiResult=null, muntAiLoading=false; // muntAiDraft = utkast i "Referenser till AI"-rutan
+var muntAiUseBgCtx=true;
+var muntSavedPrompts=[]; // samma snabbval-mönster som Text, egen lista för Muntligt
+var muntAiPresets=["Stavningskontroll","Kortfattat (ännu mer)","Professionell ton","Snäll ton","Trevlig ton","Utvärdering"];
+var muntAiSelectedPresets=[];
+var muntSelectedSavedPrompts=[];
 var muntSummaryDraft="", muntFeelingDraft="", editingMuntEntryId=null, muntNameEditing=false, muntKonvListRenamingId=null;
 var muntNoteDraft="", muntNoteDropdown={open:false};
 
@@ -706,7 +728,7 @@ function renderMuntKonvList(b){
   b.querySelectorAll("[data-muntkonv]").forEach(function(el){
     el.onclick=function(e){
       if(e.target.dataset.delmuntkonv||e.target.dataset.renamemuntkonv)return;
-      activeMuntKonvId=el.dataset.muntkonv;muntAiResult=null;muntAiDraft="";muntSummaryDraft="";muntFeelingDraft="";muntNameEditing=false;
+      activeMuntKonvId=el.dataset.muntkonv;muntAiResult=null;muntAiDraft="";muntMsgForAiDraft="";muntSummaryDraft="";muntFeelingDraft="";muntNameEditing=false;muntAiSelectedPresets=[];muntSelectedSavedPrompts=[];
       renderMuntligt();
     };
   });
@@ -761,6 +783,28 @@ function muntContextParts(k){
   return parts.length?parts.join("\n\n"):"(ingen sammanfattning skriven an)";
 }
 
+function renderMuntAiBoxHtml(resultHtml){
+  var promptChips=muntSavedPrompts.length?("<div class='chips' style='margin-bottom:8px'>"+muntSavedPrompts.map(function(p,idx){
+      var isOn=muntSelectedSavedPrompts.indexOf(p)!==-1;
+      return "<span class='chip"+(isOn?" on":"")+"' data-usemuntpromptidx='"+idx+"' style='display:inline-flex;align-items:center;gap:6px;cursor:pointer' title='"+esc(p)+"'>"+esc(p.length>28?p.slice(0,28)+"…":p)+"<button class='delbtn' data-delmuntpromptidx='"+idx+"' style='font-size:12px;padding:0;color:#5c5c5c' title='Ta bort'>×</button></span>";
+    }).join("")+"</div>"):"";
+  var presetChips=muntAiSelectedPresets.length?("<div class='chips' style='margin-bottom:8px'>"+muntAiSelectedPresets.map(function(p,idx){
+      return "<span class='chip on' style='display:inline-flex;align-items:center;gap:6px'>"+esc(p)+"<button class='delbtn' data-delmuntpresetidx='"+idx+"' style='font-size:12px;padding:0;color:#5c5c5c' title='Ta bort'>×</button></span>";
+    }).join("")+"</div>"):"";
+  var presetOptionsHtml="<option value=''>+ Lägg till val...</option>"+muntAiPresets.map(function(p){return "<option value='"+esc(p)+"'>"+esc(p)+"</option>";}).join("");
+  return "<div class=\'mt20\' style=\'padding:14px;background:var(--bg-alt);border:1px solid var(--border);border-radius:10px\'>"
+    +"<div class=\'lbl\'>AI chatt</div>"
+    +"<textarea class=\'ta\' id=\'muntkonv-msgforai-inp\' placeholder=\'Meddelande till AI\' style=\'min-height:0;height:auto;overflow:hidden;resize:none\'>"+esc(muntMsgForAiDraft)+"</textarea>"
+    +"<div class=\'lbl\' style=\'margin-top:10px\'>Referenser till AI</div>"
+    +"<select id=\'muntkonv-ai-preset-select\' style=\'width:100%;background:#131313;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:9px 10px;margin-bottom:8px\'>"+presetOptionsHtml+"</select>"
+    +presetChips
+    +promptChips
+    +"<div class=\'row\' style=\'margin-bottom:10px\'><input class=\'inp\' id=\'muntkonv-ai-inp\' type=\'text\' placeholder=\'Referens\' style=\'flex:1\' value=\'"+esc(muntAiDraft)+"\'/><button class=\'abtn\' id=\'muntkonv-ai-save-prompt-btn\' title=\'Spara som snabbval\'>💾</button></div>"
+    +"<label style=\'display:flex;align-items:center;gap:6px;font-size:12px;color:var(--sub);margin-bottom:10px;cursor:pointer\'><input type=\'checkbox\' id=\'muntkonv-ai-usectx\'"+(muntAiUseBgCtx?" checked":"")+"/> Använd min bakgrundskontext</label>"
+    +"<button class=\'sec\' id=\'muntkonv-ai-send-btn\' style=\'width:100%\'>Skicka</button>"
+    +resultHtml;
+}
+
 function renderMuntKonvOpen(b){
   var k=muntKonversationer.find(function(x){return x.id===activeMuntKonvId;});
   if(!k){activeMuntKonvId=null;renderMuntligt();return;}
@@ -769,19 +813,10 @@ function renderMuntKonvOpen(b){
   if(muntAiLoading){
     resultHtml=spin();
   } else if(muntAiResult){
-    if(muntAiResult.type==="tips"||muntAiResult.type==="tankepa"){
-      var items=muntAiResult.type==="tips"?muntAiResult.tips:muntAiResult.points;
-      resultHtml="<div class=\'mt12\'>"
-        +(items&&items.length?items.map(function(t){return "<div class=\'enote\' style=\'margin-bottom:6px\'>• "+esc(t)+"</div>";}).join(""):"")
-        +chatContinuationHtml(muntAiResult.chat,"muntai")
-        +"</div>";
-    } else if(muntAiResult.type==="vill"){
-      resultHtml="<div class=\'mt12\'>"
-        +(muntAiResult.advice?"<div class=\'tbox\'>"+esc(muntAiResult.advice)+"</div>":"")
-        +(muntAiResult.steps&&muntAiResult.steps.length?("<div class=\'lbl\'>Steg</div>"+muntAiResult.steps.map(function(s,i){return "<div class=\'enote\' style=\'margin-bottom:6px\'>"+(i+1)+". "+esc(s)+"</div>";}).join("")):"")
-        +chatContinuationHtml(muntAiResult.chat,"muntai")
-        +"</div>";
-    }
+    resultHtml="<div class=\'mt12\'>"
+      +"<div class=\'tbox\'>"+esc(muntAiResult.message||"")+"</div>"
+      +chatContinuationHtml(muntAiResult.chat,"muntai")
+      +"</div>";
   }
 
   migrateMuntEntries(k);
@@ -822,15 +857,7 @@ function renderMuntKonvOpen(b){
     +"</div>"
     +"<button class=\'sec ghost\' id=\'muntkonv-add-entry-btn\' style=\'width:100%;margin-bottom:6px\'>Lägg till</button>"
     +"<div class=\'mt12\'>"+notesBoxHtml(k,"muntkonv",muntNoteDraft,muntNoteDropdown.open)+"</div>"
-    +"<div class=\'mt20\' style=\'padding:14px;background:var(--bg-alt);border:1px solid var(--border);border-radius:10px\'>"
-    +"<div class=\'ctx-chips\'>"+ctxChips(CTXS,muntAiCtx,"muntaictx")+"</div>"
-    +"<textarea class=\'ta\' id=\'muntkonv-ai-inp\' placeholder=\'Information till förslag...\' style=\'min-height:70px\'>"+esc(muntAiDraft)+"</textarea>"
-    +"<div style=\'display:flex;gap:8px\'>"
-    +"<button class=\'sec ghost\' id=\'muntkonv-tips-btn\' style=\'flex:1\'>Tips</button>"
-    +"<button class=\'sec ghost\' id=\'muntkonv-tankepa-btn\' style=\'flex:1\'>Tänka på</button>"
-    +"<button class=\'sec ghost\' id=\'muntkonv-vill-btn\' style=\'flex:1\'>Vill</button>"
-    +"</div>"
-    +resultHtml
+    +renderMuntAiBoxHtml(resultHtml)
     +"</div>";
 
   b.querySelector("#muntkonv-back-btn").onclick=function(){activeMuntKonvId=null;editingMuntEntryId=null;muntNameEditing=false;renderMuntligt();};
@@ -861,7 +888,7 @@ function renderMuntKonvOpen(b){
     if(!summary&&!feeling)return;
     k.entries.push({id:String(Date.now()),summary:summary,feeling:feeling,timestamp:new Date().toISOString()});
     k.timestamp=new Date().toISOString();
-    muntSummaryDraft="";muntFeelingDraft="";
+    muntSummaryDraft="";muntFeelingDraft="";muntAiResult=null;muntAiDraft="";muntAiSelectedPresets=[];muntSelectedSavedPrompts=[];
     saveSamtalMuntligt();
     renderMuntKonvOpen(b);
   };
@@ -906,81 +933,93 @@ function renderMuntKonvOpen(b){
     renderMuntKonvOpen(b);
   },"samtalmuntligt");
 
-  bindChips(b,"muntaictx",function(){return muntAiCtx;},function(v){muntAiCtx=v;});
+  var muntMsgForAiInp=b.querySelector("#muntkonv-msgforai-inp");
+  if(muntMsgForAiInp)muntMsgForAiInp.oninput=function(){muntMsgForAiDraft=muntMsgForAiInp.value;};
+  if(muntMsgForAiInp)muntMsgForAiInp.onkeydown=function(e){if(e.key==="Enter"&&e.shiftKey){e.preventDefault();var sb=b.querySelector("#muntkonv-ai-send-btn");if(sb)sb.click();}};
+  autoGrowTextarea(muntMsgForAiInp);
+  var muntUseCtxCb=b.querySelector("#muntkonv-ai-usectx");
+  if(muntUseCtxCb)muntUseCtxCb.onchange=function(){muntAiUseBgCtx=muntUseCtxCb.checked;};
   var aiInp=b.querySelector("#muntkonv-ai-inp");
   if(aiInp)aiInp.oninput=function(){muntAiDraft=aiInp.value;};
-  var tipsBtn=b.querySelector("#muntkonv-tips-btn");
-  if(tipsBtn)tipsBtn.onclick=function(){
-    var txt=b.querySelector("#muntkonv-ai-inp").value.trim();
-    muntAiDraft=txt;
-    doMuntTips(k,txt);
+  if(aiInp)aiInp.onkeydown=function(e){
+    if(e.key!=="Enter")return;
+    e.preventDefault();
+    if(e.shiftKey){var mspb=b.querySelector("#muntkonv-ai-save-prompt-btn");if(mspb)mspb.click();}
+    else{var msb=b.querySelector("#muntkonv-ai-send-btn");if(msb)msb.click();}
   };
-  var tankepaBtn=b.querySelector("#muntkonv-tankepa-btn");
-  if(tankepaBtn)tankepaBtn.onclick=function(){
-    var txt=b.querySelector("#muntkonv-ai-inp").value.trim();
-    muntAiDraft=txt;
-    doMuntTankePa(k,txt);
+  b.querySelectorAll("[data-usemuntpromptidx]").forEach(function(el){
+    el.onclick=function(e){
+      if(e.target.dataset.delmuntpromptidx!==undefined)return;
+      var p=muntSavedPrompts[Number(el.dataset.usemuntpromptidx)];
+      if(!p)return;
+      var selIdx=muntSelectedSavedPrompts.indexOf(p);
+      if(selIdx===-1)muntSelectedSavedPrompts.push(p);else muntSelectedSavedPrompts.splice(selIdx,1);
+      renderMuntKonvOpen(b);
+    };
+  });
+  b.querySelectorAll("[data-delmuntpromptidx]").forEach(function(btn){
+    btn.onclick=function(e){
+      e.stopPropagation();
+      var removed=muntSavedPrompts[Number(btn.dataset.delmuntpromptidx)];
+      muntSavedPrompts.splice(Number(btn.dataset.delmuntpromptidx),1);
+      var selIdx=muntSelectedSavedPrompts.indexOf(removed);
+      if(selIdx!==-1)muntSelectedSavedPrompts.splice(selIdx,1);
+      saveSamtalMuntligt();
+      renderMuntKonvOpen(b);
+    };
+  });
+  var muntPresetSelect=b.querySelector("#muntkonv-ai-preset-select");
+  if(muntPresetSelect)muntPresetSelect.onchange=function(){
+    var v=muntPresetSelect.value;
+    if(v&&muntAiSelectedPresets.indexOf(v)===-1)muntAiSelectedPresets.push(v);
+    renderMuntKonvOpen(b);
   };
-  var villBtn=b.querySelector("#muntkonv-vill-btn");
-  if(villBtn)villBtn.onclick=function(){
+  b.querySelectorAll("[data-delmuntpresetidx]").forEach(function(btn){
+    btn.onclick=function(e){
+      e.stopPropagation();
+      muntAiSelectedPresets.splice(Number(btn.dataset.delmuntpresetidx),1);
+      renderMuntKonvOpen(b);
+    };
+  });
+  var muntSavePromptBtn=b.querySelector("#muntkonv-ai-save-prompt-btn");
+  if(muntSavePromptBtn)muntSavePromptBtn.onclick=function(){
     var txt=b.querySelector("#muntkonv-ai-inp").value.trim();
-    if(!txt)return;
+    if(!txt||muntSavedPrompts.indexOf(txt)!==-1)return;
+    muntSavedPrompts.push(txt);
+    muntSelectedSavedPrompts.push(txt);
+    muntAiDraft="";
+    saveSamtalMuntligt();
+    renderMuntKonvOpen(b);
+  };
+  var muntSendBtn=b.querySelector("#muntkonv-ai-send-btn");
+  if(muntSendBtn)muntSendBtn.onclick=function(){
+    var txt=b.querySelector("#muntkonv-ai-inp").value.trim();
     muntAiDraft=txt;
-    doMuntVill(k,txt);
+    muntMsgForAiDraft=b.querySelector("#muntkonv-msgforai-inp").value.trim();
+    var allSelected=muntAiSelectedPresets.concat(muntSelectedSavedPrompts);
+    var combinedRequest=[allSelected.length?("Extra önskemål: "+allSelected.join("; ")+"."):"",txt].filter(Boolean).join(" ");
+    if(!combinedRequest)return;
+    doMuntAiRequest(k,combinedRequest,muntMsgForAiDraft);
   };
   if(muntAiResult&&muntAiResult.chat){
-    bindChatContinuation(b,"muntai","Du ar en kommunikationscoach for muntliga samtal. Fortsätt hjälpa personen bygga vidare på det ni just pratat om, svara med vanlig text.",function(){return muntAiResult.chat;},function(){renderMuntKonvOpen(b);});
+    bindChatContinuation(b,"muntai","Du ar en kommunikationscoach for muntliga samtal. Fortsätt hjälpa personen bygga vidare på det ni just pratat om, svara kortfattat med vanlig text.",function(){return muntAiResult.chat;},function(){renderMuntKonvOpen(b);});
   }
 }
 
-async function doMuntTips(k,text){
+// Fri fråga till AI:n om det muntliga samtalet - samma mönster som Texts doKonvAiRequest.
+async function doMuntAiRequest(k,request,msgForAi){
   muntAiLoading=true;renderMuntKonvOpen(document.getElementById("samtal-content"));
   var ctxText=muntContextParts(k);
-  var bgPart=await samtalGetBackgroundContextPart();
-  var sys="Du ar en kommunikationscoach for MUNTLIGA samtal. Har ar bakgrund om samtalet:\n\n"+ctxText+bgPart+"\n\nGe konkreta tips pa hur personen kan ga till vaga med det de skriver, med tanke pa "+muntAiCtx.toLowerCase()+". Svara BARA med giltig JSON: {\"tips\":[\"...\",\"...\",\"...\"]}";
+  var msgPart=msgForAi?("\n\nMeddelandet jag funderar pa: \""+msgForAi+"\""):"";
+  var bgPart=muntAiUseBgCtx?await samtalGetBackgroundContextPart():"";
+  var sys="Du ar en kommunikationscoach for MUNTLIGA samtal. Har ar bakgrund om samtalet:\n\n"+ctxText+msgPart+bgPart+"\n\nPersonen pratar med "+k.name+". Personens onskemal just nu: \""+request+"\". Svara BARA pa det personen faktiskt bad om. Var kortfattat och konkret - max 2-3 meningar. Svara med vanlig text, ingen JSON, ingen inledande fras som \"Har ar\" eller \"Visst\".";
   try{
-    var res=await aiCall(sys,text||"(inget sarskilt skrivet - ge allmanna tips utifran bakgrunden ovan)",1000);
+    var res=await aiCall(sys,request,350);
     var data=await res.json();
-    var parsed=JSON.parse(aiText(data).replace(/```json|```/g,"").trim());
-    var tipsText="Tips:\n"+(parsed.tips||[]).join("\n");
-    muntAiResult={type:"tips",tips:parsed.tips||[],chat:[{role:"user",content:text||"Ge mig tips"},{role:"assistant",content:tipsText}]};
+    var answer=aiText(data).trim();
+    muntAiResult={message:answer,chat:[{role:"user",content:request},{role:"assistant",content:answer}]};
   }catch(e){
-    muntAiResult={type:"tips",tips:["Kunde inte hamta tips. Forsok igen."],chat:[{role:"user",content:text||"Ge mig tips"},{role:"assistant",content:"Kunde inte hamta tips. Forsok igen."}]};
-  }
-  muntAiLoading=false;renderMuntKonvOpen(document.getElementById("samtal-content"));
-}
-
-async function doMuntTankePa(k,text){
-  muntAiLoading=true;renderMuntKonvOpen(document.getElementById("samtal-content"));
-  var ctxText=muntContextParts(k);
-  var extraPart=text?("\n\nJag funderar ocksa pa: "+text):"";
-  var bgPart=await samtalGetBackgroundContextPart();
-  var sys="Du ar en kommunikationscoach for MUNTLIGA samtal. Har ar bakgrund om tidigare/planerade samtal:\n\n"+ctxText+extraPart+bgPart+"\n\nGe saker personen bor tanka pa infor ett samtal med "+muntAiCtx.toLowerCase()+", baserat bade pa bakgrunden och det de skrivit nu. Svara BARA med giltig JSON: {\"points\":[\"...\",\"...\",\"...\"]}";
-  try{
-    var res=await aiCall(sys,text||"Vad bor jag tanka pa infor samtalet?",1000);
-    var data=await res.json();
-    var parsed=JSON.parse(aiText(data).replace(/```json|```/g,"").trim());
-    var pointsText="Att tanka pa:\n"+(parsed.points||[]).join("\n");
-    muntAiResult={type:"tankepa",points:parsed.points||[],chat:[{role:"user",content:text||"Vad bor jag tanka pa?"},{role:"assistant",content:pointsText}]};
-  }catch(e){
-    muntAiResult={type:"tankepa",points:["Kunde inte generera. Forsok igen."],chat:[{role:"user",content:text||"Vad bor jag tanka pa?"},{role:"assistant",content:"Kunde inte generera. Forsok igen."}]};
-  }
-  muntAiLoading=false;renderMuntKonvOpen(document.getElementById("samtal-content"));
-}
-
-async function doMuntVill(k,goal){
-  muntAiLoading=true;renderMuntKonvOpen(document.getElementById("samtal-content"));
-  var ctxText=muntContextParts(k);
-  var bgPart=await samtalGetBackgroundContextPart();
-  var sys="Du ar en kommunikationscoach for MUNTLIGA samtal. Har ar bakgrund om samtalet:\n\n"+ctxText+bgPart+"\n\nPersonen skriver vad de vill uppna. Ge radgivning om ett konkret tillvagagangssatt for att na dit, med tanke pa "+muntAiCtx.toLowerCase()+". Svara BARA med giltig JSON: {\"advice\":\"...\",\"steps\":[\"...\",\"...\",\"...\"]}";
-  try{
-    var res=await aiCall(sys,"Vad jag vill: "+goal,1200);
-    var data=await res.json();
-    var parsed=JSON.parse(aiText(data).replace(/```json|```/g,"").trim());
-    var adviceText=(parsed.advice||"")+((parsed.steps||[]).length?"\n\nSteg:\n"+parsed.steps.join("\n"):"");
-    muntAiResult={type:"vill",advice:parsed.advice||"",steps:parsed.steps||[],chat:[{role:"user",content:"Vad jag vill: "+goal},{role:"assistant",content:adviceText}]};
-  }catch(e){
-    muntAiResult={type:"vill",advice:"Kunde inte generera. Forsok igen.",steps:[],chat:[{role:"user",content:"Vad jag vill: "+goal},{role:"assistant",content:"Kunde inte generera. Forsok igen."}]};
+    muntAiResult={message:"",chat:[{role:"user",content:request},{role:"assistant",content:"Kunde inte svara. Forsok igen."}]};
   }
   muntAiLoading=false;renderMuntKonvOpen(document.getElementById("samtal-content"));
 }
@@ -994,6 +1033,9 @@ function showSamtalSettings(){
     var presetChipsHtml=konvAiPresets.length?("<div class='chips' style='margin-bottom:8px'>"+konvAiPresets.map(function(p,idx){
         return "<span class='chip' style='display:inline-flex;align-items:center;gap:6px'>"+esc(p)+"<button class='delbtn' data-delaipresetidx='"+idx+"' style='font-size:12px;padding:0;color:#5c5c5c' title='Ta bort'>×</button></span>";
       }).join("")+"</div>"):"<div class='empty' style='padding:4px 0;font-size:12px;color:#5c5c5c'>Inga val ännu.</div>";
+    var muntPresetChipsHtml=muntAiPresets.length?("<div class='chips' style='margin-bottom:8px'>"+muntAiPresets.map(function(p,idx){
+        return "<span class='chip' style='display:inline-flex;align-items:center;gap:6px'>"+esc(p)+"<button class='delbtn' data-delmuntaipresetidx='"+idx+"' style='font-size:12px;padding:0;color:#5c5c5c' title='Ta bort'>×</button></span>";
+      }).join("")+"</div>"):"<div class='empty' style='padding:4px 0;font-size:12px;color:#5c5c5c'>Inga val ännu.</div>";
 
     ov.innerHTML="<div style='background:#161616;border-radius:20px;width:100%;max-width:420px;overflow:hidden'>"
       +"<div style='padding:16px 20px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between'>"
@@ -1001,9 +1043,12 @@ function showSamtalSettings(){
       +"<button id='ss-close' style='background:none;border:none;color:#5c5c5c;font-size:20px;cursor:pointer;line-height:1'>✕</button>"
       +"</div>"
       +"<div style='padding:20px;max-height:70vh;overflow-y:auto'>"
-      +"<div class='lbl'>Valmeny (dropdown i \"Referenser till AI\")</div>"
+      +"<div class='lbl'>Valmeny — Text (dropdown i \"Referenser till AI\")</div>"
       +presetChipsHtml
       +"<div class='row' style='margin-bottom:20px'><input class='inp' id='ss-preset-add-inp' placeholder='Nytt val, t.ex. \\'Mer entusiastisk ton\\'' style='flex:1'/><button class='abtn' id='ss-preset-add-btn'>+</button></div>"
+      +"<div class='lbl'>Valmeny — Muntligt (dropdown i \"Referenser till AI\")</div>"
+      +muntPresetChipsHtml
+      +"<div class='row' style='margin-bottom:20px'><input class='inp' id='ss-muntpreset-add-inp' placeholder='Nytt val, t.ex. \\'Mer entusiastisk ton\\'' style='flex:1'/><button class='abtn' id='ss-muntpreset-add-btn'>+</button></div>"
       +"<div class='lbl'>Data & backup</div>"
       +"<button id='ss-json-editor' class='sec ghost' style='width:100%'>📝 Öppna/redigera JSON-filer</button>"
       +"</div>"
@@ -1036,6 +1081,24 @@ function showSamtalSettings(){
     };
     if(addBtn)addBtn.onclick=addFn;
     if(addInp)addInp.onkeydown=function(e){if(e.key==="Enter")addFn();};
+    ov.querySelectorAll("[data-delmuntaipresetidx]").forEach(function(btn){
+      btn.onclick=function(){
+        muntAiPresets.splice(Number(btn.dataset.delmuntaipresetidx),1);
+        saveSamtalMuntligt();
+        render();
+      };
+    });
+    var muntAddBtn=ov.querySelector("#ss-muntpreset-add-btn");
+    var muntAddInp=ov.querySelector("#ss-muntpreset-add-inp");
+    var muntAddFn=function(){
+      var v=(muntAddInp?muntAddInp.value:"").trim();
+      if(!v||muntAiPresets.indexOf(v)!==-1)return;
+      muntAiPresets.push(v);
+      saveSamtalMuntligt();
+      render();
+    };
+    if(muntAddBtn)muntAddBtn.onclick=muntAddFn;
+    if(muntAddInp)muntAddInp.onkeydown=function(e){if(e.key==="Enter")muntAddFn();};
   }
   render();
   document.body.appendChild(ov);
@@ -1061,7 +1124,7 @@ function openSamtalJsonEditor(){
   function fileFor(key){if(key==="text")return "text.json";if(key==="muntligt")return "muntlig.json";return "ai.json";}
   function dataFor(key){
     if(key==="text")return {konversationer:konversationer,konvSavedPrompts:konvSavedPrompts,konvAiPresets:konvAiPresets};
-    if(key==="muntligt")return {muntKonversationer:muntKonversationer};
+    if(key==="muntligt")return {muntKonversationer:muntKonversationer,muntSavedPrompts:muntSavedPrompts,muntAiPresets:muntAiPresets};
     return {kommentarer:[]};
   }
 
@@ -1158,7 +1221,11 @@ function openSamtalJsonEditor(){
         if(parsed.konvAiPresets)konvAiPresets=parsed.konvAiPresets;
       }else if(current==="muntligt"){
         if(!Array.isArray(parsed.muntKonversationer)){warn.textContent="Förväntade ett 'muntKonversationer'-fält med en lista.";return;}
+        if(parsed.muntSavedPrompts&&!Array.isArray(parsed.muntSavedPrompts)){warn.textContent="'muntSavedPrompts' måste vara en lista om den finns.";return;}
+        if(parsed.muntAiPresets&&!Array.isArray(parsed.muntAiPresets)){warn.textContent="'muntAiPresets' måste vara en lista om den finns.";return;}
         muntKonversationer=parsed.muntKonversationer;
+        if(parsed.muntSavedPrompts)muntSavedPrompts=parsed.muntSavedPrompts;
+        if(parsed.muntAiPresets)muntAiPresets=parsed.muntAiPresets;
       }else{
         if(parsed.kommentarer&&!Array.isArray(parsed.kommentarer)){warn.textContent="'kommentarer' måste vara en lista om den finns.";return;}
       }
