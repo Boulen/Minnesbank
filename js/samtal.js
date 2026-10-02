@@ -253,9 +253,11 @@ var konversationer=[]; // [{id,name,messages:[{sender:"dem"|"mig",text,timestamp
 var activeKonvId=null;
 var konvSender="dem"; // dem | mig
 
-// Genväg: Tab växlar Dem/Mig när man är inne i en öppen konversation på Text-fliken.
+// Genväg: "/" växlar Dem/Mig när man är inne i en öppen konversation på Text-fliken.
+// Tab/Shift+Tab lämnas orörda (vanlig fokus-navigering). Gäller även i textfält - "/"
+// går alltså inte att skriva in bokstavligt där medan en konversation är öppen.
 document.addEventListener("keydown",function(e){
-  if(e.key!=="Tab")return;
+  if(e.key!=="/")return;
   if(!activeKonvId)return;
   if(typeof samtalSubview!=="undefined"&&samtalSubview!=="text")return;
   e.preventDefault();
