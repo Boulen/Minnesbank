@@ -1,6 +1,6 @@
 function syncUtvTopNav(){
   document.querySelectorAll("[data-utvsub]").forEach(function(btn){
-    btn.classList.toggle("on",!utvExtraView&&btn.dataset.utvsub===utvSubview);
+    btn.classList.toggle("on",btn.dataset.utvsub===utvSubview);
   });
   var recensionerBtn=document.getElementById("betyg-recensioner-btn");
   if(recensionerBtn)recensionerBtn.classList.toggle("on",utvExtraView==="recensioner");
@@ -15,9 +15,9 @@ function renderUtvarderingarTop(){
   ensureBetygDataLoaded();
   var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:8px'>"
     +"<div style='flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px'>"
-    +"<button class='mode-btn"+(!utvExtraView&&utvSubview==="media"?" on":"")+"' data-utvsub='media' style='font-size:11px'>Media</button>"
-    +"<button class='mode-btn"+(!utvExtraView&&utvSubview==="objekt"?" on":"")+"' data-utvsub='objekt' style='font-size:11px'>Föremål</button>"
-    +"<button class='mode-btn"+(!utvExtraView&&utvSubview==="plats"?" on":"")+"' data-utvsub='plats' style='font-size:11px'>Plats</button>"
+    +"<button class='mode-btn"+(utvSubview==="media"?" on":"")+"' data-utvsub='media' style='font-size:11px'>Media</button>"
+    +"<button class='mode-btn"+(utvSubview==="objekt"?" on":"")+"' data-utvsub='objekt' style='font-size:11px'>Föremål</button>"
+    +"<button class='mode-btn"+(utvSubview==="plats"?" on":"")+"' data-utvsub='plats' style='font-size:11px'>Plats</button>"
     +"</div>"
     +"<button id='betyg-settings-btn' type='button' title='Inställningar' style='background:none;border:none;color:#6b6880;font-size:20px;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0'>⚙️</button>"
     +"</div>"
@@ -38,20 +38,24 @@ function renderUtvarderingarTop(){
   var pagaendeBtn=lc.querySelector("#betyg-pagaende-btn");
   if(recensionerBtn)recensionerBtn.onclick=function(){
     utvExtraView="recensioner";
-    mediaRecensionCat=mediaCat||MEDIA_CAT_PRESETS[0]||"";
-    mediaRecensionCreator=null;mediaRecensionSearch="";mediaRecensionSortMode="namn";mediaRecensionLetter="";mediaRecensionSenasteDesc=true;
+    utvExtraSourceTab=utvSubview; // visa Recensioner för den underflik man just nu står på
+    var adapter=utvAdapter(utvExtraSourceTab);
+    recensionCat=adapter.defaultCat()||adapter.catPresets()[0]||"";
+    recensionCreator=null;recensionSearch="";recensionSortMode="namn";recensionLetter="";recensionSenasteDesc=true;
     syncUtvTopNav();
-    renderMediaRecension();
+    renderRecension();
   };
   if(pagaendeBtn)pagaendeBtn.onclick=function(){
     utvExtraView="pagaende";
-    mediaPagCat=mediaCat||MEDIA_CAT_PRESETS[0]||"";
-    mediaPagCreator=null;mediaPagSearch="";mediaPagSortMode="namn";mediaPagLetter="";mediaPagSenasteDesc=true;
+    utvExtraSourceTab=utvSubview; // visa Pågående för den underflik man just nu står på
+    var adapter=utvAdapter(utvExtraSourceTab);
+    pagCat=adapter.defaultCat()||adapter.catPresets()[0]||"";
+    pagCreator=null;pagSearch="";pagSortMode="namn";pagLetter="";pagSenasteDesc=true;
     syncUtvTopNav();
-    renderMediaPagaende();
+    renderPagaende();
   };
-  if(utvExtraView==="recensioner")renderMediaRecension();
-  else if(utvExtraView==="pagaende")renderMediaPagaende();
+  if(utvExtraView==="recensioner")renderRecension();
+  else if(utvExtraView==="pagaende")renderPagaende();
   else renderUtvContent();
 }
 
@@ -146,6 +150,8 @@ function ensureBetygSettingsLoaded(){
         if(data.mediaCatPresets&&data.mediaCatPresets.length)MEDIA_CAT_PRESETS=data.mediaCatPresets;
         if(data.objCatPresets&&data.objCatPresets.length)OBJ_CAT_PRESETS=data.objCatPresets;
         if(data.platsCatPresets&&data.platsCatPresets.length)PLATS_CAT_PRESETS=data.platsCatPresets;
+        if(data.mediaCreatorByCat)MEDIA_CREATOR_BY_CAT=data.mediaCreatorByCat;
+        if(data.mediaGenreByCat)MEDIA_GENRE_BY_CAT=data.mediaGenreByCat;
       }
       if(document.getElementById("body")&&view==="utvarderingar")renderUtvContent();
     }catch(e){
@@ -162,7 +168,9 @@ async function saveBetygSettings(){
     await driveWriteJson(["Betyg"],"settings.json",{
       mediaCatPresets:MEDIA_CAT_PRESETS,
       objCatPresets:OBJ_CAT_PRESETS,
-      platsCatPresets:PLATS_CAT_PRESETS
+      platsCatPresets:PLATS_CAT_PRESETS,
+      mediaCreatorByCat:MEDIA_CREATOR_BY_CAT,
+      mediaGenreByCat:MEDIA_GENRE_BY_CAT
     });
   }catch(e){
     showBetygDriveError("Kunde inte spara Betyg-inställningar",e);
@@ -217,6 +225,13 @@ function showBetygSettings(){
   var wPlats=PLATS_CAT_PRESETS.slice();
   var editMediaIdx=null, editObjIdx=null, editPlatsIdx=null;
 
+  // Kreatörer & genrer per Media-kategori - arbetskopior (deep copy) så Avbryt inte påverkar
+  // de riktiga dictionaries förrän Spara trycks.
+  var wCreatorByCat=JSON.parse(JSON.stringify(MEDIA_CREATOR_BY_CAT||{}));
+  var wGenreByCat=JSON.parse(JSON.stringify(MEDIA_GENRE_BY_CAT||{}));
+  var bsCgCat=wMedia[0]||"";
+  var editCreatorIdx=null, editGenreIdx=null;
+
   var ov=document.createElement("div");
   ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto";
 
@@ -264,6 +279,15 @@ function showBetygSettings(){
       +groupHtml("Media-kategorier",wMedia,editMediaIdx,"bm")
       +groupHtml("Föremål-kategorier",wObj,editObjIdx,"bo")
       +groupHtml("Plats-kategorier",wPlats,editPlatsIdx,"bp")
+      +"<div class='lbl' style='margin-top:18px'>Kreatörer & genrer per kategori</div>"
+      +"<div style='font-size:12px;color:#5c5c5c;margin-bottom:8px'>Visa, redigera och ta bort sparade kreatörer/genrer för en kategori.</div>"
+      +(wMedia.length
+        ?"<select id='bs-cg-cat-select' style='width:100%;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:14px;padding:10px 12px;cursor:pointer;font-family:inherit;margin-bottom:10px'>"
+          +wMedia.map(function(cat){return "<option value='"+esc(cat)+"'"+(cat===bsCgCat?" selected":"")+">"+esc(cat)+"</option>";}).join("")
+          +"</select>"
+          +groupHtml("Kreatörer",wCreatorByCat[bsCgCat]||(wCreatorByCat[bsCgCat]=[]),editCreatorIdx,"bc")
+          +groupHtml("Genrer",wGenreByCat[bsCgCat]||(wGenreByCat[bsCgCat]=[]),editGenreIdx,"bg")
+        :"<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Lägg till minst en Media-kategori ovan först.</div>")
       +"<div class='lbl' style='margin-top:18px'>Data & backup</div>"
       // OBS: "Data & backup" ska alltid ligga SIST i panelen, precis som i Aktivitets mönster.
       +"<button id='bs-json-editor' class='sec ghost' style='width:100%'>📝 Öppna/redigera JSON-filer</button>"
@@ -380,11 +404,23 @@ function showBetygSettings(){
     bindGroup("bm",wMedia,function(){return editMediaIdx;},function(v){editMediaIdx=v;});
     bindGroup("bo",wObj,function(){return editObjIdx;},function(v){editObjIdx=v;});
     bindGroup("bp",wPlats,function(){return editPlatsIdx;},function(v){editPlatsIdx=v;});
+    var cgCatSel=ov.querySelector("#bs-cg-cat-select");
+    if(cgCatSel)cgCatSel.onchange=function(){
+      bsCgCat=cgCatSel.value;
+      editCreatorIdx=null;editGenreIdx=null;
+      rerender();
+    };
+    if(bsCgCat){
+      bindGroup("bc",wCreatorByCat[bsCgCat]||(wCreatorByCat[bsCgCat]=[]),function(){return editCreatorIdx;},function(v){editCreatorIdx=v;});
+      bindGroup("bg",wGenreByCat[bsCgCat]||(wGenreByCat[bsCgCat]=[]),function(){return editGenreIdx;},function(v){editGenreIdx=v;});
+    }
     ov.querySelector("#bs-json-editor").onclick=function(){openBetygJsonEditor();};
     ov.querySelector("#bs-save").onclick=function(){
       MEDIA_CAT_PRESETS=wMedia;
       OBJ_CAT_PRESETS=wObj;
       PLATS_CAT_PRESETS=wPlats;
+      MEDIA_CREATOR_BY_CAT=wCreatorByCat;
+      MEDIA_GENRE_BY_CAT=wGenreByCat;
       saveBetygSettings();
       ov.remove();
       renderUtvContent();
@@ -410,7 +446,7 @@ function openBetygJsonEditor(){
     if(key==="media")return {mediaList:mediaList,mediaFardig:mediaFardig};
     if(key==="foremal")return {objList:objList,objFardig:objFardig};
     if(key==="plats")return {platsList:platsList,platsFardig:platsFardig};
-    return {mediaCatPresets:MEDIA_CAT_PRESETS,objCatPresets:OBJ_CAT_PRESETS,platsCatPresets:PLATS_CAT_PRESETS};
+    return {mediaCatPresets:MEDIA_CAT_PRESETS,objCatPresets:OBJ_CAT_PRESETS,platsCatPresets:PLATS_CAT_PRESETS,mediaCreatorByCat:MEDIA_CREATOR_BY_CAT,mediaGenreByCat:MEDIA_GENRE_BY_CAT};
   }
   var BETYG_JSON_TARGETS=[
     {key:"media",label:"Media (media.json)",folder:"Betyg",filename:"media.json"},
@@ -573,9 +609,13 @@ function openBetygJsonEditor(){
         if(!Array.isArray(parsed.mediaCatPresets)||!parsed.mediaCatPresets.length){warn.textContent="Förväntade ett 'mediaCatPresets'-fält med minst en kategori.";return;}
         if(!Array.isArray(parsed.objCatPresets)||!parsed.objCatPresets.length){warn.textContent="Förväntade ett 'objCatPresets'-fält med minst en kategori.";return;}
         if(!Array.isArray(parsed.platsCatPresets)||!parsed.platsCatPresets.length){warn.textContent="Förväntade ett 'platsCatPresets'-fält med minst en kategori.";return;}
+        if(parsed.mediaCreatorByCat!==undefined&&(typeof parsed.mediaCreatorByCat!=="object"||Array.isArray(parsed.mediaCreatorByCat))){warn.textContent="'mediaCreatorByCat' måste vara ett objekt (kategori -> lista).";return;}
+        if(parsed.mediaGenreByCat!==undefined&&(typeof parsed.mediaGenreByCat!=="object"||Array.isArray(parsed.mediaGenreByCat))){warn.textContent="'mediaGenreByCat' måste vara ett objekt (kategori -> lista).";return;}
         MEDIA_CAT_PRESETS=parsed.mediaCatPresets;
         OBJ_CAT_PRESETS=parsed.objCatPresets;
         PLATS_CAT_PRESETS=parsed.platsCatPresets;
+        MEDIA_CREATOR_BY_CAT=parsed.mediaCreatorByCat||{};
+        MEDIA_GENRE_BY_CAT=parsed.mediaGenreByCat||{};
         saveBetygSettings();
       }
       ov2.remove();
@@ -665,7 +705,7 @@ function bindMediaGenrePicker(container,idPrefix,getCat,selected){
         if(MEDIA_GENRE_BY_CAT[cat2])MEDIA_GENRE_BY_CAT[cat2]=MEDIA_GENRE_BY_CAT[cat2].filter(function(x){return x!==v;});
         var si=selected.indexOf(v);
         if(si>=0)selected.splice(si,1);
-        saveAndSync("inmatningar");
+        saveBetygSettings();
         renderDropdown();
         refreshChips();
       };
@@ -686,7 +726,7 @@ function bindMediaGenrePicker(container,idPrefix,getCat,selected){
     if(!MEDIA_GENRE_BY_CAT[cat])MEDIA_GENRE_BY_CAT[cat]=[];
     if(MEDIA_GENRE_BY_CAT[cat].indexOf(v)<0)MEDIA_GENRE_BY_CAT[cat].unshift(v);
     if(selected.indexOf(v)<0)selected.push(v);
-    saveAndSync("inmatningar");
+    saveBetygSettings();
     newInp.value="";
     refreshChips();
     if(dd.style.display==="block")renderDropdown();
@@ -694,6 +734,53 @@ function bindMediaGenrePicker(container,idPrefix,getCat,selected){
 
   return {getSelected:function(){return selected.slice();}};
 }
+
+// Egen kopia av core.js's bindCatPresetDropdown (snabbvals-dropdown med tillägg/borttagning),
+// men hårdkodad mot MEDIA_CREATOR_BY_CAT och sparar till Betygs egna settings.json istället
+// för det delade Installningar/Inmatningar-systemet. Rör inte core.js - se HANDOFF_own_your_data.md.
+function bindBetygCreatorDropdown(inputEl,toggleBtn,dropdownEl,addBtn,getCat){
+  if(!inputEl||!toggleBtn||!dropdownEl||!addBtn)return;
+  function renderList(){
+    var list=(MEDIA_CREATOR_BY_CAT[getCat()]||[]);
+    dropdownEl.innerHTML=list.length?list.map(function(s){
+      return "<div class='ac-item'><span class='ac-item-text' data-catval='"+esc(s)+"'>"+esc(s)+"</span><button class='ac-item-remove' data-catremove='"+esc(s)+"' title='Ta bort'>×</button></div>";
+    }).join(""):"<div class='empty' style='padding:10px;font-size:12px'>Inga snabbval för denna kategori än.</div>";
+    dropdownEl.style.display="block";
+    _openCatDropdown={dropdownEl:dropdownEl,toggleBtn:toggleBtn};
+    dropdownEl.querySelectorAll("[data-catval]").forEach(function(item){
+      item.onmousedown=function(e){
+        e.preventDefault();
+        var current=inputEl.value.trim();
+        inputEl.value=current?(current+", "+item.dataset.catval):item.dataset.catval;
+        dropdownEl.style.display="none";
+        _openCatDropdown=null;
+      };
+    });
+    dropdownEl.querySelectorAll("[data-catremove]").forEach(function(btn){
+      btn.onmousedown=function(e){
+        e.preventDefault();e.stopPropagation();
+        var c=getCat();
+        if(MEDIA_CREATOR_BY_CAT[c])MEDIA_CREATOR_BY_CAT[c]=MEDIA_CREATOR_BY_CAT[c].filter(function(x){return x!==btn.dataset.catremove;});
+        saveBetygSettings();
+        renderList();
+      };
+    });
+  }
+  toggleBtn.onclick=function(){
+    if(dropdownEl.style.display==="block"){dropdownEl.style.display="none";_openCatDropdown=null;}
+    else renderList();
+  };
+  addBtn.onclick=function(){
+    var v=inputEl.value.trim();
+    if(!v)return;
+    var c=getCat();
+    if(!MEDIA_CREATOR_BY_CAT[c])MEDIA_CREATOR_BY_CAT[c]=[];
+    if(MEDIA_CREATOR_BY_CAT[c].indexOf(v)<0)MEDIA_CREATOR_BY_CAT[c].unshift(v);
+    saveBetygSettings();
+    if(dropdownEl.style.display==="block")renderList();
+  };
+}
+
 function mediaItemAnteckning(item){return typeof item==="string"?"":(item&&item.anteckning)||"";}
 
 function objItemTitle(item){return (item&&item.title)||"";}
@@ -936,7 +1023,7 @@ function renderLogMedia(){
   };
   if(inp)inp.onkeydown=function(e){if(e.key==="Enter"&&inp.value.trim()&&addBtn)addBtn.onclick();};
   if(creatorInp)creatorInp.onkeydown=function(e){if(e.key==="Enter"&&inp.value.trim()&&addBtn)addBtn.onclick();};
-  bindCatPresetDropdown(creatorInp,c.querySelector("#media-creator-toggle"),c.querySelector("#media-creator-dd"),c.querySelector("#media-creator-add"),function(){return MEDIA_CREATOR_BY_CAT;},mediaGetCat,"inmatningar");
+  bindBetygCreatorDropdown(creatorInp,c.querySelector("#media-creator-toggle"),c.querySelector("#media-creator-dd"),c.querySelector("#media-creator-add"),mediaGetCat);
 
   c.querySelectorAll("[data-editmed]").forEach(function(btn){
     btn.onclick=function(){
@@ -990,16 +1077,76 @@ function renderLogMedia(){
   });
 }
 
-var mediaRecensionCat="", mediaRecensionCreator=null;
-var mediaRecensionSearch="", mediaRecensionLetter="";
-var mediaRecensionSortMode="namn"; // "namn" | "kreator" | "senaste"
-var mediaRecensionSenasteDesc=true; // true = nyast överst (senaste-läget)
-var mediaPagCat="", mediaPagCreator=null;
-var mediaPagSearch="", mediaPagLetter="";
-var mediaPagSortMode="namn"; // "namn" | "kreator" | "senaste"
-var mediaPagSenasteDesc=true; // true = senast tillagd överst (senaste-läget)
+// Recensioner/Pågående är nu GEMENSAMMA för Media/Föremål/Plats - utvExtraSourceTab styr
+// vilken underflik de just nu visar data för (sätts till utvSubview när knappen trycks).
+var utvExtraSourceTab=null; // "media" | "objekt" | "plats"
+var recensionCat="", recensionCreator=null;
+var recensionSearch="", recensionLetter="";
+var recensionSortMode="namn"; // "namn" | "kreator" | "senaste"
+var recensionSenasteDesc=true; // true = nyast överst (senaste-läget)
+var pagCat="", pagCreator=null;
+var pagSearch="", pagLetter="";
+var pagSortMode="namn"; // "namn" | "kreator" | "senaste"
+var pagSenasteDesc=true; // true = senast tillagd överst (senaste-läget)
 var MEDIA_REC_ALPHABET=["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","Å","Ä","Ö"];
 var MEDIA_UNKNOWN_CREATOR="__okand_kreator__";
+
+// Beskriver skillnaderna mellan Media/Föremål/Plats så Recensioner/Pågående kan vara EN
+// gemensam implementation istället för tre kopior. "secondary" = kreatör/tillverkare/kommun.
+// klarModal har alltid signaturen (item,idx,cat,onSaved) oavsett underflik.
+function utvAdapter(tab){
+  if(tab==="objekt")return {
+    catPresets:function(){return OBJ_CAT_PRESETS;},
+    fardig:function(){return objFardig;},
+    pending:function(){return objList;},
+    title:objItemTitle,
+    secondary:objItemTillverkare,
+    genre:function(){return "";},
+    anteckning:objItemAnteckning,
+    unknownLabel:"Okänd tillverkare",
+    secLabel:"Tillverkare",secLabelPlural:"tillverkare",searchHint:"Sök tillverkare eller titel...",
+    emptyIcon:"📝",
+    editPending:editPendingObjItem,
+    editFardig:editObjFardigEntry,
+    savePending:saveBetygForemal,
+    klarModal:function(item,idx,cat,onSaved){showHistObjModal(objItemTitle(item),idx,cat,objItemTillverkare(item),objItemAnteckning(item),onSaved);},
+    defaultCat:function(){return objCat;}
+  };
+  if(tab==="plats")return {
+    catPresets:function(){return PLATS_CAT_PRESETS;},
+    fardig:function(){return platsFardig;},
+    pending:function(){return platsList;},
+    title:platsItemTitle,
+    secondary:platsItemKommun,
+    genre:function(){return "";},
+    anteckning:platsItemAnteckning,
+    unknownLabel:"Okänd kommun",
+    secLabel:"Kommun",secLabelPlural:"kommuner",searchHint:"Sök kommun eller titel...",
+    emptyIcon:"📝",
+    editPending:editPendingPlatsItem,
+    editFardig:editPlatsFardigEntry,
+    savePending:saveBetygPlats,
+    klarModal:function(item,idx,cat,onSaved){showHistPlatsModal(platsItemTitle(item),idx,cat,platsItemKommun(item),platsItemAnteckning(item),onSaved);},
+    defaultCat:function(){return platsCat;}
+  };
+  return {
+    catPresets:function(){return MEDIA_CAT_PRESETS;},
+    fardig:function(){return mediaFardig;},
+    pending:function(){return mediaList;},
+    title:mediaItemTitle,
+    secondary:mediaItemCreator,
+    genre:mediaItemGenre,
+    anteckning:mediaItemAnteckning,
+    unknownLabel:"Okänd kreatör",
+    secLabel:"Kreatör",secLabelPlural:"kreatörer",searchHint:"Sök kreatör, titel eller genre...",
+    emptyIcon:"📝",
+    editPending:editPendingMediaItem,
+    editFardig:editMediaFardigEntry,
+    savePending:saveBetygMedia,
+    klarModal:showMediaModal,
+    defaultCat:function(){return mediaCat;}
+  };
+}
 
 function objCatChipLabel(catName){return mediaCatChipLabel(catName);}
 
@@ -1365,7 +1512,7 @@ function editObjFardigEntry(entry,onSaved){
   };
 }
 
-function showHistObjModal(title,idx,cat,tillverkare,anteckning){
+function showHistObjModal(title,idx,cat,tillverkare,anteckning,onSaved){
   var b=document.getElementById("body");
   var existing=b.querySelector("#hist-obj-modal");
   if(existing)existing.remove();
@@ -1409,7 +1556,7 @@ function showHistObjModal(title,idx,cat,tillverkare,anteckning){
     if(objList[cat])objList[cat].splice(idx,1);
     saveBetygForemal();
     overlay.remove();
-    renderObj();
+    (onSaved||renderObj)();
   };
 }
 
@@ -1777,7 +1924,7 @@ function editPlatsFardigEntry(entry,onSaved){
   };
 }
 
-function showHistPlatsModal(title,idx,cat,kommun,anteckning){
+function showHistPlatsModal(title,idx,cat,kommun,anteckning,onSaved){
   var b=document.getElementById("body");
   var existing=b.querySelector("#hist-plats-modal");
   if(existing)existing.remove();
@@ -1821,42 +1968,44 @@ function showHistPlatsModal(title,idx,cat,kommun,anteckning){
     if(platsList[cat])platsList[cat].splice(idx,1);
     saveBetygPlats();
     overlay.remove();
-    renderPlats();
+    (onSaved||renderPlats)();
   };
 }
 
-function renderMediaRecension(){
-  if(mediaRecensionCreator!==null)return renderMediaRecensionByCreator();
+function renderRecension(){
+  if(recensionCreator!==null)return renderRecensionBySecondary();
+  var adapter=utvAdapter(utvExtraSourceTab);
 
   var c=document.getElementById("utv-content");
-  if(!mediaRecensionCat||MEDIA_CAT_PRESETS.indexOf(mediaRecensionCat)<0)mediaRecensionCat=MEDIA_CAT_PRESETS[0]||"";
-  var catOptions=MEDIA_CAT_PRESETS.map(function(catName){return "<option value='"+esc(catName)+"'"+(catName===mediaRecensionCat?" selected":"")+">"+esc(catName)+"</option>";}).join("");
+  var cats=adapter.catPresets();
+  if(!recensionCat||cats.indexOf(recensionCat)<0)recensionCat=cats[0]||"";
+  var catOptions=cats.map(function(catName){return "<option value='"+esc(catName)+"'"+(catName===recensionCat?" selected":"")+">"+esc(catName)+"</option>";}).join("");
 
   c.innerHTML="<button class='sec ghost' id='rec-back' style='margin-bottom:16px'>&#8592; Tillbaka</button>"
     +"<div class='lbl'>Recensioner</div>"
     +"<select id='rec-cat-select' style='width:100%;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:14px;padding:10px 12px;cursor:pointer;font-family:inherit;margin-bottom:10px'>"+catOptions+"</select>"
-    +"<input class='inp w100' id='rec-search' placeholder='Sök kreatör, titel eller genre...' style='margin-bottom:14px' value='"+esc(mediaRecensionSearch)+"'/>"
+    +"<input class='inp w100' id='rec-search' placeholder='"+esc(adapter.searchHint)+"' style='margin-bottom:14px' value='"+esc(recensionSearch)+"'/>"
     +"<div style='display:flex;gap:6px;margin-bottom:10px'>"
-    +"<button data-recsort='namn' class='mode-btn"+(mediaRecensionSortMode==="namn"?" on":"")+"' style='flex:1;font-size:11px'>📚 Namn</button>"
-    +"<button data-recsort='kreator' class='mode-btn"+(mediaRecensionSortMode==="kreator"?" on":"")+"' style='flex:1;font-size:11px'>Kreatör</button>"
-    +"<button data-recsort='senaste' class='mode-btn"+(mediaRecensionSortMode==="senaste"?" on":"")+"' style='flex:1;font-size:11px'>🕐 Senaste</button>"
+    +"<button data-recsort='namn' class='mode-btn"+(recensionSortMode==="namn"?" on":"")+"' style='flex:1;font-size:11px'>📚 Namn</button>"
+    +"<button data-recsort='kreator' class='mode-btn"+(recensionSortMode==="kreator"?" on":"")+"' style='flex:1;font-size:11px'>"+esc(adapter.secLabel)+"</button>"
+    +"<button data-recsort='senaste' class='mode-btn"+(recensionSortMode==="senaste"?" on":"")+"' style='flex:1;font-size:11px'>🕐 Senaste</button>"
     +"</div>"
     +"<div id='rec-bookshelf-bar'></div>"
     +"<div id='rec-creators-list'></div>";
 
   c.querySelector("#rec-back").onclick=function(){utvExtraView=null;syncUtvTopNav();renderUtvContent();};
   var sel=c.querySelector("#rec-cat-select");
-  if(sel)sel.onchange=function(){mediaRecensionCat=sel.value;mediaRecensionSearch="";mediaRecensionLetter="";renderMediaRecension();};
+  if(sel)sel.onchange=function(){recensionCat=sel.value;recensionSearch="";recensionLetter="";renderRecension();};
   var searchInp=c.querySelector("#rec-search");
-  if(searchInp)searchInp.oninput=function(){mediaRecensionSearch=searchInp.value;updateMediaRecList();};
+  if(searchInp)searchInp.oninput=function(){recensionSearch=searchInp.value;updateRecList();};
   c.querySelectorAll("[data-recsort]").forEach(function(btn){
     btn.onclick=function(){
-      mediaRecensionSortMode=btn.dataset.recsort;
-      mediaRecensionLetter="";
-      renderMediaRecension();
+      recensionSortMode=btn.dataset.recsort;
+      recensionLetter="";
+      renderRecension();
     };
   });
-  updateMediaRecList();
+  updateRecList();
 }
 
 // Delad bokstavsrad (A-Ö) - används av både Namn- och Kreatör-läget, med olika
@@ -1865,89 +2014,95 @@ function renderRecLetterBar(barEl,availLetters){
   barEl.innerHTML="<div style='display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px'>"
     +MEDIA_REC_ALPHABET.map(function(l){
       var has=!!availLetters[l];
-      var active=mediaRecensionLetter===l;
+      var active=recensionLetter===l;
       return "<button data-recletter='"+l+"'"+(has?"":" disabled")+" style='min-width:26px;padding:6px 0;font-size:11px;border-radius:6px;border:1px solid "+(active?"#c9a24a":"#2a2a2a")+";background:"+(active?"#c9a24a":"#161616")+";color:"+(active?"#161616":(has?"#f2f2f2":"#3a3a3a"))+";cursor:"+(has?"pointer":"default")+"'>"+l+"</button>";
     }).join("")
-    +"<button data-recletter='' style='padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid #2a2a2a;background:"+(!mediaRecensionLetter?"#c9a24a":"#161616")+";color:"+(!mediaRecensionLetter?"#161616":"#f2f2f2")+";cursor:pointer'>Alla</button>"
+    +"<button data-recletter='' style='padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid #2a2a2a;background:"+(!recensionLetter?"#c9a24a":"#161616")+";color:"+(!recensionLetter?"#161616":"#f2f2f2")+";cursor:pointer'>Alla</button>"
     +"</div>";
   barEl.querySelectorAll("[data-recletter]").forEach(function(btn){
     if(btn.disabled)return;
     btn.onclick=function(){
       var l=btn.dataset.recletter;
-      mediaRecensionLetter=mediaRecensionLetter===l?"":l;
-      updateMediaRecList();
+      recensionLetter=recensionLetter===l?"":l;
+      updateRecList();
     };
   });
 }
 
 // Delad platt lista (post för post, som Historik -> Betyg) - används av både Namn- och
-// Senaste-läget, bara ordningen på "list" skiljer.
-function renderRecFlatList(listEl,list){
+// Senaste-läget, bara ordningen på "list" skiljer. adapter avgör vilka fält (kreatör/
+// tillverkare/kommun, genre eller inte) som visas och vilken redigeringsfunktion som gäller.
+function renderRecFlatList(listEl,list,adapter){
+  var fardig=adapter.fardig();
   listEl.innerHTML=list.length?list.map(function(e){
     var stars=[1,2,3,4,5,6,7,8,9,10].map(function(n){return n<=e.rating?"★":"☆";}).join("");
-    var idx=mediaFardig.indexOf(e);
+    var idx=fardig.indexOf(e);
+    var secondary=adapter.secondary(e),genre=adapter.genre(e),anteckning=adapter.anteckning(e);
     return "<div style='padding:10px 14px;background:#131313;border:1px solid #2a2a2a;border-radius:10px;margin-bottom:8px'>"
       +"<div style='display:flex;align-items:center;gap:8px'>"
-      +"<div style='flex:1;font-size:13px;color:#f2f2f2;font-weight:500'>"+esc(e.title)+"</div>"
+      +"<div style='flex:1;font-size:13px;color:#f2f2f2;font-weight:500'>"+esc(adapter.title(e))+"</div>"
       +"<span style='color:#c9a24a;font-size:14px;letter-spacing:1px'>"+stars+"</span>"
       +"<button data-editflatrec='"+idx+"' style='background:none;border:none;color:#5c5c5c;cursor:pointer;font-size:14px;padding:0 4px;flex-shrink:0'>✏️</button>"
       +"</div>"
-      +(e.creator?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(e.creator)+"</div>":"")
-      +(e.genre?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(e.genre)+"</div>":"")
-      +(e.anteckning?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(e.anteckning)+"</div>":"")
+      +(secondary?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(secondary)+"</div>":"")
+      +(genre?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(genre)+"</div>":"")
+      +(anteckning?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(anteckning)+"</div>":"")
       +(e.comment?"<div style='font-size:12px;color:#5c5c5c;margin-top:4px;line-height:1.5'>"+esc(e.comment)+"</div>":"")
       +"<div style='font-size:10px;color:#5c5c5c;margin-top:4px'>"+fd(e.timestamp)+"</div>"
       +"</div>";
-  }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>📝</div>Inga träffar.</div>";
+  }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>"+adapter.emptyIcon+"</div>Inga träffar.</div>";
 
   listEl.querySelectorAll("[data-editflatrec]").forEach(function(btn){
     btn.onclick=function(){
-      var e=mediaFardig[parseInt(btn.dataset.editflatrec)];
-      if(e)editMediaFardigEntry(e,updateMediaRecList);
+      var e=fardig[parseInt(btn.dataset.editflatrec)];
+      if(e)adapter.editFardig(e,updateRecList);
     };
   });
 }
 
 // Bygger om listan (+ ev. bokstavsrad/spegelvändningsknapp) utan att röra resten av vyn,
 // sa att sökfältet inte tappar fokus medan man skriver. Tre lägen:
-// "namn" (standard) - platt lista, sorterad på medias namn, bokstavsrad på titelns första bokstav.
-// "kreator" - visar bara kreatörsnamn, bokstavsrad på kreatörens första bokstav, klick -> alla
-//             recensioner fran samma kreatör (renderMediaRecensionByCreator).
+// "namn" (standard) - platt lista, sorterad på namnet, bokstavsrad på titelns första bokstav.
+// "kreator" - visar bara kreatör/tillverkare/kommun, bokstavsrad på dess första bokstav,
+//             klick -> alla recensioner från samma (renderRecensionBySecondary).
 // "senaste" - platt lista sorterad kronologiskt, med knapp för att spegelvända ordningen.
-function updateMediaRecList(){
+function updateRecList(){
+  var adapter=utvAdapter(utvExtraSourceTab);
   var listEl=document.getElementById("rec-creators-list");
   var barEl=document.getElementById("rec-bookshelf-bar");
   if(!listEl)return;
 
-  var q=mediaRecensionSearch.trim().toLowerCase();
-  var entries=mediaFardig.filter(function(e){
-    if(e.cat!==mediaRecensionCat)return false;
+  var q=recensionSearch.trim().toLowerCase();
+  var entries=adapter.fardig().filter(function(e){
+    if(e.cat!==recensionCat)return false;
     if(!q)return true;
-    return (e.creator&&e.creator.toLowerCase().indexOf(q)>=0)
-      ||(e.title&&e.title.toLowerCase().indexOf(q)>=0)
-      ||(e.genre&&e.genre.toLowerCase().indexOf(q)>=0);
+    var secondary=adapter.secondary(e),title=adapter.title(e),genre=adapter.genre(e);
+    return (secondary&&secondary.toLowerCase().indexOf(q)>=0)
+      ||(title&&title.toLowerCase().indexOf(q)>=0)
+      ||(genre&&genre.toLowerCase().indexOf(q)>=0);
   });
 
-  if(mediaRecensionSortMode==="senaste"){
+  if(recensionSortMode==="senaste"){
     if(barEl){
       barEl.innerHTML="<div style='display:flex;justify-content:flex-end;margin-bottom:10px'>"
-        +"<button id='rec-senaste-flip' class='chip' type='button' style='font-size:12px'>"+(mediaRecensionSenasteDesc?"⇅ Äldst överst":"⇅ Nyast överst")+"</button>"
+        +"<button id='rec-senaste-flip' class='chip' type='button' style='font-size:12px'>"+(recensionSenasteDesc?"⇅ Äldst överst":"⇅ Nyast överst")+"</button>"
         +"</div>";
       var flipBtn=barEl.querySelector("#rec-senaste-flip");
-      if(flipBtn)flipBtn.onclick=function(){mediaRecensionSenasteDesc=!mediaRecensionSenasteDesc;updateMediaRecList();};
+      if(flipBtn)flipBtn.onclick=function(){recensionSenasteDesc=!recensionSenasteDesc;updateRecList();};
     }
     var chronoEntries=entries.slice().sort(function(a,b){
       var diff=new Date(b.timestamp)-new Date(a.timestamp);
-      return mediaRecensionSenasteDesc?diff:-diff;
+      return recensionSenasteDesc?diff:-diff;
     });
-    renderRecFlatList(listEl,chronoEntries);
+    renderRecFlatList(listEl,chronoEntries,adapter);
     return;
   }
 
-  if(mediaRecensionSortMode==="kreator"){
+  if(recensionSortMode==="kreator"){
     var counts={};
     entries.forEach(function(e){
-      var key=e.creator?e.creator:MEDIA_UNKNOWN_CREATOR;
+      var s=adapter.secondary(e);
+      var key=s?s:MEDIA_UNKNOWN_CREATOR;
       counts[key]=(counts[key]||0)+1;
     });
     var allCreators=Object.keys(counts).filter(function(k){return k!==MEDIA_UNKNOWN_CREATOR;}).sort(function(a,b){return a.toLowerCase().localeCompare(b.toLowerCase(),"sv");});
@@ -1959,140 +2114,146 @@ function updateMediaRecList(){
       renderRecLetterBar(barEl,availLettersKr);
     }
     var creators=allCreators;
-    if(mediaRecensionLetter)creators=creators.filter(function(cr){return cr!==MEDIA_UNKNOWN_CREATOR&&cr.charAt(0).toUpperCase()===mediaRecensionLetter;});
+    if(recensionLetter)creators=creators.filter(function(cr){return cr!==MEDIA_UNKNOWN_CREATOR&&cr.charAt(0).toUpperCase()===recensionLetter;});
 
     listEl.innerHTML=creators.length?creators.map(function(cr){
-      var label=cr===MEDIA_UNKNOWN_CREATOR?"Okänd kreatör":cr;
+      var label=cr===MEDIA_UNKNOWN_CREATOR?adapter.unknownLabel:cr;
       return "<div class='khist' style='display:flex;align-items:center;gap:8px' data-reccreator='"+esc(cr)+"'>"
         +"<div style='flex:1;min-width:0'><div class='kmsg' style='white-space:normal;font-weight:600'>"+esc(label)+"</div>"
         +"<div class='kmeta'><span class='kbadge'>"+counts[cr]+" recensioner</span></div></div>"
         +"</div>";
-    }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>📝</div>Inga recensioner i denna kategori ännu.</div>";
+    }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>"+adapter.emptyIcon+"</div>Inga recensioner i denna kategori ännu.</div>";
 
     listEl.querySelectorAll("[data-reccreator]").forEach(function(el){
-      el.onclick=function(){mediaRecensionCreator=el.dataset.reccreator;renderMediaRecension();};
+      el.onclick=function(){recensionCreator=el.dataset.reccreator;renderRecension();};
     });
     return;
   }
 
-  // "namn" - standardläget: platt lista sorterad på medias namn, med bokstavsrad på titeln.
+  // "namn" - standardläget: platt lista sorterad på namnet, med bokstavsrad på titeln.
   if(barEl){
     var availLettersNamn={};
-    entries.forEach(function(e){if(e.title)availLettersNamn[e.title.charAt(0).toUpperCase()]=true;});
+    entries.forEach(function(e){var t=adapter.title(e);if(t)availLettersNamn[t.charAt(0).toUpperCase()]=true;});
     renderRecLetterBar(barEl,availLettersNamn);
   }
   var namnEntries=entries.slice();
-  if(mediaRecensionLetter)namnEntries=namnEntries.filter(function(e){return (e.title||"").charAt(0).toUpperCase()===mediaRecensionLetter;});
-  namnEntries.sort(function(a,b){return (a.title||"").toLowerCase().localeCompare((b.title||"").toLowerCase(),"sv");});
-  renderRecFlatList(listEl,namnEntries);
+  if(recensionLetter)namnEntries=namnEntries.filter(function(e){return (adapter.title(e)||"").charAt(0).toUpperCase()===recensionLetter;});
+  namnEntries.sort(function(a,b){return (adapter.title(a)||"").toLowerCase().localeCompare((adapter.title(b)||"").toLowerCase(),"sv");});
+  renderRecFlatList(listEl,namnEntries,adapter);
 }
 
-function renderMediaRecensionByCreator(){
+function renderRecensionBySecondary(){
+  var adapter=utvAdapter(utvExtraSourceTab);
   var c=document.getElementById("utv-content");
-  var isUnknown=mediaRecensionCreator===MEDIA_UNKNOWN_CREATOR;
-  var label=isUnknown?"Okänd kreatör":mediaRecensionCreator;
+  var isUnknown=recensionCreator===MEDIA_UNKNOWN_CREATOR;
+  var label=isUnknown?adapter.unknownLabel:recensionCreator;
 
-  var entries=mediaFardig.filter(function(e){
-    return e.cat===mediaRecensionCat&&(isUnknown?!e.creator:e.creator===mediaRecensionCreator);
+  var entries=adapter.fardig().filter(function(e){
+    var s=adapter.secondary(e);
+    return e.cat===recensionCat&&(isUnknown?!s:s===recensionCreator);
   });
   entries.sort(function(a,b){return new Date(b.timestamp)-new Date(a.timestamp);});
 
+  var fardig=adapter.fardig();
   var list=entries.length?entries.map(function(e){
     var stars=[1,2,3,4,5,6,7,8,9,10].map(function(n){return n<=e.rating?"★":"☆";}).join("");
-    var idx=mediaFardig.indexOf(e);
+    var idx=fardig.indexOf(e);
+    var genre=adapter.genre(e),anteckning=adapter.anteckning(e);
     return "<div style='padding:10px 14px;background:#131313;border:1px solid #2a2a2a;border-radius:10px;margin-bottom:8px'>"
       +"<div style='display:flex;align-items:center;gap:8px'>"
-      +"<div style='flex:1;font-size:13px;color:#f2f2f2;font-weight:500'>"+esc(e.title)+"</div>"
+      +"<div style='flex:1;font-size:13px;color:#f2f2f2;font-weight:500'>"+esc(adapter.title(e))+"</div>"
       +"<span style='color:#c9a24a;font-size:14px;letter-spacing:1px'>"+stars+"</span>"
       +"<button data-editrec='"+idx+"' style='background:none;border:none;color:#5c5c5c;cursor:pointer;font-size:14px;padding:0 4px;flex-shrink:0'>✏️</button>"
       +"</div>"
-      +(e.genre?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(e.genre)+"</div>":"")
-      +(e.anteckning?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(e.anteckning)+"</div>":"")
+      +(genre?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(genre)+"</div>":"")
+      +(anteckning?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(anteckning)+"</div>":"")
       +(e.comment?"<div style='font-size:12px;color:#5c5c5c;margin-top:4px;line-height:1.5'>"+esc(e.comment)+"</div>":"")
       +"<div style='font-size:10px;color:#5c5c5c;margin-top:4px'>"+fd(e.timestamp)+"</div>"
       +"</div>";
-  }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>📝</div>Inga recensioner annu.</div>";
+  }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>"+adapter.emptyIcon+"</div>Inga recensioner ännu.</div>";
 
-  c.innerHTML="<button class='sec ghost' id='rec-back-creators' style='margin-bottom:16px'>&#8592; Alla kreatörer</button>"
+  c.innerHTML="<button class='sec ghost' id='rec-back-creators' style='margin-bottom:16px'>&#8592; Alla "+adapter.secLabelPlural+"</button>"
     +"<div class='lbl'>"+esc(label)+"</div>"+list;
 
-  c.querySelector("#rec-back-creators").onclick=function(){mediaRecensionCreator=null;renderMediaRecension();};
+  c.querySelector("#rec-back-creators").onclick=function(){recensionCreator=null;renderRecension();};
   c.querySelectorAll("[data-editrec]").forEach(function(btn){
     btn.onclick=function(){
-      var e=mediaFardig[parseInt(btn.dataset.editrec)];
-      if(e)editMediaFardigEntry(e,renderMediaRecensionByCreator);
+      var e=fardig[parseInt(btn.dataset.editrec)];
+      if(e)adapter.editFardig(e,renderRecensionBySecondary);
     };
   });
 }
 
 // ---- Pågående: samma bokhylle-koncept som Recensioner (Namn/Kreatör/Senaste + bokstavsrad),
-// men källan är mediaList (ej klarmarkerade poster) istället för mediaFardig. Klick på ett
-// inlägg öppnar showMediaModal för att klarmarkera + betygsätta det (samma modal som
-// "Senaste 5" under Att konsumera använder).
-function renderMediaPagaende(){
-  if(mediaPagCreator!==null)return renderMediaPagaendeByCreator();
+// men källan är adapter.pending() (ej klarmarkerade poster) istället för adapter.fardig().
+// Klick på ett inlägg öppnar adapter.klarModal för att klarmarkera + betygsätta det (samma
+// modal som "Senaste 5" under Att konsumera använder).
+function renderPagaende(){
+  if(pagCreator!==null)return renderPagaendeBySecondary();
+  var adapter=utvAdapter(utvExtraSourceTab);
 
   var c=document.getElementById("utv-content");
-  if(!mediaPagCat||MEDIA_CAT_PRESETS.indexOf(mediaPagCat)<0)mediaPagCat=MEDIA_CAT_PRESETS[0]||"";
-  var catOptions=MEDIA_CAT_PRESETS.map(function(catName){return "<option value='"+esc(catName)+"'"+(catName===mediaPagCat?" selected":"")+">"+esc(catName)+"</option>";}).join("");
+  var cats=adapter.catPresets();
+  if(!pagCat||cats.indexOf(pagCat)<0)pagCat=cats[0]||"";
+  var catOptions=cats.map(function(catName){return "<option value='"+esc(catName)+"'"+(catName===pagCat?" selected":"")+">"+esc(catName)+"</option>";}).join("");
 
   c.innerHTML="<button class='sec ghost' id='pag-back' style='margin-bottom:16px'>&#8592; Tillbaka</button>"
     +"<div class='lbl'>Pågående</div>"
     +"<select id='pag-cat-select' style='width:100%;background:#161616;border:1px solid #2a2a2a;border-radius:10px;color:#f2f2f2;font-size:14px;padding:10px 12px;cursor:pointer;font-family:inherit;margin-bottom:10px'>"+catOptions+"</select>"
-    +"<input class='inp w100' id='pag-search' placeholder='Sök kreatör, titel eller genre...' style='margin-bottom:14px' value='"+esc(mediaPagSearch)+"'/>"
+    +"<input class='inp w100' id='pag-search' placeholder='"+esc(adapter.searchHint)+"' style='margin-bottom:14px' value='"+esc(pagSearch)+"'/>"
     +"<div style='display:flex;gap:6px;margin-bottom:10px'>"
-    +"<button data-pagsort='namn' class='mode-btn"+(mediaPagSortMode==="namn"?" on":"")+"' style='flex:1;font-size:11px'>📚 Namn</button>"
-    +"<button data-pagsort='kreator' class='mode-btn"+(mediaPagSortMode==="kreator"?" on":"")+"' style='flex:1;font-size:11px'>Kreatör</button>"
-    +"<button data-pagsort='senaste' class='mode-btn"+(mediaPagSortMode==="senaste"?" on":"")+"' style='flex:1;font-size:11px'>🕐 Senaste</button>"
+    +"<button data-pagsort='namn' class='mode-btn"+(pagSortMode==="namn"?" on":"")+"' style='flex:1;font-size:11px'>📚 Namn</button>"
+    +"<button data-pagsort='kreator' class='mode-btn"+(pagSortMode==="kreator"?" on":"")+"' style='flex:1;font-size:11px'>"+esc(adapter.secLabel)+"</button>"
+    +"<button data-pagsort='senaste' class='mode-btn"+(pagSortMode==="senaste"?" on":"")+"' style='flex:1;font-size:11px'>🕐 Senaste</button>"
     +"</div>"
     +"<div id='pag-bookshelf-bar'></div>"
     +"<div id='pag-list'></div>";
 
   c.querySelector("#pag-back").onclick=function(){utvExtraView=null;syncUtvTopNav();renderUtvContent();};
   var sel=c.querySelector("#pag-cat-select");
-  if(sel)sel.onchange=function(){mediaPagCat=sel.value;mediaPagSearch="";mediaPagLetter="";renderMediaPagaende();};
+  if(sel)sel.onchange=function(){pagCat=sel.value;pagSearch="";pagLetter="";renderPagaende();};
   var searchInp=c.querySelector("#pag-search");
-  if(searchInp)searchInp.oninput=function(){mediaPagSearch=searchInp.value;updateMediaPagList();};
+  if(searchInp)searchInp.oninput=function(){pagSearch=searchInp.value;updatePagList();};
   c.querySelectorAll("[data-pagsort]").forEach(function(btn){
     btn.onclick=function(){
-      mediaPagSortMode=btn.dataset.pagsort;
-      mediaPagLetter="";
-      renderMediaPagaende();
+      pagSortMode=btn.dataset.pagsort;
+      pagLetter="";
+      renderPagaende();
     };
   });
-  updateMediaPagList();
+  updatePagList();
 }
 
 function renderPagLetterBar(barEl,availLetters){
   barEl.innerHTML="<div style='display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px'>"
     +MEDIA_REC_ALPHABET.map(function(l){
       var has=!!availLetters[l];
-      var active=mediaPagLetter===l;
+      var active=pagLetter===l;
       return "<button data-pagletter='"+l+"'"+(has?"":" disabled")+" style='min-width:26px;padding:6px 0;font-size:11px;border-radius:6px;border:1px solid "+(active?"#c9a24a":"#2a2a2a")+";background:"+(active?"#c9a24a":"#161616")+";color:"+(active?"#161616":(has?"#f2f2f2":"#3a3a3a"))+";cursor:"+(has?"pointer":"default")+"'>"+l+"</button>";
     }).join("")
-    +"<button data-pagletter='' style='padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid #2a2a2a;background:"+(!mediaPagLetter?"#c9a24a":"#161616")+";color:"+(!mediaPagLetter?"#161616":"#f2f2f2")+";cursor:pointer'>Alla</button>"
+    +"<button data-pagletter='' style='padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid #2a2a2a;background:"+(!pagLetter?"#c9a24a":"#161616")+";color:"+(!pagLetter?"#161616":"#f2f2f2")+";cursor:pointer'>Alla</button>"
     +"</div>";
   barEl.querySelectorAll("[data-pagletter]").forEach(function(btn){
     if(btn.disabled)return;
     btn.onclick=function(){
       var l=btn.dataset.pagletter;
-      mediaPagLetter=mediaPagLetter===l?"":l;
-      updateMediaPagList();
+      pagLetter=pagLetter===l?"":l;
+      updatePagList();
     };
   });
 }
 
 // Platt lista utan stjärnor (posten är ännu inte betygsatt) - klick på raden öppnar
-// showMediaModal för att klarmarkera + betygsätta, ✏️ redigerar, x tar bort.
-function renderPagFlatList(listEl,list){
+// adapter.klarModal för att klarmarkera + betygsätta, ✏️ redigerar, x tar bort.
+function renderPagFlatList(listEl,list,adapter){
   listEl.innerHTML=list.length?list.map(function(en){
     var item=en.item,idx=en.idx;
-    var title=mediaItemTitle(item),creator=mediaItemCreator(item),genre=mediaItemGenre(item),anteckning=mediaItemAnteckning(item);
+    var title=adapter.title(item),secondary=adapter.secondary(item),genre=adapter.genre(item),anteckning=adapter.anteckning(item);
     return "<div style='padding:10px 14px;background:#131313;border:1px solid #2a2a2a;border-radius:10px;margin-bottom:8px'>"
       +"<div style='display:flex;align-items:center;gap:8px'>"
       +"<div data-pagclick='"+idx+"' style='flex:1;min-width:0;cursor:pointer'>"
       +"<div style='font-size:13px;color:#f2f2f2;font-weight:500'>"+esc(title)+"</div>"
-      +(creator?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(creator)+"</div>":"")
+      +(secondary?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(secondary)+"</div>":"")
       +(genre?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(genre)+"</div>":"")
       +(anteckning?"<div style='font-size:11px;color:#5c5c5c;margin-top:2px'>"+esc(anteckning)+"</div>":"")
       +"</div>"
@@ -2105,64 +2266,66 @@ function renderPagFlatList(listEl,list){
   listEl.querySelectorAll("[data-pagclick]").forEach(function(el){
     el.onclick=function(){
       var idx=parseInt(el.dataset.pagclick);
-      var item=(mediaList[mediaPagCat]||[])[idx];
-      if(item)showMediaModal(item,idx,mediaPagCat,updateMediaPagList);
+      var item=(adapter.pending()[pagCat]||[])[idx];
+      if(item)adapter.klarModal(item,idx,pagCat,updatePagList);
     };
   });
   listEl.querySelectorAll("[data-pagedit]").forEach(function(btn){
     btn.onclick=function(){
-      editPendingMediaItem(mediaPagCat,parseInt(btn.dataset.pagedit),updateMediaPagList);
+      adapter.editPending(pagCat,parseInt(btn.dataset.pagedit),updatePagList);
     };
   });
   listEl.querySelectorAll("[data-pagdel]").forEach(function(btn){
     btn.onclick=function(){
       var idx=parseInt(btn.dataset.pagdel);
-      var item=(mediaList[mediaPagCat]||[])[idx];
-      var title=item?mediaItemTitle(item):"";
+      var pending=adapter.pending();
+      var item=(pending[pagCat]||[])[idx];
+      var title=item?adapter.title(item):"";
       confirmDelete("Vill du ta bort \""+esc(title)+"\"?",function(){
-        if(mediaList[mediaPagCat])mediaList[mediaPagCat].splice(idx,1);
-        saveBetygMedia();updateMediaPagList();
+        if(pending[pagCat])pending[pagCat].splice(idx,1);
+        adapter.savePending();updatePagList();
       });
     };
   });
 }
 
-function updateMediaPagList(){
+function updatePagList(){
+  var adapter=utvAdapter(utvExtraSourceTab);
   var listEl=document.getElementById("pag-list");
   var barEl=document.getElementById("pag-bookshelf-bar");
   if(!listEl)return;
 
-  var q=mediaPagSearch.trim().toLowerCase();
-  var rawItems=mediaList[mediaPagCat]||[];
+  var q=pagSearch.trim().toLowerCase();
+  var rawItems=adapter.pending()[pagCat]||[];
   var entries=rawItems.map(function(item,idx){return {item:item,idx:idx};}).filter(function(en){
     if(!q)return true;
-    var creator=mediaItemCreator(en.item),title=mediaItemTitle(en.item),genre=mediaItemGenre(en.item);
-    return (creator&&creator.toLowerCase().indexOf(q)>=0)
+    var secondary=adapter.secondary(en.item),title=adapter.title(en.item),genre=adapter.genre(en.item);
+    return (secondary&&secondary.toLowerCase().indexOf(q)>=0)
       ||(title&&title.toLowerCase().indexOf(q)>=0)
       ||(genre&&genre.toLowerCase().indexOf(q)>=0);
   });
 
-  if(mediaPagSortMode==="senaste"){
+  if(pagSortMode==="senaste"){
     if(barEl){
       barEl.innerHTML="<div style='display:flex;justify-content:flex-end;margin-bottom:10px'>"
-        +"<button id='pag-senaste-flip' class='chip' type='button' style='font-size:12px'>"+(mediaPagSenasteDesc?"⇅ Äldst överst":"⇅ Nyast överst")+"</button>"
+        +"<button id='pag-senaste-flip' class='chip' type='button' style='font-size:12px'>"+(pagSenasteDesc?"⇅ Äldst överst":"⇅ Nyast överst")+"</button>"
         +"</div>";
       var flipBtn=barEl.querySelector("#pag-senaste-flip");
-      if(flipBtn)flipBtn.onclick=function(){mediaPagSenasteDesc=!mediaPagSenasteDesc;updateMediaPagList();};
+      if(flipBtn)flipBtn.onclick=function(){pagSenasteDesc=!pagSenasteDesc;updatePagList();};
     }
     var chronoEntries=entries.slice().sort(function(a,b){
       var diff=new Date(b.item.timestamp)-new Date(a.item.timestamp);
-      return mediaPagSenasteDesc?diff:-diff;
+      return pagSenasteDesc?diff:-diff;
     });
-    renderPagFlatList(listEl,chronoEntries);
+    renderPagFlatList(listEl,chronoEntries,adapter);
     return;
   }
 
-  if(mediaPagSortMode==="kreator"){
+  if(pagSortMode==="kreator"){
     var counts={};
     entries.forEach(function(en){
-      var cr=mediaItemCreator(en.item);
-      var key=cr?cr:MEDIA_UNKNOWN_CREATOR;
+      var s=adapter.secondary(en.item);
+      var key=s?s:MEDIA_UNKNOWN_CREATOR;
       counts[key]=(counts[key]||0)+1;
     });
     var allCreators=Object.keys(counts).filter(function(k){return k!==MEDIA_UNKNOWN_CREATOR;}).sort(function(a,b){return a.toLowerCase().localeCompare(b.toLowerCase(),"sv");});
@@ -2174,10 +2337,10 @@ function updateMediaPagList(){
       renderPagLetterBar(barEl,availLettersKr);
     }
     var creators=allCreators;
-    if(mediaPagLetter)creators=creators.filter(function(cr){return cr!==MEDIA_UNKNOWN_CREATOR&&cr.charAt(0).toUpperCase()===mediaPagLetter;});
+    if(pagLetter)creators=creators.filter(function(cr){return cr!==MEDIA_UNKNOWN_CREATOR&&cr.charAt(0).toUpperCase()===pagLetter;});
 
     listEl.innerHTML=creators.length?creators.map(function(cr){
-      var label=cr===MEDIA_UNKNOWN_CREATOR?"Okänd kreatör":cr;
+      var label=cr===MEDIA_UNKNOWN_CREATOR?adapter.unknownLabel:cr;
       return "<div class='khist' style='display:flex;align-items:center;gap:8px' data-pagcreator='"+esc(cr)+"'>"
         +"<div style='flex:1;min-width:0'><div class='kmsg' style='white-space:normal;font-weight:600'>"+esc(label)+"</div>"
         +"<div class='kmeta'><span class='kbadge'>"+counts[cr]+" pågående</span></div></div>"
@@ -2185,7 +2348,7 @@ function updateMediaPagList(){
     }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>🔄</div>Inget pågående i denna kategori ännu.</div>";
 
     listEl.querySelectorAll("[data-pagcreator]").forEach(function(el){
-      el.onclick=function(){mediaPagCreator=el.dataset.pagcreator;renderMediaPagaende();};
+      el.onclick=function(){pagCreator=el.dataset.pagcreator;renderPagaende();};
     });
     return;
   }
@@ -2193,30 +2356,31 @@ function updateMediaPagList(){
   // "namn" - standardläget
   if(barEl){
     var availLettersNamn={};
-    entries.forEach(function(en){var t=mediaItemTitle(en.item);if(t)availLettersNamn[t.charAt(0).toUpperCase()]=true;});
+    entries.forEach(function(en){var t=adapter.title(en.item);if(t)availLettersNamn[t.charAt(0).toUpperCase()]=true;});
     renderPagLetterBar(barEl,availLettersNamn);
   }
   var namnEntries=entries.slice();
-  if(mediaPagLetter)namnEntries=namnEntries.filter(function(en){return (mediaItemTitle(en.item)||"").charAt(0).toUpperCase()===mediaPagLetter;});
-  namnEntries.sort(function(a,b){return (mediaItemTitle(a.item)||"").toLowerCase().localeCompare((mediaItemTitle(b.item)||"").toLowerCase(),"sv");});
-  renderPagFlatList(listEl,namnEntries);
+  if(pagLetter)namnEntries=namnEntries.filter(function(en){return (adapter.title(en.item)||"").charAt(0).toUpperCase()===pagLetter;});
+  namnEntries.sort(function(a,b){return (adapter.title(a.item)||"").toLowerCase().localeCompare((adapter.title(b.item)||"").toLowerCase(),"sv");});
+  renderPagFlatList(listEl,namnEntries,adapter);
 }
 
-function renderMediaPagaendeByCreator(){
+function renderPagaendeBySecondary(){
+  var adapter=utvAdapter(utvExtraSourceTab);
   var c=document.getElementById("utv-content");
-  var isUnknown=mediaPagCreator===MEDIA_UNKNOWN_CREATOR;
-  var label=isUnknown?"Okänd kreatör":mediaPagCreator;
+  var isUnknown=pagCreator===MEDIA_UNKNOWN_CREATOR;
+  var label=isUnknown?adapter.unknownLabel:pagCreator;
 
-  var rawItems=mediaList[mediaPagCat]||[];
+  var rawItems=adapter.pending()[pagCat]||[];
   var entries=rawItems.map(function(item,idx){return {item:item,idx:idx};}).filter(function(en){
-    var cr=mediaItemCreator(en.item);
-    return isUnknown?!cr:cr===mediaPagCreator;
+    var s=adapter.secondary(en.item);
+    return isUnknown?!s:s===pagCreator;
   });
   entries.sort(function(a,b){return new Date(b.item.timestamp)-new Date(a.item.timestamp);});
 
   var list=entries.length?entries.map(function(en){
     var item=en.item,idx=en.idx;
-    var title=mediaItemTitle(item),genre=mediaItemGenre(item),anteckning=mediaItemAnteckning(item);
+    var title=adapter.title(item),genre=adapter.genre(item),anteckning=adapter.anteckning(item);
     return "<div style='padding:10px 14px;background:#131313;border:1px solid #2a2a2a;border-radius:10px;margin-bottom:8px'>"
       +"<div style='display:flex;align-items:center;gap:8px'>"
       +"<div data-pagclickcr='"+idx+"' style='flex:1;min-width:0;cursor:pointer'>"
@@ -2230,30 +2394,31 @@ function renderMediaPagaendeByCreator(){
       +"</div>";
   }).join(""):"<div class='empty' style='padding:30px 0'><div class='eico'>🔄</div>Inget pågående ännu.</div>";
 
-  c.innerHTML="<button class='sec ghost' id='pag-back-creators' style='margin-bottom:16px'>&#8592; Alla kreatörer</button>"
+  c.innerHTML="<button class='sec ghost' id='pag-back-creators' style='margin-bottom:16px'>&#8592; Alla "+adapter.secLabelPlural+"</button>"
     +"<div class='lbl'>"+esc(label)+"</div>"+list;
 
-  c.querySelector("#pag-back-creators").onclick=function(){mediaPagCreator=null;renderMediaPagaende();};
+  c.querySelector("#pag-back-creators").onclick=function(){pagCreator=null;renderPagaende();};
   c.querySelectorAll("[data-pagclickcr]").forEach(function(el){
     el.onclick=function(){
       var idx=parseInt(el.dataset.pagclickcr);
-      var item=(mediaList[mediaPagCat]||[])[idx];
-      if(item)showMediaModal(item,idx,mediaPagCat,renderMediaPagaendeByCreator);
+      var item=(adapter.pending()[pagCat]||[])[idx];
+      if(item)adapter.klarModal(item,idx,pagCat,renderPagaendeBySecondary);
     };
   });
   c.querySelectorAll("[data-pageditcr]").forEach(function(btn){
     btn.onclick=function(){
-      editPendingMediaItem(mediaPagCat,parseInt(btn.dataset.pageditcr),renderMediaPagaendeByCreator);
+      adapter.editPending(pagCat,parseInt(btn.dataset.pageditcr),renderPagaendeBySecondary);
     };
   });
   c.querySelectorAll("[data-pagdelcr]").forEach(function(btn){
     btn.onclick=function(){
       var idx=parseInt(btn.dataset.pagdelcr);
-      var item=(mediaList[mediaPagCat]||[])[idx];
-      var title=item?mediaItemTitle(item):"";
+      var pending=adapter.pending();
+      var item=(pending[pagCat]||[])[idx];
+      var title=item?adapter.title(item):"";
       confirmDelete("Vill du ta bort \""+esc(title)+"\"?",function(){
-        if(mediaList[mediaPagCat])mediaList[mediaPagCat].splice(idx,1);
-        saveBetygMedia();renderMediaPagaendeByCreator();
+        if(pending[pagCat])pending[pagCat].splice(idx,1);
+        adapter.savePending();renderPagaendeBySecondary();
       });
     };
   });

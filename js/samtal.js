@@ -354,6 +354,7 @@ function renderKonvList(b){
   b.querySelectorAll("[data-konv]").forEach(function(el){
     el.onclick=function(e){
       if(e.target.dataset.delkonv||e.target.dataset.renamekonv)return;
+      samtalAiRequestSeq++;konvAiLoading=false;
       activeKonvId=el.dataset.konv;konvSender="dem";konvMsgDraft="";konvAiResult=null;konvAiDraft="";konvMsgForAiDraft="";konvNameEditing=false;konvAiSelectedPresets=[];konvSelectedSavedPrompts=[];
       renderSamtalText();
     };
@@ -425,7 +426,7 @@ function renderKonvChat(b){
   if(konvSender==="mig"){
     var resultHtml="";
     if(konvAiLoading){
-      resultHtml=spin();
+      resultHtml=spin()+"<div id='samtal-ai-attempt' class='enote' style='text-align:center;margin-bottom:8px'></div><button class='sec ghost' id='samtal-ai-cancel-btn' style='width:100%'>Avbryt</button>";
     } else if(konvAiResult){
       resultHtml="<div class=\'mt12\'>"
         +(konvAiResult.message?(
@@ -476,7 +477,7 @@ function renderKonvChat(b){
     +"<button class=\'sec\' id=\'konv-add-btn\'>Lägg till</button></div>"
     +aiBox;
 
-  b.querySelector("#konv-back-btn").onclick=function(){activeKonvId=null;editingKonvMsgIdx=null;konvNameEditing=false;renderSamtalText();};
+  b.querySelector("#konv-back-btn").onclick=function(){samtalAiRequestSeq++;konvAiLoading=false;activeKonvId=null;editingKonvMsgIdx=null;konvNameEditing=false;renderSamtalText();};
   var saveKonvName=function(){
     var nameInp=b.querySelector("#konv-name-inp");
     var v=(nameInp?nameInp.value:"").trim();
@@ -612,6 +613,8 @@ function renderKonvChat(b){
       saveSamtalText();
       renderKonvChat(b);
     };
+    var konvCancelBtn=b.querySelector("#samtal-ai-cancel-btn");
+    if(konvCancelBtn)konvCancelBtn.onclick=function(){samtalAiRequestSeq++;konvAiLoading=false;renderKonvChat(b);};
     var sendBtn=b.querySelector("#konv-ai-send-btn");
     if(sendBtn)sendBtn.onclick=function(){
       var txt=b.querySelector("#konv-ai-inp").value.trim();
@@ -635,29 +638,107 @@ function renderKonvChat(b){
   }
 }
 
+// ==== AI-ANROP MED AUTOMATISKT OMFÖRSÖK (start) ====
+// Endast GitHub/produktion: AI-proxyn går inte att nå från dev, så detta speglas medvetet inte dit.
+// Försöker om tills ett användbart svar fås (nätverksfel, 5xx/429, timeout, tomt eller oläsligt
+// svar). Slutar bara vid: lyckat svar, Avbryt, ett nyare anrop, att konversationen lämnats, eller
+// ett fel som inte går att försöka om (400/401/403/404).
+var samtalAiRequestSeq=0; // ökas vid varje nytt anrop/avbryt - äldre loopar avslutas när deras id inte längre gäller
+var SAMTAL_AI_TIMEOUT_MS=30000; // max väntetid per enskilt försök
+var SAMTAL_AI_RETRY_BASE_MS=1000; // väntan mellan försök: 1 s, 2 s, 3 s ... max 5 s
+var SAMTAL_AI_PARSE_FAIL_FALLBACK=3; // efter så här många oläsliga (men icke-tomma) svar visas råtexten som svar
+
+function samtalSleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
+function samtalWithTimeout(promise,ms){
+  var t;
+  var timeout=new Promise(function(_,rej){t=setTimeout(function(){rej(new Error("Timeout"));},ms);});
+  return Promise.race([promise,timeout]).then(function(v){clearTimeout(t);return v;},function(e){clearTimeout(t);throw e;});
+}
+function samtalShowAttempt(n){
+  var el=document.getElementById("samtal-ai-attempt");
+  if(el)el.textContent=n>1?("Försöker igen (försök "+n+")..."):"";
+}
+// opts: {id, isActive(), parse(text) (valfri, kastar vid oläsligt svar), fallback(text), onAttempt(n)}
+// Returnerar tolkat svar (eller råtext om parse saknas), eller null om anropet avbröts/ersattes/lämnades.
+// Kastar bara vid fel som inte går att försöka om.
+async function samtalAiCallRetry(sys,userMsg,maxTokens,opts){
+  var attempt=0,parseFails=0;
+  while(opts.id===samtalAiRequestSeq&&opts.isActive()){
+    attempt++;
+    if(opts.onAttempt)opts.onAttempt(attempt);
+    try{
+      var res=await samtalWithTimeout(aiCall(sys,userMsg,maxTokens),SAMTAL_AI_TIMEOUT_MS);
+      if(opts.id!==samtalAiRequestSeq||!opts.isActive())return null;
+      if(!res.ok){
+        var he=new Error("HTTP "+res.status);
+        he.fatal=[400,401,403,404].indexOf(res.status)!==-1;
+        throw he;
+      }
+      var data=await res.json();
+      var text=String(aiText(data)||"").trim();
+      if(!text)throw new Error("Tomt svar");
+      if(!opts.parse)return text;
+      try{
+        return opts.parse(text);
+      }catch(pe){
+        parseFails++;
+        if(parseFails>=SAMTAL_AI_PARSE_FAIL_FALLBACK&&opts.fallback)return opts.fallback(text);
+        throw pe;
+      }
+    }catch(e){
+      if(e&&e.fatal)throw e;
+      if(opts.id!==samtalAiRequestSeq||!opts.isActive())return null;
+      await samtalSleep(Math.min(SAMTAL_AI_RETRY_BASE_MS*attempt,5000));
+    }
+  }
+  return null;
+}
+// Tolkar Text-flikens {message, comment}-svar. Tål kodstaket, text runt JSON-blocket och radbrytningar i strängar.
+function samtalParseKonvAnswer(text){
+  var t=text.replace(/```json|```/g,"").trim();
+  var s=t.indexOf("{"),en=t.lastIndexOf("}");
+  if(s===-1||en<=s)throw new Error("Ingen JSON");
+  var block=t.slice(s,en+1);
+  var parsed;
+  try{parsed=JSON.parse(block);}catch(e1){parsed=JSON.parse(block.replace(/\r?\n/g," "));}
+  if(typeof parsed!=="object"||parsed===null)throw new Error("Fel format");
+  var message=typeof parsed.message==="string"?parsed.message:"";
+  var comment=typeof parsed.comment==="string"?parsed.comment:"";
+  if(!message.trim()&&!comment.trim())throw new Error("Tomt innehåll");
+  return {message:message,comment:comment};
+}
+// ==== AI-ANROP MED AUTOMATISKT OMFÖRSÖK (slut) ====
+
 // Fri fråga till AI:n om samtalet - ersätter de tidigare fasta Utvärdering/Klarhet/
 // Förslag-knapparna. Personen skriver själv vad de vill ha hjälp med (t.ex. "ge mig
 // tips", "skriv om det tydligare", "förslag på nästa meddelande"), eller väljer färdiga
 // val från dropdownen/sina snabbval. Svaret hålls avsiktligt kort (instruktion i
 // systemprompten + ett lågt maxTokens-tak).
 async function doKonvAiRequest(k,request,msgForAi){
+  var myId=++samtalAiRequestSeq;
+  var isActive=function(){return activeKonvId===k.id;};
   konvAiLoading=true;renderKonvChat(document.getElementById("samtal-content"));
   var threadText=k.messages.slice(-12).map(function(m){return (m.sender==="mig"?"Jag":"De")+": "+m.text;}).join("\n");
   var notesTxt=notesContextText(k);
   var notePart=notesTxt?("\n\nYtterligare information om samtalet: "+notesTxt):"";
   var msgPart=msgForAi?("\n\nMeddelandet jag funderar pa: \""+msgForAi+"\""):"";
-  var bgPart=konvAiUseBgCtx?await samtalGetBackgroundContextPart():"";
+  var bgPart=konvAiUseBgCtx?await samtalWithTimeout(samtalGetBackgroundContextPart(),20000).catch(function(){return "";}):"";
   var sys="Du ar en kommunikationscoach. Har ar samtalshistoriken hittills:\n\n"+(threadText||"(inga tidigare meddelanden)")+notePart+msgPart+bgPart+"\n\nPersonen skriver till "+k.name+". Personens onskemal just nu: \""+request+"\". Svara BARA pa det personen faktiskt bad om, var kortfattat och konkret. Svara BARA med giltig JSON: {\"message\":\"<ett konkret forslag pa meddelande att skicka, BARA om personen bad om det eller det annars ar tydligt relevant - annars tom strang>\",\"comment\":\"<din kommentar/svar i ovrigt, max 2-3 meningar, ingen inledande fras som 'Har ar' eller 'Visst'>\"}";
+  var result=null,failure=null;
   try{
-    var res=await aiCall(sys,request,400);
-    var data=await res.json();
-    var parsed=JSON.parse(aiText(data).replace(/```json|```/g,"").trim());
-    var combinedForChat=(parsed.message?parsed.message+"\n\n":"")+(parsed.comment||"");
-    konvAiResult={message:parsed.message||"",comment:parsed.comment||"",chat:[{role:"user",content:request},{role:"assistant",content:combinedForChat}]};
-  }catch(e){
-    konvAiResult={message:"",comment:"Kunde inte svara. Forsok igen.",chat:[{role:"user",content:request},{role:"assistant",content:"Kunde inte svara. Forsok igen."}]};
+    result=await samtalAiCallRetry(sys,request,800,{id:myId,isActive:isActive,parse:samtalParseKonvAnswer,fallback:function(t){return {message:"",comment:t};},onAttempt:samtalShowAttempt});
+  }catch(e){failure=e;}
+  if(myId!==samtalAiRequestSeq)return; // avbrutet eller ersatt av ett nyare anrop - det som avbröt sköter UI:t
+  konvAiLoading=false;
+  if(!isActive())return; // konversationen lämnades - inget att rita
+  if(result){
+    var combinedForChat=(result.message?result.message+"\n\n":"")+(result.comment||"");
+    konvAiResult={message:result.message||"",comment:result.comment||"",chat:[{role:"user",content:request},{role:"assistant",content:combinedForChat}]};
+  }else{
+    var errTxt="Kunde inte svara"+(failure&&failure.message?" ("+failure.message+")":"")+". Forsok igen.";
+    konvAiResult={message:"",comment:errTxt,chat:[{role:"user",content:request},{role:"assistant",content:errTxt}]};
   }
-  konvAiLoading=false;renderKonvChat(document.getElementById("samtal-content"));
+  renderKonvChat(document.getElementById("samtal-content"));
 }
 
 // ---- MUNTLIGT (som Text, men med en egenskriven sammanfattning istallet for chattbubblor) ----
@@ -730,6 +811,7 @@ function renderMuntKonvList(b){
   b.querySelectorAll("[data-muntkonv]").forEach(function(el){
     el.onclick=function(e){
       if(e.target.dataset.delmuntkonv||e.target.dataset.renamemuntkonv)return;
+      samtalAiRequestSeq++;muntAiLoading=false;
       activeMuntKonvId=el.dataset.muntkonv;muntAiResult=null;muntAiDraft="";muntMsgForAiDraft="";muntSummaryDraft="";muntFeelingDraft="";muntNameEditing=false;muntAiSelectedPresets=[];muntSelectedSavedPrompts=[];
       renderMuntligt();
     };
@@ -813,7 +895,7 @@ function renderMuntKonvOpen(b){
 
   var resultHtml="";
   if(muntAiLoading){
-    resultHtml=spin();
+    resultHtml=spin()+"<div id='samtal-ai-attempt' class='enote' style='text-align:center;margin-bottom:8px'></div><button class='sec ghost' id='samtal-ai-cancel-btn' style='width:100%'>Avbryt</button>";
   } else if(muntAiResult){
     resultHtml="<div class=\'mt12\'>"
       +"<div class=\'tbox\'>"+esc(muntAiResult.message||"")+"</div>"
@@ -862,7 +944,7 @@ function renderMuntKonvOpen(b){
     +renderMuntAiBoxHtml(resultHtml)
     +"</div>";
 
-  b.querySelector("#muntkonv-back-btn").onclick=function(){activeMuntKonvId=null;editingMuntEntryId=null;muntNameEditing=false;renderMuntligt();};
+  b.querySelector("#muntkonv-back-btn").onclick=function(){samtalAiRequestSeq++;muntAiLoading=false;activeMuntKonvId=null;editingMuntEntryId=null;muntNameEditing=false;renderMuntligt();};
   var saveMuntKonvName=function(){
     var nameInp=b.querySelector("#muntkonv-name-inp");
     var v=(nameInp?nameInp.value:"").trim();
@@ -993,6 +1075,8 @@ function renderMuntKonvOpen(b){
     saveSamtalMuntligt();
     renderMuntKonvOpen(b);
   };
+  var muntCancelBtn=b.querySelector("#samtal-ai-cancel-btn");
+  if(muntCancelBtn)muntCancelBtn.onclick=function(){samtalAiRequestSeq++;muntAiLoading=false;renderMuntKonvOpen(b);};
   var muntSendBtn=b.querySelector("#muntkonv-ai-send-btn");
   if(muntSendBtn)muntSendBtn.onclick=function(){
     var txt=b.querySelector("#muntkonv-ai-inp").value.trim();
@@ -1010,20 +1094,27 @@ function renderMuntKonvOpen(b){
 
 // Fri fråga till AI:n om det muntliga samtalet - samma mönster som Texts doKonvAiRequest.
 async function doMuntAiRequest(k,request,msgForAi){
+  var myId=++samtalAiRequestSeq;
+  var isActive=function(){return activeMuntKonvId===k.id;};
   muntAiLoading=true;renderMuntKonvOpen(document.getElementById("samtal-content"));
   var ctxText=muntContextParts(k);
   var msgPart=msgForAi?("\n\nMeddelandet jag funderar pa: \""+msgForAi+"\""):"";
-  var bgPart=muntAiUseBgCtx?await samtalGetBackgroundContextPart():"";
+  var bgPart=muntAiUseBgCtx?await samtalWithTimeout(samtalGetBackgroundContextPart(),20000).catch(function(){return "";}):"";
   var sys="Du ar en kommunikationscoach for MUNTLIGA samtal. Har ar bakgrund om samtalet:\n\n"+ctxText+msgPart+bgPart+"\n\nPersonen pratar med "+k.name+". Personens onskemal just nu: \""+request+"\". Svara BARA pa det personen faktiskt bad om. Var kortfattat och konkret - max 2-3 meningar. Svara med vanlig text, ingen JSON, ingen inledande fras som \"Har ar\" eller \"Visst\".";
+  var answer=null,failure=null;
   try{
-    var res=await aiCall(sys,request,350);
-    var data=await res.json();
-    var answer=aiText(data).trim();
+    answer=await samtalAiCallRetry(sys,request,350,{id:myId,isActive:isActive,onAttempt:samtalShowAttempt});
+  }catch(e){failure=e;}
+  if(myId!==samtalAiRequestSeq)return;
+  muntAiLoading=false;
+  if(!isActive())return;
+  if(answer){
     muntAiResult={message:answer,chat:[{role:"user",content:request},{role:"assistant",content:answer}]};
-  }catch(e){
-    muntAiResult={message:"",chat:[{role:"user",content:request},{role:"assistant",content:"Kunde inte svara. Forsok igen."}]};
+  }else{
+    var errTxt="Kunde inte svara"+(failure&&failure.message?" ("+failure.message+")":"")+". Forsok igen.";
+    muntAiResult={message:errTxt,chat:[{role:"user",content:request},{role:"assistant",content:errTxt}]};
   }
-  muntAiLoading=false;renderMuntKonvOpen(document.getElementById("samtal-content"));
+  renderMuntKonvOpen(document.getElementById("samtal-content"));
 }
 
 // ---- Inställningar (Samtal) ----
