@@ -182,30 +182,37 @@ function showNoteringSettings(){
   ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto";
 
   function obsidianVaultSectionHtml(platformKey,title,list){
-    // Android har ingen egen Picker-relevant mappstruktur att bläddra i - alla valv delar
-    // samma lokalt synkade rot ("DriveSyncFiles") på telefonen, så knappen lägger till den
-    // direkt istället för att öppna Google Picker (som ändå bara visar Drive-molnet, inte
-    // telefonens lokala filsystem).
-    var addBtnHtml=platformKey==="android"
-      ?"<button class='sec ghost' data-vaultaddandroid='1' style='width:100%;margin-top:6px'>+ Lägg till DriveSyncFiles</button>"
-      :"<button class='sec ghost' data-vaultpick='"+platformKey+"' style='width:100%;margin-top:6px'>📁 Välj via Picker</button>";
+    var autoNames=obsidianAutoVaults[platformKey].map(function(v){return v.label;});
+    var autoHtml="<div id='vaultauto-"+platformKey+"' style='font-size:11px;color:#5c5c5c;margin-top:6px'>"+vaultAutoText(platformKey)+"</div>";
+    var addHtml="<div style='display:flex;gap:6px;margin-top:8px'>"
+      +"<input id='vaultadd-name-"+platformKey+"' placeholder='Namn' style='flex:1;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:7px 8px;font-family:inherit'/>"
+      +"<input id='vaultadd-id-"+platformKey+"' placeholder='Valv-id (valfritt)' style='flex:1;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:7px 8px;font-family:inherit'/>"
+      +"</div>"
+      +"<button class='sec ghost' data-vaultadd='"+platformKey+"' style='width:100%;margin-top:6px'>+ Lägg till valv</button>";
     if(!list.length){
       return "<div class='lbl' style='margin-top:14px'>"+esc(title)+"</div>"
-        +"<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Inga valv tillagda ännu.</div>"
-        +addBtnHtml;
+        +"<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Inga egna valv tillagda.</div>"
+        +autoHtml+addHtml;
     }
     var selIdx=Math.min(vaultSelectedIdx[platformKey]||0,list.length-1);
     var options=list.map(function(v,i){
-      return "<option value='"+i+"'"+(i===selIdx?" selected":"")+">"+esc(v.label||v.value)+"</option>";
+      return "<option value='"+i+"'"+(i===selIdx?" selected":"")+">"+esc(v.label||v.value)+(v.label&&v.label!==v.value?" ("+esc(v.value)+")":"")+"</option>";
     }).join("");
     return "<div class='lbl' style='margin-top:14px'>"+esc(title)+"</div>"
       +"<div style='display:flex;gap:6px;align-items:center'>"
-      +"<select id='vaultorder-select-"+platformKey+"' style='flex:1;background:#161616;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:7px 8px;font-family:inherit'>"+options+"</select>"
+      +"<select id='vaultorder-select-"+platformKey+"' style='flex:1;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:7px 8px;font-family:inherit'>"+options+"</select>"
       +"<button class='chip' data-vaultup='"+platformKey+"' type='button' style='flex-shrink:0;padding:7px 10px;font-size:13px'>↑</button>"
       +"<button class='chip' data-vaultdown='"+platformKey+"' type='button' style='flex-shrink:0;padding:7px 10px;font-size:13px'>↓</button>"
       +"<button class='delbtn' data-vaultremove='"+platformKey+"' style='flex-shrink:0'>x</button>"
       +"</div>"
-      +addBtnHtml;
+      +autoHtml+addHtml;
+  }
+
+  function vaultAutoText(platformKey){
+    var names=obsidianAutoVaults[platformKey].map(function(v){return v.label;});
+    if(!accessToken)return "Drive-mappar: inte inloggad";
+    if(!obsidianAutoVaultsOk[platformKey])return "Drive-mappar: hämtar...";
+    return "Från Drive-mappen (uppdateras automatiskt): "+(names.length?esc(names.join(", ")):"inga mappar hittades");
   }
 
   function simpleChipsHtml(arr,editIdx,prefix,emptyMsg){
@@ -430,30 +437,29 @@ function showNoteringSettings(){
         rerender();
       };
     });
-    ov.querySelectorAll("[data-vaultpick]").forEach(function(btn){
+    ov.querySelectorAll("[data-vaultadd]").forEach(function(btn){
       btn.onclick=function(){
-        var platformKey=btn.dataset.vaultpick;
-        showObsidianFolderPicker(function(folderId,folderName){
-          var list=vaultListFor(platformKey);
-          if(!list.some(function(v){return v.value===folderName;})){
-            list.push({value:folderName,label:folderName});
-            vaultSelectedIdx[platformKey]=list.length-1;
-          }
-          saveNoteringSettings();
-          rerender();
-        });
-      };
-    });
-    var addAndroidBtn=ov.querySelector("[data-vaultaddandroid]");
-    if(addAndroidBtn)addAndroidBtn.onclick=function(){
-      var list=vaultListFor("android");
-      if(!list.some(function(v){return v.value==="DriveSyncFiles";})){
-        list.push({value:"DriveSyncFiles",label:"DriveSyncFiles"});
-        vaultSelectedIdx.android=list.length-1;
+        var platformKey=btn.dataset.vaultadd;
+        var nameEl=ov.querySelector("#vaultadd-name-"+platformKey);
+        var idEl=ov.querySelector("#vaultadd-id-"+platformKey);
+        var name=(nameEl.value||"").trim();
+        var id=(idEl.value||"").trim();
+        if(!name&&!id){showNoteringToastLong("Skriv ett namn och/eller ett valv-id.");return;}
+        var list=vaultListFor(platformKey);
+        var entry={value:id||name,label:name||id};
+        var existing=list.findIndex(function(v){return (v.label||v.value).toLowerCase()===entry.label.toLowerCase()||v.value===entry.value;});
+        if(existing>=0){list[existing]=entry;vaultSelectedIdx[platformKey]=existing;}
+        else{list.push(entry);vaultSelectedIdx[platformKey]=list.length-1;}
         saveNoteringSettings();
         rerender();
-      }
-    };
+      };
+    });
+    ["android","windows"].forEach(function(platformKey){
+      refreshAutoVaults(platformKey,true).then(function(){
+        var el=ov.querySelector("#vaultauto-"+platformKey);
+        if(el)el.innerHTML=vaultAutoText(platformKey);
+      });
+    });
 
     ov.querySelector("#ns-fund-sort").onclick=function(){
       wFund.sort(function(a,b){return a.localeCompare(b,"sv");});
@@ -916,8 +922,64 @@ var obsidianVaultsWindows=[{value:"16a16087049c77ce",label:"Dator"}]; // bekräf
 var obsidianSelectedVaultAndroid="";
 var obsidianSelectedVaultWindows="";
 
+// Valv som hittas AUTOMATISKT: undermapparna i en Drive-mapp. Dator och Android har var sin
+// konstant (kan peka på olika mappar). Android läser också Drive-mappen (webbsidan kan inte
+// se telefonens lokala filsystem, men mappen speglas dit via Drive-synken till DriveSyncFiles).
+var OBSIDIAN_AUTO_VAULT_PARENT_ANDROID="1nT0s5QiAKMALz1cB4rmAGNNBu0MLn3y3";
+var OBSIDIAN_AUTO_VAULT_PARENT_WINDOWS="1nT0s5QiAKMALz1cB4rmAGNNBu0MLn3y3";
+var obsidianAutoVaults={android:[],windows:[]}; // [{value,label,auto:true}]
+var obsidianAutoVaultsLoadedAt={android:0,windows:0};
+var obsidianAutoVaultsPromise={android:null,windows:null};
+var obsidianAutoVaultsOk={android:false,windows:false};
+
+function currentPlatformKey(){return isAndroidDevice()?"android":"windows";}
+
+// Hämtar undermapparna (= valven) från Drive. Returnerar true om listan ändrades.
+function refreshAutoVaults(platformKey,force){
+  if(!accessToken)return Promise.resolve(false);
+  if(obsidianAutoVaultsPromise[platformKey])return obsidianAutoVaultsPromise[platformKey];
+  if(!force&&Date.now()-obsidianAutoVaultsLoadedAt[platformKey]<15000)return Promise.resolve(false);
+  var parentId=platformKey==="android"?OBSIDIAN_AUTO_VAULT_PARENT_ANDROID:OBSIDIAN_AUTO_VAULT_PARENT_WINDOWS;
+  obsidianAutoVaultsPromise[platformKey]=(async function(){
+    try{
+      var q="'"+parentId+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
+      var r=await fetch(DRIVE_API+"?q="+encodeURIComponent(q)+"&fields=files(id,name)&orderBy=name&pageSize=200",{headers:{Authorization:"Bearer "+accessToken}});
+      if(!r.ok)throw new Error("HTTP "+r.status);
+      var d=await r.json();
+      var list=(d.files||[]).map(function(f){return {value:f.name,label:f.name,auto:true};});
+      var changed=JSON.stringify(list)!==JSON.stringify(obsidianAutoVaults[platformKey]);
+      obsidianAutoVaults[platformKey]=list;
+      obsidianAutoVaultsOk[platformKey]=true;
+      obsidianAutoVaultsLoadedAt[platformKey]=Date.now();
+      return changed;
+    }catch(e){
+      return false; // tyst - behåll senast kända lista
+    }finally{
+      obsidianAutoVaultsPromise[platformKey]=null;
+    }
+  })();
+  return obsidianAutoVaultsPromise[platformKey];
+}
+
+// Egna (manuellt inlagda) valv först, därefter mapparna från Drive. Ett eget valv med samma
+// namn som en Drive-mapp ersätter den (så du kan ange valv-id för en mapp).
+function combinedVaultList(platformKey){
+  var manual=platformKey==="android"?obsidianVaultsAndroid:obsidianVaultsWindows;
+  var seen={};
+  manual.forEach(function(v){seen[(v.label||v.value).toLowerCase()]=true;seen[String(v.value).toLowerCase()]=true;});
+  return manual.concat(obsidianAutoVaults[platformKey].filter(function(v){return !seen[v.value.toLowerCase()];}));
+}
+
+function vaultOptionsHtml(){
+  var sel=getSelectedVaultValue();
+  return "<option value=''"+(!sel?" selected":"")+">"+(isAndroidDevice()?"Android":"Windows")+"</option>"
+    +combinedVaultList(currentPlatformKey()).map(function(v){
+      return "<option value='"+esc(v.value)+"'"+(v.value===sel?" selected":"")+">"+esc(v.label||v.value)+"</option>";
+    }).join("");
+}
+
 function currentPlatformVaultList(){
-  return isAndroidDevice()?obsidianVaultsAndroid:obsidianVaultsWindows;
+  return combinedVaultList(currentPlatformKey());
 }
 function setCurrentPlatformVaultList(list){
   if(isAndroidDevice())obsidianVaultsAndroid=list;else obsidianVaultsWindows=list;
@@ -1489,10 +1551,7 @@ function renderLogFunderingar(){
   // från Noterings sida i väntan på den.
   ensureNoteringSettingsLoaded().then(function(){return ensureNoteringDataLoaded();});
   var hideTopButtons=notisbokActive||obsidianFilesViewActive;
-  var vaultDropdownOptions="<option value=''"+(!getSelectedVaultValue()?" selected":"")+">"+(isAndroidDevice()?"Android":"Windows")+"</option>"
-    +currentPlatformVaultList().map(function(v){
-      return "<option value='"+esc(v.value)+"'"+(v.value===getSelectedVaultValue()?" selected":"")+">"+esc(v.label||v.value)+"</option>";
-    }).join("");
+  var vaultDropdownOptions=vaultOptionsHtml();
   var subTabs="<div style='display:flex;gap:6px;align-items:stretch;margin-bottom:6px'>"
     +"<div style='flex:1;display:grid;grid-template-columns:1fr 1fr;gap:6px'>"
     +"<button class='mode-btn"+(funderingarSubview==="anteckning"?" on":"")+"' data-fundsub='anteckning' style='font-size:12px'>Anteckning</button>"
@@ -1519,6 +1578,30 @@ function renderLogFunderingar(){
     setSelectedVaultValue(vaultSelect.value);
     saveNoteringSettings();
   };
+  // Håller rullistan i fas med Drive-mappen: hämtas vid visning, när fliken blir synlig igen
+  // och var 20:e sekund så länge listan syns. Uppdateras inte medan listan är öppen.
+  if(vaultSelect){
+    var vaultPlatform=currentPlatformKey();
+    var vaultRefresh=function(force){
+      if(!vaultSelect.isConnected)return;
+      refreshAutoVaults(vaultPlatform,force).then(function(changed){
+        if(!changed||!vaultSelect.isConnected||document.activeElement===vaultSelect)return;
+        var cur=getSelectedVaultValue();
+        if(cur&&!combinedVaultList(vaultPlatform).some(function(v){return v.value===cur;})){
+          setSelectedVaultValue("");saveNoteringSettings(); // valvets mapp finns inte längre
+        }
+        vaultSelect.innerHTML=vaultOptionsHtml();
+      });
+    };
+    vaultRefresh(true);
+    if(window.__noteringVaultTimer)clearInterval(window.__noteringVaultTimer);
+    window.__noteringVaultTimer=setInterval(function(){
+      if(!vaultSelect.isConnected){clearInterval(window.__noteringVaultTimer);return;}
+      vaultRefresh(false);
+    },20000);
+    vaultSelect.addEventListener("focus",function(){vaultRefresh(true);});
+    document.addEventListener("visibilitychange",function(){if(!document.hidden)vaultRefresh(true);});
+  }
   var openObsidianBtn=c.querySelector("#notering-open-obsidian-btn");
   if(openObsidianBtn)openObsidianBtn.onclick=function(){
     openSelectedVault();
