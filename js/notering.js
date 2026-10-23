@@ -281,10 +281,8 @@ function showNoteringSettings(){
       // OBS: "Data & backup" ska alltid ligga SIST i panelen, precis som i Aktivitets mönster.
       +"<button id='ns-json-editor' class='sec ghost' style='width:100%'>📝 Öppna/redigera JSON-filer</button>"
       +"<div style='display:flex;gap:8px;margin-top:8px'>"
-      +"<button id='ns-obsidian-export' class='sec ghost' style='flex:1'>Skapa MD-filer</button>"
-      +"<button id='ns-obsidian-pickfolder' class='sec ghost' style='flex:1'>📁 Välj mapp</button>"
+      +"<button id='ns-obsidian-export' class='sec ghost' style='flex:1'>Skapa MD-filer (ZIP)</button>"
       +"</div>"
-      +"<div id='ns-obsidian-folder-label' style='font-size:11px;color:#5c5c5c;margin-top:6px'>Sparas till: "+esc(obsidianExportRootFolderName||"Minnesbank (standard)")+"</div>"
 
       +"</div>"
       +"<div style='padding:16px 20px;border-top:1px solid #2a2a2a;display:flex;gap:10px'>"
@@ -542,31 +540,6 @@ function showNoteringSettings(){
       await exportAllToObsidian();
       obsidianExportBtn.disabled=false;
       obsidianExportBtn.textContent=origText;
-    };
-    var obsidianPickFolderBtn=ov.querySelector("#ns-obsidian-pickfolder");
-    if(obsidianPickFolderBtn)obsidianPickFolderBtn.onclick=function(){
-      showObsidianFolderPicker(function(folderId,folderName){
-        obsidianExportRootFolderId=folderId;
-        obsidianExportRootFolderName=folderName;
-        // Rensa cachade mapp-id:n - annars fortsätter export gå till den GAMLA mappen tills
-        // sidan laddas om, eftersom mappen väl hittats/skapats cachas den för resten av sessionen.
-        obsidianTypeRootFolderIds={};
-        obsidianTypeRootFolderPromises={};
-        obsidianCategoryFolderIds={};
-        obsidianCategoryFolderPromises={};
-        // Nollställ ALLA sparade fil-referenser - annars försöker nästa export bara
-        // UPPDATERA de gamla filerna på sin gamla plats (de finns ju kvar där) istället för
-        // att skapa nya i den nyss valda mappen, eftersom koden alltid kollar obsidianFileId
-        // först. Med detta skapas allt fräscht i den nya mappen vid nästa "Skapa MD-filer".
-        anteckningHist.forEach(function(e){delete e.obsidianFileId;delete e.obsidianFilename;delete e.obsidianModifiedTime;});
-        fundHist.forEach(function(e){delete e.obsidianFileId;delete e.obsidianFilename;delete e.obsidianModifiedTime;});
-        saveNoteringAnteckning();
-        saveNoteringFundering();
-        saveNoteringSettings();
-        var labelEl=ov.querySelector("#ns-obsidian-folder-label");
-        if(labelEl)labelEl.textContent="Sparas till: "+folderName;
-        showNoteringToastLong("Ny mapp vald - tryck \"Skapa MD-filer\" för att skapa filerna där.");
-      });
     };
 
     ov.querySelector("#ns-save").onclick=function(){
@@ -1313,18 +1286,47 @@ function showNoteringToastLong(text){
 // rapporterar tydligt hur många som faktiskt fick en fil i Obsidian efteråt. Ingen tyst
 // bakgrundskörning - du ser direkt om det fungerade eller inte.
 async function exportAllToObsidian(){
-  if(!accessToken){showNoteringDriveError("Kunde inte exportera","Inte inloggad mot Drive");return;}
-  // Poster som redan sparats direkt via Obsidian-knappen (obsidianDirectSaved) finns redan
-  // i MD-format på "Minnesbank Obsidian" - hoppas över här, annars skulle de av misstag
-  // skapas en gång till (i fel mapp/kategori-struktur) vid vanlig "Skapa MD-filer".
+  // Bygger en ZIP med alla Anteckning-poster som MD-filer (<Kategori>/<Titel>.md) och
+  // laddar ner den. Inget skrivs till Drive - du lägger själv in filerna där du vill.
   var toExport=anteckningHist.filter(function(e){return !e.obsidianDirectSaved;});
   var total=toExport.length;
   if(!total){showNoteringToastLong("Inga poster att exportera än.");return;}
-  for(var i=0;i<toExport.length;i++)await syncEntryToObsidian(toExport[i],"anteckning",null);
-  saveNoteringAnteckning();
-  var done=toExport.filter(function(e){return e.obsidianFileId;}).length;
-  showNoteringToastLong(done===total?("✅ Klart: "+done+"/"+total+" poster skrivna till Obsidian."):("⚠️ "+done+"/"+total+" poster skrivna - se felruta för resten."));
-  renderLogFunderingar();
+  if(typeof JSZip==="undefined"){
+    try{
+      await new Promise(function(res,rej){
+        var s=document.createElement("script");
+        s.src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+        s.onload=res;s.onerror=function(){rej(new Error("Kunde inte ladda ZIP-biblioteket"));};
+        document.head.appendChild(s);
+      });
+    }catch(err){showNoteringDriveError("Kunde inte skapa ZIP",err.message);return;}
+  }
+  try{
+    var zip=new JSZip();
+    var used={};
+    toExport.forEach(function(e){
+      var folder=obsidianFolderNameForCategory(e.category);
+      var fname=obsidianFilenameFor(e,"anteckning");
+      var base=fname.replace(/\.md$/,"");
+      var path=folder+"/"+base+".md";
+      var n=2;
+      while(used[path.toLowerCase()]){path=folder+"/"+base+" ("+n+").md";n++;}
+      used[path.toLowerCase()]=true;
+      zip.file(path,obsidianMarkdownFor(e,"anteckning"));
+    });
+    var blob=await zip.generateAsync({type:"blob"});
+    var d=new Date();
+    var pad=function(x){return (x<10?"0":"")+x;};
+    var name="Anteckning_MD_"+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+".zip";
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement("a");
+    a.href=url;a.download=name;a.style.display="none";
+    document.body.appendChild(a);a.click();
+    setTimeout(function(){a.remove();URL.revokeObjectURL(url);},1000);
+    showNoteringToastLong("✅ ZIP med "+total+" MD-filer nedladdad.");
+  }catch(err){
+    showNoteringDriveError("Kunde inte skapa ZIP",err&&err.message?err.message:String(err));
+  }
 }
 
 function ensureNoteringSettingsLoaded(){
@@ -2115,7 +2117,6 @@ function renderAnteckningNotisbok(){
     +"<div class='lbl'>Läs anteckningar per kategori</div>"
     +"<div style='display:flex;gap:6px;margin-bottom:10px'>"
     +"<input class='inp w100' id='anteckningread-rubriksearch' placeholder='Sök i rubrik, kategori eller subkategori...' style='flex:1' value='"+esc(anteckningReadRubrikSearch)+"'/>"
-    +"<button id='notering-obsibok-btn' type='button' title='Obsibok' style='background:none;border:none;cursor:pointer;padding:4px 6px;line-height:1;flex-shrink:0;display:flex;align-items:center'><img src='"+OBSIDIAN_ICON_DATA_URI+"' style='width:20px;height:20px;display:block' alt='Obsibok'/></button>"
     +"</div>"
     +"<div id='anteckningrubriksearch-results'></div>"
     +"<div id='anteckningpinned-results'></div>"
@@ -2127,8 +2128,6 @@ function renderAnteckningNotisbok(){
     +readSection;
 
   c.querySelector("#anteckningnotisbok-back").onclick=function(){notisbokActive=false;renderLogFunderingar();};
-  var obsibokBtn=c.querySelector("#notering-obsibok-btn");
-  if(obsibokBtn)obsibokBtn.onclick=function(){obsidianFilesViewActive=true;renderLogFunderingar();};
 
   var anteckningEditSubPicker=null;
 

@@ -90,6 +90,17 @@ var LASHJALP_CSS = ""
   +".lashjalp-row input[type=text]{flex:1;min-width:0;padding:10px 12px;border-radius:5px;background:var(--bg-alt);border:1px solid var(--border);color:var(--text-bright);font-family:'JetBrains Mono',monospace;font-size:13px;outline:none;}"
   +".lashjalp-row select{padding:8px 10px;border-radius:5px;background:var(--bg-alt);border:1px solid var(--border);color:var(--text-bright);font-family:'JetBrains Mono',monospace;font-size:12.5px;outline:none;}"
   +".lashjalp-row textarea:focus,.lashjalp-row input:focus,.lashjalp-row select:focus{border-color:var(--main);}"
+  // NYTT (2026-09-02): aiChatInput bytt från <input> till <textarea> för flerradigt
+  // meddelande (se markup nedan + keydown-hanteraren i initAiChat()). Den generella
+  // ".lashjalp-row textarea"-regeln ovan har min-height:70px, vilket vore en rejäl
+  // höjd redan från start - denna specifika regel skriver över det så fältet börjar på
+  // en rads höjd (matchar ungefär den gamla <input>:ens höjd) och sedan växer i JS
+  // (input-eventet, se initAiChat()) upp till ett tak på 140px innan den börjar
+  // scrolla internt istället för att växa vidare. resize:none eftersom auto-växten gör
+  // ett manuellt dra-i-hörnet-handtag överflödigt (och skulle annars krocka med JS:ens
+  // height-sättning).
+  // Textarean ligger på egen rad (ej i flex-rad) - width:100% + border-box fyller bredden.
+  +"#aiChatInput{min-height:0;height:40px;max-height:140px;padding:10px 12px;line-height:1.4;resize:none;overflow-y:auto;width:100%;box-sizing:border-box;}"
   +".lashjalp-result{background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;padding:12px 14px;color:var(--text);font-size:13.5px;min-height:20px;}"
   +".lashjalp-result:empty{display:none;}"
   +"#lashjalpCloseBtn:focus,#lashjalpBtn:focus,#lashjalpTransBtn:focus,#lashjalpOrdBtn:focus,"
@@ -295,11 +306,17 @@ var LASHJALP_CSS = ""
     +'</div>'
     +'<canvas id="aiChatSnapCanvas" style="display:none"></canvas>'
     +'<div id="aiChatAttachPreview" class="ai-chat-attach-preview" style="display:none"></div>'
+    // NYTT (2026-10-24): på Blås begäran ligger textinmatningen ensam på en egen rad i
+    // full bredd, och knapparna (bifoga, kamera, skicka) i en rad UNDER den. Placeholder
+    // ändrad till "Skriv till AI". (Ändringen gjordes först 2026-09-03 men gick förlorad
+    // när arbetskatalogen nollställdes - gjord om från den senast levererade dev-filen.)
+    +'<div style="margin-bottom:8px">'
+    +'<textarea id="aiChatInput" rows="1" placeholder="Skriv till AI"></textarea>'
+    +'</div>'
     +'<div class="lashjalp-row">'
     +'<label class="action-btn" style="cursor:pointer" title="Bifoga bild eller fil">📁<input type="file" id="aiChatImgUpload" accept="image/*,.txt,.md,.csv,.json,text/plain" style="display:none"></label>'
     +'<button class="action-btn" id="aiChatCameraBtn" type="button" title="Ta bild">📷</button>'
-    +'<input type="text" id="aiChatInput" placeholder="Skriv ett meddelande (Enter för att skicka)">'
-    +'<button type="button" id="aiChatSendBtn" class="action-btn">Skicka</button>'
+    +'<button type="button" id="aiChatSendBtn" class="action-btn" style="flex:1">Skicka</button>'
     +'</div>'
     +'</div>'
     +'</div>';
@@ -533,10 +550,53 @@ async function checkSpelling(){
       return "<div style='font-size:13.5px'><span style='color:var(--error)'>"+esc(m.word||"")+"</span> → <span style='color:var(--text)'>"+esc(m.correction||"")+"</span></div>";
     }).join("")+"</div>"
     :"<div style='margin:6px 0 4px;color:var(--text);font-size:13.5px'>Inga felstavningar hittades.</div>";
+  // NYTT (2026-10-24): efter stavningskontrollen finns en "✨ Omformulera"-knapp som ber
+  // AI:n föreslå omformuleringar av ordet/frasen som sökrutan innehöll (texten fångas
+  // här, så knappen använder det som faktiskt kontrollerades även om rutan hunnit
+  // ändras). Förslagen visas direkt under knappen - inget sparas, ingen ny sökning.
+  var checkedText=text;
   dictResult.innerHTML="<button class='dict-close' id='dictCloseBtn'>×</button>"
     +"<span class='note-label'>Stavningskontroll</span>"
-    +body;
+    +body
+    +"<div style='margin-top:12px'>"
+    +"<button type='button' class='action-btn' id='spellRephraseBtn' title='Be AI föreslå omformuleringar'>✨ Omformulera</button>"
+    +"<div id='spellRephraseOut' style='margin-top:10px'></div>"
+    +"</div>";
   document.getElementById("dictCloseBtn").onclick=function(){dictResult.classList.remove("visible");};
+  var rephraseBtn=document.getElementById("spellRephraseBtn");
+  if(rephraseBtn)rephraseBtn.onclick=function(){spellRephrase(checkedText,rephraseBtn);};
+}
+
+// AI-omformulering av ordet/frasen som stavningskontrollerades (se knappen ovan).
+// Ett ord ger alternativa ord med samma betydelse, en fras/mening ger omformuleringar
+// som behåller betydelsen. Eventuella felstavningar rättas tyst i förslagen. Samma
+// JSON-med-ett-omförsök-mönster som övriga sökfunktioner (sokbarParseJsonReply).
+async function spellRephrase(text,btn){
+  var out=document.getElementById("spellRephraseOut");
+  if(!out||!text)return;
+  btn.disabled=true;
+  out.innerHTML="<span class='spnr' style='width:14px;height:14px;border-width:2px;display:inline-block;margin:0 6px 0 0;vertical-align:middle'></span>omformulerar …";
+  var sys='Du ar en svensk sprakkonsulent. Personen har sokt pa ett ord eller en fras. Ge 4 olika omformuleringar. Ar texten ett enskilt ord: ge alternativa ord med samma betydelse. Ar det en fras eller mening: ge omformuleringar som behaller betydelsen men varierar ordval och uppbyggnad. Ratta eventuella felstavningar tyst i forslagen. Svara ENDAST med JSON, utan markdown-block: {"alternativ":["forslag 1","forslag 2","forslag 3","forslag 4"]}.';
+  var userMsg="Omformulera:\n\n"+text;
+  var parsed=null,lastErr=null;
+  for(var attempt=0;attempt<2&&!parsed;attempt++){
+    try{
+      var res=await aiCall(sys,userMsg,600);
+      var data=await res.json();
+      if(data&&data.error)throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+      var p=sokbarParseJsonReply(aiText(data));
+      if(p&&Array.isArray(p.alternativ)&&p.alternativ.length)parsed=p;
+    }catch(err){lastErr=err;parsed=null;}
+  }
+  btn.disabled=false;
+  if(!parsed){
+    console.error("sokbar: omformulering misslyckades",lastErr);
+    out.innerHTML="<div style='color:var(--text);font-size:13.5px'>Kunde inte hämta förslag, försök igen.</div>";
+    return;
+  }
+  out.innerHTML="<div style='display:flex;flex-direction:column;gap:6px'>"+parsed.alternativ.map(function(a){
+    return "<div style='font-size:13.5px;color:var(--text)'>• "+esc(String(a))+"</div>";
+  }).join("")+"</div>";
 }
 
 // Delad rendering för sökresultat-rutan (text- eller filsökning) + "fortsätt konversationen".
@@ -1366,6 +1426,7 @@ async function aiChatSend(){
   }
   aiChatMessages.push({role:"user",content:userContent});
   input.value="";
+  input.style.height="40px"; // NYTT (2026-09-02): tillbaka till en rads höjd efter skickat meddelande
   aiChatPendingAttachment=null;
   aiChatRenderAttachmentPreview();
   renderAiChatMessages();
@@ -1565,7 +1626,18 @@ function initAiChat(){
 
   var input=document.getElementById("aiChatInput");
   if(input)input.onkeydown=function(e){
-    if(e.key==="Enter"){e.preventDefault();aiChatSend();}
+    // NYTT (2026-09-02): omvänt tangentbordsbeteende enligt Blås önskemål - vanlig Enter
+    // ger en ny rad (textarea:ens standardbeteende, så INGET preventDefault där) medan
+    // Shift+Enter skickar meddelandet.
+    if(e.key==="Enter"&&e.shiftKey){e.preventDefault();aiChatSend();}
+  };
+  if(input)input.oninput=function(){
+    // Auto-växande höjd: nollställ till "auto" först (annars kan scrollHeight bli
+    // inlåst på ett för högt värde när text tas bort), sätt sedan till innehållets
+    // faktiska höjd, begränsat av #aiChatInput:s max-height:140px i CSS:en (overflow-y
+    // sköter scroll om texten blir längre än så).
+    input.style.height="auto";
+    input.style.height=input.scrollHeight+"px";
   };
   var sendBtn=document.getElementById("aiChatSendBtn");
   if(sendBtn)sendBtn.onclick=aiChatSend;

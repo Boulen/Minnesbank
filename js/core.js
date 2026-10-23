@@ -1318,19 +1318,19 @@ async function saveAndSync(tabName){
   }
 }
 
-var selectedModel = "anthropic/claude-sonnet-5";
+var selectedModel = "anthropic/claude-sonnet-5.5";
 try{var _sm=sessionStorage.getItem("selected_model_session");if(_sm)selectedModel=_sm;}catch(e){}
 var MODELS = [
-  {id:"anthropic/claude-sonnet-5",name:"Claude Sonnet 5",desc:"Balanserad och kraftfull — bra för det mesta"},
-  {id:"anthropic/claude-opus-4.8",name:"Claude Opus 4.8",desc:"Anthropics kraftfullaste — komplex analys, kodning och agentarbete"},
-  {id:"anthropic/claude-fable-5",name:"Claude Fable 5",desc:"Mythos-klass — toppresultat på kodning och avancerat kunskapsarbete"},
-  {id:"anthropic/claude-haiku-4.5",name:"Claude Haiku 4.5",desc:"Snabbast och billigast — enkla frågor och snabba svar"},
-  {id:"google/gemini-3.1-pro-preview",name:"Gemini 3.1 Pro",desc:"Googles kraftfullaste — komplex resonemang och kodning"},
+  {id:"anthropic/claude-sonnet-5.5",name:"Claude Sonnet 5.5",desc:"Balanserad och kraftfull — bra för det mesta"},
+  {id:"anthropic/claude-opus-5.5",name:"Claude Opus 5.5",desc:"Anthropics kraftfulla modell — komplex analys, kodning och agentarbete"},
+  {id:"anthropic/claude-fable-5.1",name:"Claude Fable 5.1",desc:"Mythos-klass — toppresultat på kodning och avancerat kunskapsarbete"},
+  {id:"anthropic/claude-haiku-5.5",name:"Claude Haiku 5.5",desc:"Snabbast och billigast — enkla frågor och snabba svar"},
+  {id:"google/gemini-4-argon",name:"Gemini 4 Argon",desc:"Googles flaggskepp — komplext resonemang och kodning"},
   {id:"google/gemini-3.5-flash",name:"Gemini 3.5 Flash",desc:"Googles snabba modell — research, fakta och långa texter"},
-  {id:"openai/gpt-5.5",name:"GPT-5.5",desc:"OpenAIs produktionsmodell — bra på instruktioner och struktur"},
-  {id:"openai/gpt-mini-latest",name:"GPT Mini (senaste)",desc:"OpenAIs effektiva modell — snabb och kostnadseffektiv"},
-  {id:"deepseek/deepseek-v4-pro",name:"DeepSeek V4 Pro",desc:"Stark open source-modell — utmärkt på kodning och analys"},
-  {id:"x-ai/grok-4.5",name:"Grok 4.5",desc:"xAIs kraftfullaste modell — aktuell info och kreativt skrivande"}
+  {id:"openai/gpt-6.1-sol",name:"GPT-6.1 Sol",desc:"OpenAIs starka modell — bra på instruktioner och struktur"},
+  {id:"openai/gpt-6-luna",name:"GPT-6 Luna",desc:"OpenAIs snabba modell — kostnadseffektiv"},
+  {id:"deepseek/deepseek-v4.1-flash-1017",name:"DeepSeek V4.1 Flash",desc:"Snabb open source-modell — bra på kodning och analys"},
+  {id:"x-ai/grok-4.7",name:"Grok 4.7",desc:"xAIs flaggskepp — aktuell info och kreativt skrivande"}
 ];
 var FILE_NAME = "aktivitetslogg_data.json";
 
