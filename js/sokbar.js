@@ -99,15 +99,28 @@ var LASHJALP_CSS = ""
   // scrolla internt istället för att växa vidare. resize:none eftersom auto-växten gör
   // ett manuellt dra-i-hörnet-handtag överflödigt (och skulle annars krocka med JS:ens
   // height-sättning).
-  // Textarean ligger på egen rad (ej i flex-rad) - width:100% + border-box fyller bredden.
-  +"#aiChatInput{min-height:0;height:40px;max-height:140px;padding:10px 12px;line-height:1.4;resize:none;overflow-y:auto;width:100%;box-sizing:border-box;}"
+  // NYTT (2026-10-24): textarean ligger på egen rad UTANFÖR ".lashjalp-row", så den fick
+  // aldrig den raden/regelns stil (mörk bakgrund, ram, typsnitt) och blev vit med
+  // webbläsarens standardutseende - dessutom en scrollbar redan innan inmatning, eftersom
+  // en fast höjd (40px) var 1px lägre än innehållet (39px) och overflow var "auto".
+  // Därför får #aiChatInput nu HELA sin stil själv, kopierad från de andra fälten
+  // (".lashjalp-row input[type=text]"). Ingen fast höjd: med rows="1" och line-height
+  // "normal" blir ruta exakt lika hög som ett vanligt fält. overflow-y är "hidden" tills
+  // JS (se input-hanteraren i initAiChat()) ser att innehållet nått maxhöjden 140px - först
+  // då slås scroll på.
+  +"#aiChatInput{display:block;width:100%;box-sizing:border-box;min-height:0;max-height:140px;padding:10px 12px;border-radius:5px;background:var(--bg-alt);border:1px solid var(--border);color:var(--text-bright);font-family:'JetBrains Mono',monospace;font-size:13px;line-height:normal;outline:none;resize:none;overflow-y:hidden;}"
+  +"#aiChatInput:focus{border-color:var(--main);}"
+  // Delade sök-/omformuleringsknappar i sökraden (se markup vid dictRephraseBtn).
+  +".dict-split-btns{display:flex;gap:2px;width:40px;flex:0 0 40px;align-self:stretch;}"
+  +".dict-split-btns .action-btn{flex:1 1 0;min-width:0;padding:0;font-size:11px;line-height:1;display:flex;align-items:center;justify-content:center;}"
   +".lashjalp-result{background:var(--bg-alt);border:1px solid var(--border);border-radius:6px;padding:12px 14px;color:var(--text);font-size:13.5px;min-height:20px;}"
   +".lashjalp-result:empty{display:none;}"
   +"#lashjalpCloseBtn:focus,#lashjalpBtn:focus,#lashjalpTransBtn:focus,#lashjalpOrdBtn:focus,"
   +"#lashjalpSettingsBtn:focus,#lashjalpSettingsCloseBtn:focus,#lashjalpSettingsCancelBtn:focus,#lashjalpSettingsSaveBtn:focus,"
   +"#lashjalpHistoryBtn:focus,#lashjalpHistoryCloseBtn:focus,#lashjalpHistoryShortcutBtn:focus,#lashjalpDropupToggleBtn:focus,"
   +"#aiChatBtn:focus,#aiChatCloseBtn:focus,#aiChatSendBtn:focus,#aiChatCameraBtn:focus,#aiChatSnapBtn:focus,#aiChatCloseCameraBtn:focus,"
-  +"#aiChatPersonaInput:focus,#aiChatSettingsBtn:focus,#lashjalpSettingsAiCommentAddBtn:focus"
+  +"#aiChatPersonaInput:focus,#aiChatRoleSelect:focus,#aiChatRoleNameInput:focus,#aiChatRoleSaveBtn:focus,#aiChatRoleDeleteBtn:focus,#aiChatRoleNewBtn:focus,#aiChatRoleEditBtn:focus,#aiChatRoleCancelBtn:focus,"
+  +"#aiChatSettingsBtn:focus,#lashjalpSettingsAiCommentAddBtn:focus"
   +"{outline:2px solid var(--main);outline-offset:2px;}"
   +".ai-chat-messages{max-height:340px;overflow-y:auto;margin-bottom:10px;}"
   +".ai-chat-attach-preview{display:flex;align-items:center;margin-bottom:8px;}"
@@ -178,7 +191,16 @@ var LASHJALP_CSS = ""
     // är det Sök som krymper.
     +'<div class="dict-input-row dict-row-main" style="flex:1 1 170px">'
     +'<input type="text" id="dictInput" placeholder="Sök">'
+    // NYTT (2026-10-24): 🔤-knappens yta är delad i två lika små knappar sida vid sida:
+    // ✨ Omformulera (AI föreslår andra sätt att uttrycka ordet/frasen, UTAN att man
+    // först behöver stavningskontrollera) och 🔤 Stavningskontroll (som förut). Wrappern
+    // har fast bredd 40px = ungefär samma bredd som den gamla enstaka knappen (40.4px),
+    // så Sök/Ord-radens krympning (se kommentarerna ovan) påverkas inte. Layouten på
+    // själva raden är i övrigt orörd. CSS: ".dict-split-btns" i den injicerade stilen.
+    +'<div class="dict-split-btns">'
+    +'<button class="action-btn" id="dictRephraseBtn" type="button" title="Omformulera: AI föreslår andra sätt att formulera ordet/frasen">✨</button>'
     +'<button class="action-btn" id="dictSpellBtn" type="button" title="Stavningskontroll">🔤</button>'
+    +'</div>'
     +'</div>'
     // NYTT (2026-09-02): krympordningen var omvänd mot vad Blå ville ha — Ord-rutan
     // skulle krympa i bredd FÖRST (tills den bara rymmer texten "Ord"), och SEN skulle
@@ -248,6 +270,7 @@ var LASHJALP_CSS = ""
     +'<option value="ord">Ord (ord.json)</option>'
     +'<option value="oversattning">Översättning (oversattning.json)</option>'
     +'<option value="ai">AI-chattens bakgrundskontext (ai.json)</option>'
+    +'<option value="roller">AI-chattens sparade roller (roller.json)</option>'
     +'</select>'
     +'</div>'
     +'<div class="lashjalp-hint" id="lashjalpSettingsStatus" style="margin:0 0 10px"></div>'
@@ -288,14 +311,37 @@ var LASHJALP_CSS = ""
     +'<div class="lashjalp-header">'
     +'<span class="note-label" id="aiChatTitle">🤖 AI-chat</span>'
     +'<div style="display:flex;gap:6px">'
-    +'<button type="button" id="aiChatSettingsBtn" class="action-btn" title="Inställningar: läs/redigera sparad data (sok.json/ord.json/oversattning.json/ai.json)">⚙️</button>'
+    +'<button type="button" id="aiChatSettingsBtn" class="action-btn" title="Inställningar: läs/redigera sparad data (sok.json/ord.json/oversattning.json/ai.json/roller.json)">⚙️</button>'
     +'<button type="button" id="aiChatCloseBtn" class="action-btn" title="Stäng (Esc)">✕ Stäng</button>'
     +'</div>'
     +'</div>'
     +'<div class="lashjalp-hint">Tab/Skift+Tab för att flytta dig, Esc för att stänga. Använder automatiskt dina sparade sökningar/ord/översättningar som bakgrundsinformation.</div>'
-    +'<div class="lashjalp-row" style="margin-bottom:10px">'
-    +'<input type="text" id="aiChatPersonaInput" placeholder="Roll AI ska anta (t.ex. &quot;en historielärare&quot;) - valfritt">'
+    // NYTT (2026-10-24): sparade roller (roller.json). Från start syns bara rullistan med en
+    // ➕-knapp bredvid (skapa ny roll). ➕ öppnar ett formulär med "Rollens namn", "Roll AI ska
+    // anta" och 💾 Spara (+ Avbryt). När en sparad roll är vald visas även ✏️ (redigera, öppnar
+    // samma formulär förifyllt) och ✕ (ta bort, tvåstegs-bekräftelse) bredvid listan.
+    // Instruktionsfältet (aiChatPersonaInput, oförändrat id) är fortfarande det som skickas
+    // till AI:n i aiChatSend() - det fylls i av vald roll även när formuläret är dolt.
+    // Fälten ligger INUTI ".lashjalp-row" så de får samma stil som övriga fält.
+    +'<div class="lashjalp-row">'
+    +'<select id="aiChatRoleSelect" title="Sparade roller" style="flex:1;min-width:0"><option value="">Ingen sparad roll</option></select>'
+    +'<button type="button" id="aiChatRoleEditBtn" class="action-btn" title="Redigera vald roll" style="display:none">✏️</button>'
+    +'<button type="button" id="aiChatRoleDeleteBtn" class="action-btn" title="Ta bort vald roll" style="display:none">✕</button>'
+    +'<button type="button" id="aiChatRoleNewBtn" class="action-btn" title="Skapa en ny roll">➕ Ny roll</button>'
     +'</div>'
+    +'<div id="aiChatRoleForm" style="display:none">'
+    +'<div class="lashjalp-row" style="margin-bottom:6px">'
+    +'<input type="text" id="aiChatRoleNameInput" placeholder="Rollens namn (visas i listan)">'
+    +'</div>'
+    +'<div class="lashjalp-row" style="margin-bottom:6px">'
+    +'<textarea id="aiChatPersonaInput" rows="2" style="min-height:46px" placeholder="Roll AI ska anta (t.ex. &quot;en historielärare&quot;)"></textarea>'
+    +'</div>'
+    +'<div class="lashjalp-row">'
+    +'<button type="button" id="aiChatRoleSaveBtn" class="action-btn" style="flex:1" title="Spara rollen">💾 Spara</button>'
+    +'<button type="button" id="aiChatRoleCancelBtn" class="action-btn" title="Stäng utan att spara">Avbryt</button>'
+    +'</div>'
+    +'</div>'
+    +'<div class="lashjalp-hint" id="aiChatRoleMsg" style="display:none;margin:0 0 8px"></div>'
     +'<div id="aiChatMessages" class="ai-chat-messages"></div>'
     +'<div id="aiChatCameraContainer" style="display:none;margin:0 0 10px;">'
     +'<video id="aiChatCameraVideo" autoplay playsinline style="width:100%;border-radius:10px;max-height:220px;object-fit:cover;background:#000"></video>'
@@ -383,7 +429,7 @@ var LASHJALP_FOLDER=["Sokbar"];
 // skapat i Drive - filnamnet var ledigt) för en pinna-hela-AI-konversationen-funktion som
 // togs bort igen på Blås begäran. Används nu istället som cache för AI-chattens
 // bakgrundskontext - se "AI-chat: bakgrundskontext"-blocket längre ner.
-var LASHJALP_FILES={sok:"sok.json",ord:"ord.json",oversattning:"oversattning.json",ai:"ai.json"};
+var LASHJALP_FILES={sok:"sok.json",ord:"ord.json",oversattning:"oversattning.json",ai:"ai.json",roller:"roller.json"};
 
 // NYTT (2026-09-02): engångsmigrering - byter namn på den befintliga Drive-mappen
 // "Sokruta" till "Sokbar" (samma id/innehåll, bara namnet ändras - driveRenameFolder
@@ -576,6 +622,15 @@ async function spellRephrase(text,btn){
   if(!out||!text)return;
   btn.disabled=true;
   out.innerHTML="<span class='spnr' style='width:14px;height:14px;border-width:2px;display:inline-block;margin:0 6px 0 0;vertical-align:middle'></span>omformulerar …";
+  var alts=await rephraseFetchAlternatives(text);
+  btn.disabled=false;
+  out.innerHTML=rephraseAlternativesHtml(alts);
+}
+
+// Gemensam hämtning av omformuleringar (används av både knappen i stavningsresultatet och
+// den fristående ✨-knappen i sökraden). Returnerar en lista med förslag, eller null om
+// AI:n inte gav ett användbart svar efter två försök.
+async function rephraseFetchAlternatives(text){
   var sys='Du ar en svensk sprakkonsulent. Personen har sokt pa ett ord eller en fras. Ge 4 olika omformuleringar. Ar texten ett enskilt ord: ge alternativa ord med samma betydelse. Ar det en fras eller mening: ge omformuleringar som behaller betydelsen men varierar ordval och uppbyggnad. Ratta eventuella felstavningar tyst i forslagen. Svara ENDAST med JSON, utan markdown-block: {"alternativ":["forslag 1","forslag 2","forslag 3","forslag 4"]}.';
   var userMsg="Omformulera:\n\n"+text;
   var parsed=null,lastErr=null;
@@ -588,15 +643,32 @@ async function spellRephrase(text,btn){
       if(p&&Array.isArray(p.alternativ)&&p.alternativ.length)parsed=p;
     }catch(err){lastErr=err;parsed=null;}
   }
-  btn.disabled=false;
-  if(!parsed){
-    console.error("sokbar: omformulering misslyckades",lastErr);
-    out.innerHTML="<div style='color:var(--text);font-size:13.5px'>Kunde inte hämta förslag, försök igen.</div>";
-    return;
-  }
-  out.innerHTML="<div style='display:flex;flex-direction:column;gap:6px'>"+parsed.alternativ.map(function(a){
+  if(!parsed){console.error("sokbar: omformulering misslyckades",lastErr);return null;}
+  return parsed.alternativ;
+}
+function rephraseAlternativesHtml(alts){
+  if(!alts)return "<div style='color:var(--text);font-size:13.5px'>Kunde inte hämta förslag, försök igen.</div>";
+  return "<div style='display:flex;flex-direction:column;gap:6px'>"+alts.map(function(a){
     return "<div style='font-size:13.5px;color:var(--text)'>• "+esc(String(a))+"</div>";
   }).join("")+"</div>";
+}
+
+// Fristående omformulering från ✨-knappen i sökraden - ingen stavningskontroll först.
+// Resultatet visas i samma ruta (dictResult) som Sök/stavning, med ✕ för att stänga.
+async function rephraseDictInput(){
+  var dictInput=document.getElementById("dictInput");
+  var dictResult=document.getElementById("dictResult");
+  if(!dictInput||!dictResult)return;
+  var text=dictInput.value.trim();
+  if(!text)return;
+  dictResult.classList.add("visible");
+  dictResult.innerHTML="<span class='spnr' style='width:14px;height:14px;border-width:2px;display:inline-block;margin:0 6px 0 0;vertical-align:middle'></span>omformulerar …";
+  var alts=await rephraseFetchAlternatives(text);
+  dictResult.innerHTML="<button class='dict-close' id='dictCloseBtn'>×</button>"
+    +"<span class='note-label'>Omformulering</span>"
+    +"<div style='margin:6px 0 8px;color:var(--sub);font-size:12px'>"+esc(text)+"</div>"
+    +rephraseAlternativesHtml(alts);
+  document.getElementById("dictCloseBtn").onclick=function(){dictResult.classList.remove("visible");};
 }
 
 // Delad rendering för sökresultat-rutan (text- eller filsökning) + "fortsätt konversationen".
@@ -852,7 +924,7 @@ async function loadLashjalpSettingsFile(){
   // ai.json ar inte en items-lista som de tre andra filerna, utan ett objekt (se
   // "AI-chat: bakgrundskontext"-blocket langre ner) - tomt fallback ar darfor {} for den,
   // {items:[]} for ovriga.
-  var fallback=sel.value==="ai"?{}:{items:[]};
+  var fallback=sel.value==="ai"?{}:(sel.value==="roller"?{roller:[]}:{items:[]});
   area.value=JSON.stringify(data||fallback,null,2);
   area.disabled=false;
 }
@@ -1426,7 +1498,7 @@ async function aiChatSend(){
   }
   aiChatMessages.push({role:"user",content:userContent});
   input.value="";
-  input.style.height="40px"; // NYTT (2026-09-02): tillbaka till en rads höjd efter skickat meddelande
+  input.style.height="";input.style.overflowY="hidden"; // tillbaka till en rads (naturlig) höjd efter skickat meddelande
   aiChatPendingAttachment=null;
   aiChatRenderAttachmentPreview();
   renderAiChatMessages();
@@ -1456,6 +1528,253 @@ async function aiChatSend(){
     aiChatMessages.push({role:"assistant",content:"Kunde inte hämta ett svar, försök igen."});
   }
   renderAiChatMessages();
+}
+// ---- AI-chat: sparade roller (roller.json) ----
+// NYTT (2026-10-24, på Blås begäran): roller AI:n ska anta kan sparas, väljas, redigeras och
+// tas bort. Egen fil roller.json i Sokbar-mappen (INTE ai.json, som skrivs om av
+// bakgrundssammanfattningen och då kunde skriva över rollerna) i formen
+//   {"roller":[{"id":1790000000000,"namn":"Historielärare","instruktion":"...","timestamp":"ISO"}]}
+// Gränssnittet visar från start bara rullistan + ➕ Ny roll. Formuläret (namn + instruktion +
+// Spara/Avbryt) öppnas av ➕ (läge "new") eller ✏️ (läge "edit", förifyllt med vald roll) och
+// stängs av Spara/Avbryt/byte i rullistan. Instruktionsfältet (aiChatPersonaInput) är källan
+// som skickas till AI:n (aiChatSend) och fylls i av vald roll även när formuläret är dolt;
+// ingen roll är vald när sidan laddas (som förut). Läser alltid filen färsk precis före
+// skrivning, så en ändring från en annan enhet inte skrivs över.
+var aiChatRoles=[];
+var aiChatRoleFormMode=null;  // null = formuläret stängt, annars "new" eller "edit"
+var aiChatRolePrevSel="";     // vald roll innan ➕ öppnades (för att Avbryt ska kunna återställa)
+function aiChatRoleEls(){
+  return {
+    sel:document.getElementById("aiChatRoleSelect"),
+    name:document.getElementById("aiChatRoleNameInput"),
+    persona:document.getElementById("aiChatPersonaInput"),
+    form:document.getElementById("aiChatRoleForm"),
+    save:document.getElementById("aiChatRoleSaveBtn"),
+    cancel:document.getElementById("aiChatRoleCancelBtn"),
+    newBtn:document.getElementById("aiChatRoleNewBtn"),
+    edit:document.getElementById("aiChatRoleEditBtn"),
+    del:document.getElementById("aiChatRoleDeleteBtn"),
+    msg:document.getElementById("aiChatRoleMsg")
+  };
+}
+function aiChatRoleMsg(text){
+  var el=document.getElementById("aiChatRoleMsg");
+  if(!el)return;
+  clearTimeout(el._hideTimer);
+  el.textContent=text||"";
+  el.style.display=text?"block":"none";
+  if(text&&text.charAt(0)==="✓"){
+    el._hideTimer=setTimeout(function(){el.textContent="";el.style.display="none";},2500);
+  }
+}
+// Plockar ut en giltig lista ur filens innehåll (skyddar mot handredigerad/trasig JSON).
+function aiChatRolesNormalize(data){
+  var list=(data&&Array.isArray(data.roller))?data.roller:[];
+  return list.filter(function(r){
+    return r&&typeof r==="object"&&r.id!=null&&typeof r.instruktion==="string";
+  });
+}
+function aiChatRoleFind(id){
+  for(var i=0;i<aiChatRoles.length;i++){if(String(aiChatRoles[i].id)===String(id))return aiChatRoles[i];}
+  return null;
+}
+// Fyller namn- och instruktionsfälten från vald roll (tomma om ingen roll är vald).
+function aiChatRoleFillFields(){
+  var e=aiChatRoleEls();
+  if(!e.sel||!e.name||!e.persona)return;
+  var r=aiChatRoleFind(e.sel.value);
+  e.name.value=r?(r.namn||""):"";
+  e.persona.value=r?r.instruktion:"";
+}
+// Styr vad som syns: formuläret bara när det är öppet, ✏️/✕ bara när en roll är vald och
+// formuläret är stängt, ➕ avstängd medan formuläret är öppet.
+function aiChatRoleUpdateButtons(){
+  var e=aiChatRoleEls();
+  if(!e.sel||!e.form)return;
+  var has=!!e.sel.value;
+  var open=aiChatRoleFormMode!==null;
+  e.form.style.display=open?"block":"none";
+  e.edit.style.display=(has&&!open)?"":"none";
+  e.del.style.display=(has&&!open)?"":"none";
+  e.del.disabled=false;
+  e.newBtn.disabled=open;
+  e.save.textContent=aiChatRoleFormMode==="edit"?"💾 Uppdatera":"💾 Spara";
+}
+function aiChatRolesRender(selectedId){
+  var e=aiChatRoleEls();
+  if(!e.sel)return;
+  var sorted=aiChatRoles.slice().sort(function(a,b){
+    return String(a.namn||"").localeCompare(String(b.namn||""),"sv");
+  });
+  e.sel.innerHTML="";
+  var none=document.createElement("option");
+  none.value="";none.textContent="Ingen sparad roll";
+  e.sel.appendChild(none);
+  sorted.forEach(function(r){
+    var o=document.createElement("option");
+    o.value=String(r.id);o.textContent=r.namn||"(namnlös)";
+    e.sel.appendChild(o);
+  });
+  e.sel.value=(selectedId!=null&&selectedId!=="")?String(selectedId):"";
+  if(e.sel.selectedIndex<0)e.sel.selectedIndex=0;
+  aiChatRoleUpdateButtons();
+}
+async function aiChatRolesLoad(){
+  if(typeof accessToken==="undefined"||!accessToken)return;
+  var e=aiChatRoleEls();
+  var keep=e.sel?e.sel.value:"";
+  try{
+    var data=await driveReadJson(LASHJALP_FOLDER,LASHJALP_FILES.roller);
+    aiChatRoles=aiChatRolesNormalize(data);
+    aiChatRolesRender(keep);
+  }catch(err){
+    console.error("sokbar: kunde inte läsa roller.json",err);
+  }
+}
+function aiChatRoleResetDelete(){
+  var btn=document.getElementById("aiChatRoleDeleteBtn");
+  if(!btn)return;
+  clearTimeout(btn._confirmTimer);
+  btn.dataset.confirm="0";
+  btn.textContent="✕";
+  btn.title="Ta bort vald roll";
+}
+// Öppnar formuläret. "new": tomma fält och ingen vald roll (föregående val kommer ihåg för
+// Avbryt). "edit": fälten återställs till den valda rollens sparade värden.
+function aiChatRoleOpenForm(mode){
+  var e=aiChatRoleEls();
+  if(!e.sel)return;
+  aiChatRoleResetDelete();
+  aiChatRoleMsg("");
+  if(mode==="new"){
+    aiChatRolePrevSel=e.sel.value;
+    e.sel.value="";
+    e.name.value="";
+    e.persona.value="";
+  } else {
+    aiChatRoleFillFields();
+  }
+  aiChatRoleFormMode=mode;
+  aiChatRoleUpdateButtons();
+  if(e.name)e.name.focus();
+}
+// Stänger formuläret. Vid Avbryt ur "new" återställs den roll som var vald innan; fälten
+// fylls alltid från vald roll så instruktionsfältet matchar det som är aktivt i chatten.
+function aiChatRoleCloseForm(restorePrevSel){
+  var e=aiChatRoleEls();
+  if(!e.sel)return;
+  var wasNew=aiChatRoleFormMode==="new";
+  aiChatRoleFormMode=null;
+  if(restorePrevSel&&wasNew){
+    e.sel.value=aiChatRolePrevSel;
+    if(e.sel.selectedIndex<0)e.sel.selectedIndex=0;
+  }
+  aiChatRoleFillFields();
+  aiChatRoleUpdateButtons();
+  e.sel.focus();
+}
+async function aiChatRoleSave(){
+  var e=aiChatRoleEls();
+  if(!e.save||!e.sel||aiChatRoleFormMode===null)return;
+  var text=e.persona.value.trim();
+  var name=e.name.value.trim();
+  if(!text){aiChatRoleMsg("Skriv först vad AI:n ska göra i rollen (fältet \"Roll AI ska anta\").");return;}
+  // Tomt namn: använd början av instruktionen så sparandet aldrig stoppas av det.
+  if(!name){name=text.replace(/\s+/g," ").slice(0,30);e.name.value=name;}
+  if(typeof accessToken==="undefined"||!accessToken){aiChatRoleMsg("Inte inloggad - kan inte spara rollen just nu.");return;}
+  var selId=aiChatRoleFormMode==="edit"?e.sel.value:"";
+  e.save.disabled=true;
+  aiChatRoleMsg("Sparar …");
+  try{
+    var roller=aiChatRolesNormalize(await driveReadJson(LASHJALP_FOLDER,LASHJALP_FILES.roller));
+    var now=new Date().toISOString();
+    var savedId=null,updated=false;
+    if(selId){
+      for(var i=0;i<roller.length;i++){
+        if(String(roller[i].id)===selId){
+          roller[i].namn=name;roller[i].instruktion=text;roller[i].timestamp=now;
+          savedId=roller[i].id;updated=true;break;
+        }
+      }
+    }
+    if(savedId===null){
+      savedId=Date.now();
+      roller.unshift({id:savedId,namn:name,instruktion:text,timestamp:now});
+    }
+    var ok=await driveWriteJson(LASHJALP_FOLDER,LASHJALP_FILES.roller,{roller:roller});
+    if(ok){
+      aiChatRoles=roller;
+      aiChatRoleFormMode=null;
+      aiChatRolesRender(savedId);
+      aiChatRoleFillFields();
+      var selEl=document.getElementById("aiChatRoleSelect");
+      if(selEl)selEl.focus();
+      aiChatRoleMsg(updated?"✓ Rollen uppdaterad.":"✓ Rollen sparad.");
+    } else {
+      console.error("sokbar: driveWriteJson misslyckades för roller.json");
+      aiChatRoleMsg("Kunde inte spara rollen, försök igen.");
+    }
+  }catch(err){
+    console.error("sokbar: kunde inte spara roll",err);
+    aiChatRoleMsg("Kunde inte spara rollen, försök igen.");
+  }
+  e.save.disabled=false;
+}
+// ✕ kräver två klick (samma mönster som i historikvyn): första klicket byter texten till
+// "Ta bort?" i tre sekunder, andra klicket inom den tiden tar bort rollen.
+function aiChatRoleDeleteClick(){
+  var btn=document.getElementById("aiChatRoleDeleteBtn");
+  if(!btn||btn.disabled)return;
+  if(btn.dataset.confirm==="1"){aiChatRoleDeleteConfirmed();return;}
+  btn.dataset.confirm="1";
+  btn.textContent="Ta bort?";
+  btn.title="Klicka igen för att bekräfta borttagning";
+  clearTimeout(btn._confirmTimer);
+  btn._confirmTimer=setTimeout(aiChatRoleResetDelete,3000);
+}
+async function aiChatRoleDeleteConfirmed(){
+  var e=aiChatRoleEls();
+  if(!e.sel||!e.del)return;
+  var selId=e.sel.value;
+  aiChatRoleResetDelete();
+  if(!selId)return;
+  if(typeof accessToken==="undefined"||!accessToken){aiChatRoleMsg("Inte inloggad - kan inte ta bort rollen just nu.");return;}
+  e.del.disabled=true;
+  aiChatRoleMsg("Tar bort …");
+  try{
+    var roller=aiChatRolesNormalize(await driveReadJson(LASHJALP_FOLDER,LASHJALP_FILES.roller));
+    var kvar=roller.filter(function(r){return String(r.id)!==selId;});
+    var ok=await driveWriteJson(LASHJALP_FOLDER,LASHJALP_FILES.roller,{roller:kvar});
+    if(ok){
+      aiChatRoles=kvar;
+      aiChatRolesRender("");
+      aiChatRoleFillFields();
+      aiChatRoleMsg("✓ Rollen borttagen.");
+    } else {
+      console.error("sokbar: driveWriteJson misslyckades för roller.json (borttagning)");
+      aiChatRoleMsg("Kunde inte ta bort rollen, försök igen.");
+    }
+  }catch(err){
+    console.error("sokbar: kunde inte ta bort roll",err);
+    aiChatRoleMsg("Kunde inte ta bort rollen, försök igen.");
+  }
+  aiChatRoleUpdateButtons();
+}
+function aiChatRolesInit(){
+  var e=aiChatRoleEls();
+  // Byte i rullistan stänger ett öppet formulär och fyller fälten från den valda rollen.
+  if(e.sel)e.sel.onchange=function(){
+    aiChatRoleFormMode=null;
+    aiChatRoleFillFields();
+    aiChatRoleResetDelete();
+    aiChatRoleUpdateButtons();
+    aiChatRoleMsg("");
+  };
+  if(e.newBtn)e.newBtn.onclick=function(){aiChatRoleOpenForm("new");};
+  if(e.edit)e.edit.onclick=function(){aiChatRoleOpenForm("edit");};
+  if(e.cancel)e.cancel.onclick=function(){aiChatRoleCloseForm(true);aiChatRoleMsg("");};
+  if(e.save)e.save.onclick=aiChatRoleSave;
+  if(e.del)e.del.onclick=aiChatRoleDeleteClick;
 }
 function aiChatStopCamera(){
   if(aiChatCamStream){aiChatCamStream.getTracks().forEach(function(t){t.stop();});aiChatCamStream=null;}
@@ -1572,6 +1891,7 @@ function openAiChat(){
   document.body.style.overflow="hidden";
   renderAiChatMessages();
   aiChatRefreshBackgroundContext();
+  aiChatRolesLoad();
   var input=document.getElementById("aiChatInput");
   if(input)input.focus();
 }
@@ -1599,6 +1919,7 @@ function initAiChat(){
   // som ska visas igen när panelen stängs).
   var settingsBtn=document.getElementById("aiChatSettingsBtn");
   if(settingsBtn)settingsBtn.onclick=function(){openLashjalpSettings("aiChatOverlay","aiChatSettingsBtn");};
+  aiChatRolesInit();
 
   // Fristående overlay (inte en syskon-panel till något annat) - klick utanför,
   // Escape och ✕ stänger alla helt, till skillnad från Läshjälps under-paneler.
@@ -1636,8 +1957,13 @@ function initAiChat(){
     // inlåst på ett för högt värde när text tas bort), sätt sedan till innehållets
     // faktiska höjd, begränsat av #aiChatInput:s max-height:140px i CSS:en (overflow-y
     // sköter scroll om texten blir längre än så).
+    // NYTT (2026-10-24): höjden = innehållet (+ ramen, eftersom border-box). Först när den
+    // når maxhöjden 140px slås scrollbaren på - annars hålls den av (overflow hidden).
     input.style.height="auto";
-    input.style.height=input.scrollHeight+"px";
+    var extra=input.offsetHeight-input.clientHeight;
+    var h=input.scrollHeight+extra;
+    if(h>140){input.style.height="140px";input.style.overflowY="auto";}
+    else{input.style.height=h+"px";input.style.overflowY="hidden";}
   };
   var sendBtn=document.getElementById("aiChatSendBtn");
   if(sendBtn)sendBtn.onclick=aiChatSend;
@@ -1867,6 +2193,8 @@ function initDictBar(){
 
   var dictSpellBtn=document.getElementById("dictSpellBtn");
   if(dictSpellBtn)dictSpellBtn.onclick=checkSpelling;
+  var dictRephraseBtn=document.getElementById("dictRephraseBtn");
+  if(dictRephraseBtn)dictRephraseBtn.onclick=rephraseDictInput;
 
   var synInput=document.getElementById("synInput");
   if(synInput)synInput.onkeydown=function(e){if(e.key==="Enter")searchSynonym();};
