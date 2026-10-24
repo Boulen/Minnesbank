@@ -176,44 +176,9 @@ function showNoteringSettings(){
   var editTtIdx=null;
   var anteckningSubCat=wTt.length?wTt[0]:null; // vilken TT-kategoris subkategorier som visas just nu
   var editSubIdx=null;
-  var vaultSelectedIdx={android:0,windows:0}; // vilket index som är markerat i respektive dropdown just nu (styr vad ↑/↓/x verkar på)
 
   var ov=document.createElement("div");
   ov.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto";
-
-  function obsidianVaultSectionHtml(platformKey,title,list){
-    var autoNames=obsidianAutoVaults[platformKey].map(function(v){return v.label;});
-    var autoHtml="<div id='vaultauto-"+platformKey+"' style='font-size:11px;color:#5c5c5c;margin-top:6px'>"+vaultAutoText(platformKey)+"</div>";
-    var addHtml="<div style='display:flex;gap:6px;margin-top:8px'>"
-      +"<input id='vaultadd-name-"+platformKey+"' placeholder='Namn' style='flex:1;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:7px 8px;font-family:inherit'/>"
-      +"<input id='vaultadd-id-"+platformKey+"' placeholder='Valv-id (valfritt)' style='flex:1;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:7px 8px;font-family:inherit'/>"
-      +"</div>"
-      +"<button class='sec ghost' data-vaultadd='"+platformKey+"' style='width:100%;margin-top:6px'>+ Lägg till valv</button>";
-    if(!list.length){
-      return "<div class='lbl' style='margin-top:14px'>"+esc(title)+"</div>"
-        +"<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Inga egna valv tillagda.</div>"
-        +autoHtml+addHtml;
-    }
-    var selIdx=Math.min(vaultSelectedIdx[platformKey]||0,list.length-1);
-    var options=list.map(function(v,i){
-      return "<option value='"+i+"'"+(i===selIdx?" selected":"")+">"+esc(v.label||v.value)+(v.label&&v.label!==v.value?" ("+esc(v.value)+")":"")+"</option>";
-    }).join("");
-    return "<div class='lbl' style='margin-top:14px'>"+esc(title)+"</div>"
-      +"<div style='display:flex;gap:6px;align-items:center'>"
-      +"<select id='vaultorder-select-"+platformKey+"' style='flex:1;min-width:0;background:#161616;border:1px solid #2a2a2a;border-radius:8px;color:#f2f2f2;font-size:13px;padding:7px 8px;font-family:inherit'>"+options+"</select>"
-      +"<button class='chip' data-vaultup='"+platformKey+"' type='button' style='flex-shrink:0;padding:7px 10px;font-size:13px'>↑</button>"
-      +"<button class='chip' data-vaultdown='"+platformKey+"' type='button' style='flex-shrink:0;padding:7px 10px;font-size:13px'>↓</button>"
-      +"<button class='delbtn' data-vaultremove='"+platformKey+"' style='flex-shrink:0'>x</button>"
-      +"</div>"
-      +autoHtml+addHtml;
-  }
-
-  function vaultAutoText(platformKey){
-    var names=obsidianAutoVaults[platformKey].map(function(v){return v.label;});
-    if(!accessToken)return "Drive-mappar: inte inloggad";
-    if(!obsidianAutoVaultsOk[platformKey])return "Drive-mappar: hämtar...";
-    return "Från Drive-mappen (uppdateras automatiskt): "+(names.length?esc(names.join(", ")):"inga mappar hittades");
-  }
 
   function simpleChipsHtml(arr,editIdx,prefix,emptyMsg){
     if(!arr.length)return "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>"+emptyMsg+"</div>";
@@ -279,10 +244,6 @@ function showNoteringSettings(){
           +"<button class='chip' id='ns-newsub-add' type='button' style='flex-shrink:0;padding:7px 12px;font-size:13px'>+</button>"
           +"</div>"
         : "<div class='empty' style='padding:8px 0;font-size:12px;color:#5c5c5c'>Lägg till minst en Anteckningar-kategori ovan först.</div>")
-
-      +"<div class='lbl' style='margin-top:18px'>Obsidian-valv (Öppna valv-knappen)</div>"
-      +obsidianVaultSectionHtml("android","Android",obsidianVaultsAndroid)
-      +obsidianVaultSectionHtml("windows","Windows",obsidianVaultsWindows)
 
       +"<div class='lbl' style='margin-top:18px'>Data & backup</div>"
       // OBS: "Data & backup" ska alltid ligga SIST i panelen, precis som i Aktivitets mönster.
@@ -387,79 +348,6 @@ function showNoteringSettings(){
   function bindPanel(){
     ov.querySelector("#ns-close").onclick=function(){ov.remove();};
     ov.querySelector("#ns-cancel").onclick=function(){ov.remove();};
-
-    function vaultListFor(platformKey){
-      return platformKey==="android"?obsidianVaultsAndroid:obsidianVaultsWindows;
-    }
-    ["android","windows"].forEach(function(platformKey){
-      var sel=ov.querySelector("#vaultorder-select-"+platformKey);
-      if(sel)sel.onchange=function(){vaultSelectedIdx[platformKey]=Number(sel.value);};
-    });
-    ov.querySelectorAll("[data-vaultup]").forEach(function(btn){
-      btn.onclick=function(){
-        var platformKey=btn.dataset.vaultup;
-        var list=vaultListFor(platformKey);
-        var sel=ov.querySelector("#vaultorder-select-"+platformKey);
-        var idx=Number(sel.value);
-        if(idx<=0)return;
-        var tmp=list[idx-1];list[idx-1]=list[idx];list[idx]=tmp;
-        vaultSelectedIdx[platformKey]=idx-1;
-        saveNoteringSettings();
-        rerender();
-      };
-    });
-    ov.querySelectorAll("[data-vaultdown]").forEach(function(btn){
-      btn.onclick=function(){
-        var platformKey=btn.dataset.vaultdown;
-        var list=vaultListFor(platformKey);
-        var sel=ov.querySelector("#vaultorder-select-"+platformKey);
-        var idx=Number(sel.value);
-        if(idx>=list.length-1)return;
-        var tmp=list[idx+1];list[idx+1]=list[idx];list[idx]=tmp;
-        vaultSelectedIdx[platformKey]=idx+1;
-        saveNoteringSettings();
-        rerender();
-      };
-    });
-    ov.querySelectorAll("[data-vaultremove]").forEach(function(btn){
-      btn.onclick=function(){
-        var platformKey=btn.dataset.vaultremove;
-        var list=vaultListFor(platformKey);
-        var sel=ov.querySelector("#vaultorder-select-"+platformKey);
-        var idx=Number(sel.value);
-        var removedValue=list[idx]&&list[idx].value;
-        list.splice(idx,1);
-        // Om det borttagna valvet var det aktivt VALDA för den plattformen, nollställ valet.
-        if(platformKey==="android"&&obsidianSelectedVaultAndroid===removedValue)obsidianSelectedVaultAndroid="";
-        if(platformKey==="windows"&&obsidianSelectedVaultWindows===removedValue)obsidianSelectedVaultWindows="";
-        vaultSelectedIdx[platformKey]=Math.max(0,idx-1);
-        saveNoteringSettings();
-        rerender();
-      };
-    });
-    ov.querySelectorAll("[data-vaultadd]").forEach(function(btn){
-      btn.onclick=function(){
-        var platformKey=btn.dataset.vaultadd;
-        var nameEl=ov.querySelector("#vaultadd-name-"+platformKey);
-        var idEl=ov.querySelector("#vaultadd-id-"+platformKey);
-        var name=(nameEl.value||"").trim();
-        var id=(idEl.value||"").trim();
-        if(!name&&!id){showNoteringToastLong("Skriv ett namn och/eller ett valv-id.");return;}
-        var list=vaultListFor(platformKey);
-        var entry={value:id||name,label:name||id};
-        var existing=list.findIndex(function(v){return (v.label||v.value).toLowerCase()===entry.label.toLowerCase()||v.value===entry.value;});
-        if(existing>=0){list[existing]=entry;vaultSelectedIdx[platformKey]=existing;}
-        else{list.push(entry);vaultSelectedIdx[platformKey]=list.length-1;}
-        saveNoteringSettings();
-        rerender();
-      };
-    });
-    ["android","windows"].forEach(function(platformKey){
-      refreshAutoVaults(platformKey,true).then(function(){
-        var el=ov.querySelector("#vaultauto-"+platformKey);
-        if(el)el.innerHTML=vaultAutoText(platformKey);
-      });
-    });
 
     ov.querySelector("#ns-fund-sort").onclick=function(){
       wFund.sort(function(a,b){return a.localeCompare(b,"sv");});
@@ -931,12 +819,17 @@ var obsidianAutoVaults={android:[],windows:[]}; // [{value,label,auto:true}]
 var obsidianAutoVaultsLoadedAt={android:0,windows:0};
 var obsidianAutoVaultsPromise={android:null,windows:null};
 var obsidianAutoVaultsOk={android:false,windows:false};
+var obsidianAutoVaultsError={android:"",windows:""};
 
 function currentPlatformKey(){return isAndroidDevice()?"android":"windows";}
 
 // Hämtar undermapparna (= valven) från Drive. Returnerar true om listan ändrades.
 function refreshAutoVaults(platformKey,force){
-  if(!accessToken)return Promise.resolve(false);
+  if(!accessToken){
+    var changedNoToken=obsidianAutoVaultsError[platformKey]!=="inte inloggad än";
+    obsidianAutoVaultsError[platformKey]="inte inloggad än";
+    return Promise.resolve(changedNoToken);
+  }
   if(obsidianAutoVaultsPromise[platformKey])return obsidianAutoVaultsPromise[platformKey];
   if(!force&&Date.now()-obsidianAutoVaultsLoadedAt[platformKey]<15000)return Promise.resolve(false);
   var parentId=platformKey==="android"?OBSIDIAN_AUTO_VAULT_PARENT_ANDROID:OBSIDIAN_AUTO_VAULT_PARENT_WINDOWS;
@@ -947,13 +840,17 @@ function refreshAutoVaults(platformKey,force){
       if(!r.ok)throw new Error("HTTP "+r.status);
       var d=await r.json();
       var list=(d.files||[]).map(function(f){return {value:f.name,label:f.name,auto:true};});
-      var changed=JSON.stringify(list)!==JSON.stringify(obsidianAutoVaults[platformKey]);
+      var changed=JSON.stringify(list)!==JSON.stringify(obsidianAutoVaults[platformKey])||obsidianAutoVaultsError[platformKey]!=="";
       obsidianAutoVaults[platformKey]=list;
+      obsidianAutoVaultsError[platformKey]="";
       obsidianAutoVaultsOk[platformKey]=true;
       obsidianAutoVaultsLoadedAt[platformKey]=Date.now();
       return changed;
     }catch(e){
-      return false; // tyst - behåll senast kända lista
+      var msg=(e&&e.message)||String(e);
+      var changedErr=obsidianAutoVaultsError[platformKey]!==msg;
+      obsidianAutoVaultsError[platformKey]=msg; // behåll senast kända lista, visa felet i rullistan
+      return changedErr;
     }finally{
       obsidianAutoVaultsPromise[platformKey]=null;
     }
@@ -964,18 +861,19 @@ function refreshAutoVaults(platformKey,force){
 // Egna (manuellt inlagda) valv först, därefter mapparna från Drive. Ett eget valv med samma
 // namn som en Drive-mapp ersätter den (så du kan ange valv-id för en mapp).
 function combinedVaultList(platformKey){
-  var manual=platformKey==="android"?obsidianVaultsAndroid:obsidianVaultsWindows;
-  var seen={};
-  manual.forEach(function(v){seen[(v.label||v.value).toLowerCase()]=true;seen[String(v.value).toLowerCase()]=true;});
-  return manual.concat(obsidianAutoVaults[platformKey].filter(function(v){return !seen[v.value.toLowerCase()];}));
+  return obsidianAutoVaults[platformKey];
 }
 
 function vaultOptionsHtml(){
+  var pk=currentPlatformKey();
   var sel=getSelectedVaultValue();
+  var status="";
+  if(obsidianAutoVaultsError[pk])status="<option disabled>⚠️ Drive: "+esc(obsidianAutoVaultsError[pk])+"</option>";
+  else if(obsidianAutoVaultsOk[pk]&&!obsidianAutoVaults[pk].length)status="<option disabled>(inga valv i mappen)</option>";
   return "<option value=''"+(!sel?" selected":"")+">"+(isAndroidDevice()?"Android":"Windows")+"</option>"
-    +combinedVaultList(currentPlatformKey()).map(function(v){
+    +combinedVaultList(pk).map(function(v){
       return "<option value='"+esc(v.value)+"'"+(v.value===sel?" selected":"")+">"+esc(v.label||v.value)+"</option>";
-    }).join("");
+    }).join("")+status;
 }
 
 function currentPlatformVaultList(){
@@ -1595,10 +1493,14 @@ function renderLogFunderingar(){
     };
     vaultRefresh(true);
     if(window.__noteringVaultTimer)clearInterval(window.__noteringVaultTimer);
+    var vaultTicks=0;
     window.__noteringVaultTimer=setInterval(function(){
       if(!vaultSelect.isConnected){clearInterval(window.__noteringVaultTimer);return;}
-      vaultRefresh(false);
-    },20000);
+      vaultTicks++;
+      // Tätt (var 2:a sekund) tills första hämtningen lyckats (mobilen loggar in senare), sedan var 20:e.
+      if((!obsidianAutoVaultsOk[vaultPlatform]||obsidianAutoVaultsError[vaultPlatform])&&vaultTicks<=30){vaultRefresh(true);}
+      else if(vaultTicks%10===0)vaultRefresh(true);
+    },2000);
     vaultSelect.addEventListener("focus",function(){vaultRefresh(true);});
     document.addEventListener("visibilitychange",function(){if(!document.hidden)vaultRefresh(true);});
   }
