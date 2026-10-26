@@ -22,6 +22,75 @@ function autoResizeTextarea(el){
 // Shift+Enter loggar/sparar inlägget oavsett vilket inmatningsfält man står i.
 // Använder addEventListener så eventuella befintliga onkeydown/onblur-hanterare på
 // samma fält inte skrivs över.
+// Förslagslista under Anteckning med tangentbordsstöd (ArrowDown/ArrowUp/Enter/Escape).
+// Egen version av core.js bindAutocomplete, som bara stödjer mus. Val fyller bara i texten.
+function bindAktivitetAutocomplete(inputEl,dropdownEl,getSuggestions,removeValue,onSelect){
+  if(!inputEl||!dropdownEl)return;
+  var activeIdx=-1;
+  function items(){return Array.prototype.slice.call(dropdownEl.querySelectorAll("[data-acval]"));}
+  function isOpen(){return dropdownEl.style.display==="block"&&items().length>0;}
+  function close(){dropdownEl.style.display="none";dropdownEl.innerHTML="";activeIdx=-1;}
+  function highlight(){
+    var list=items();
+    list.forEach(function(el,i){el.parentNode.style.background=i===activeIdx?"#1c3c5a":"";});
+    if(list[activeIdx]&&list[activeIdx].scrollIntoView)list[activeIdx].scrollIntoView({block:"nearest"});
+  }
+  function choose(val){
+    inputEl.value=val;
+    close();
+    if(onSelect)onSelect(val);
+  }
+  function update(){
+    var val=inputEl.value.trim().toLowerCase();
+    activeIdx=-1;
+    if(!val){close();return;}
+    var matches=getSuggestions().filter(function(s){return s.toLowerCase().indexOf(val)>-1&&s.toLowerCase()!==val;}).slice(0,6);
+    if(!matches.length){close();return;}
+    dropdownEl.innerHTML=matches.map(function(s){
+      return "<div class='ac-item'>"
+        +"<span class='ac-item-text' data-acval=\""+esc(s)+"\">"+esc(s)+"</span>"
+        +"<button class='ac-item-remove' data-acremove=\""+esc(s)+"\" title='Ta bort förslag' tabindex='-1'>×</button>"
+        +"</div>";
+    }).join("");
+    dropdownEl.style.display="block";
+    dropdownEl.querySelectorAll("[data-acval]").forEach(function(item){
+      item.onmousedown=function(e){e.preventDefault();choose(item.dataset.acval);};
+    });
+    dropdownEl.querySelectorAll("[data-acremove]").forEach(function(btn){
+      btn.onmousedown=function(e){
+        e.preventDefault();e.stopPropagation();
+        if(removeValue)removeValue(btn.dataset.acremove);
+        update();
+      };
+    });
+  }
+  inputEl.addEventListener("input",update);
+  inputEl.addEventListener("focus",update);
+  inputEl.addEventListener("blur",function(){setTimeout(close,150);});
+  inputEl.addEventListener("keydown",function(e){
+    if(e.key==="ArrowDown"){
+      if(!isOpen())update();
+      var list=items();
+      if(!list.length)return; // ingen lista: vanlig markörrörelse i textrutan
+      e.preventDefault();
+      activeIdx=Math.min(activeIdx+1,list.length-1);
+      highlight();
+    }else if(e.key==="ArrowUp"){
+      if(!isOpen()||activeIdx<0)return; // vanlig markörrörelse om inget är markerat
+      e.preventDefault();
+      activeIdx--;
+      if(activeIdx<0){highlight();}else{highlight();}
+    }else if(e.key==="Escape"){
+      if(isOpen()){e.preventDefault();close();}
+    }else if(e.key==="Enter"&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey){
+      if(isOpen()&&activeIdx>=0){
+        var el=items()[activeIdx];
+        if(el){e.preventDefault();e.stopImmediatePropagation();choose(el.dataset.acval);}
+      } // annars: Enter = ny rad som vanligt
+    }
+  });
+}
+
 function bindShiftEnterSubmit(el,submitFn){
   if(!el)return;
   el.addEventListener("keydown",function(e){
@@ -1286,7 +1355,7 @@ function renderAktivitetLoggaTab(c){
   // Kategori-specifika förslag för Anteckning. onSelect ska bara lämna texten i fältet
   // (bindAutocomplete gör redan det innan onSelect anropas) och låta en fortsätta skriva -
   // INTE logga inlägget, som tidigare av misstag råkade göras här.
-  bindAutocomplete(c.querySelector("#ni"),c.querySelector("#ni-ac"),function(){return ANTECKNING_BY_CAT[cat]||[];},function(v){if(ANTECKNING_BY_CAT[cat])ANTECKNING_BY_CAT[cat]=ANTECKNING_BY_CAT[cat].filter(function(x){return x!==v;});saveAndSync("inmatningar");},function(v){
+  bindAktivitetAutocomplete(c.querySelector("#ni"),c.querySelector("#ni-ac"),function(){return ANTECKNING_BY_CAT[cat]||[];},function(v){if(ANTECKNING_BY_CAT[cat])ANTECKNING_BY_CAT[cat]=ANTECKNING_BY_CAT[cat].filter(function(x){return x!==v;});saveAndSync("inmatningar");},function(v){
     autoResizeTextarea(ni);
     ni.focus();
     ni.setSelectionRange(ni.value.length,ni.value.length); // markören sist i texten, redo att fortsätta skriva

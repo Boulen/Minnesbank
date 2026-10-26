@@ -166,7 +166,14 @@ function logEntry(log){
       +"<input class='inp' id='edit-place-"+log.id+"' placeholder='Plats...' value='"+esc(log.place||"")+"' style='flex:1'/>"
       +"</div>"
       +"<div class='lbl'>Anteckning (valfritt)</div>"
-      +"<input class='inp w100' id='edit-note-"+log.id+"' placeholder='Anteckning...' value='"+esc(log.note||"")+"'/>"
+      // RÄTTAT 2026-09-30 (bugg flaggad av Aktivitet-chatten, bugg_anteckning_flerrad_redigering.md):
+      // fältet var ett vanligt <input>, vilket gör radbrytningar omöjliga oavsett tangenttryck.
+      // Ingen keydown-hanterare hittades i historik.js som blockerar Enter (sökt igenom hela filen),
+      // så det var uteslutande input-vs-textarea-problemet. Bytt till <textarea> (samma 'ta'-klass
+      // som redan används för flerradstext på andra ställen i denna fil, t.ex. fundEntryHist och
+      // hm-comment) - värdet flyttat från value-attribut till textareans innehåll. Sparfunktionen
+      // läser fortfarande bara .value (som även textarea har), så inget annat behövde ändras.
+      +"<textarea class='ta' id='edit-note-"+log.id+"' placeholder='Anteckning...' style='min-height:70px'>"+esc(log.note||"")+"</textarea>"
       +"<div style='display:flex;gap:8px'>"
       +"<button class='sec' id='save-edit-"+log.id+"' style='flex:1'>Spara</button>"
       +"<button class='sec ghost' id='cancel-edit-"+log.id+"' style='flex:1'>Avbryt</button>"
@@ -1088,6 +1095,19 @@ function bindLogEntryActions(container,onChange){
     }
     if(container.querySelector("#cancel-edit-"+log.id)){
       container.querySelector("#cancel-edit-"+log.id).onclick=function(){editingId=null;onChange();};
+    }
+    // TILLAGT 2026-09-30 (Blå önskemål): Shift+Enter i Anteckning-fältet sparar redigeringen,
+    // samma väg som Spara-knappen (återanvänder saveBtn.click() så all valideringslogik ovan
+    // körs oförändrat). Vanlig Enter (utan Shift) fångas inte här och ger därför fortfarande
+    // en vanlig radbrytning i textarean, som tänkt.
+    var noteEl2=container.querySelector("#edit-note-"+log.id);
+    if(noteEl2&&saveBtn){
+      noteEl2.onkeydown=function(e){
+        if(e.key==="Enter"&&e.shiftKey){
+          e.preventDefault();
+          saveBtn.click();
+        }
+      };
     }
   });
 }
